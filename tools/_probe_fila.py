@@ -64,7 +64,7 @@ def clean():
         cur.execute("delete from public.renovacao_avisos where username like 'stub%%'")
         cur.execute("delete from public.usuarios_criados_ip where username like 'stub%%'")
         cur.execute(
-            "delete from public.mcapi_events where request_payload::text like 'stub%%' or response_payload::text like 'stub%%'")
+            "delete from public.mcapi_events where request_payload::text like '%stub%' or response_payload::text like '%stub%'")
         print("limpo:", cur.rowcount, "eventos")
 
 
