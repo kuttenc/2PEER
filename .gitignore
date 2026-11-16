@@ -16,3 +16,6 @@ analytics.sqlite3*
 
 # curl copiado do navegador (tem bearer do MC)
 http.txt
+
+# estado local do supabase cli
+supabase/.temp/

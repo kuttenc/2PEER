@@ -1,21 +1,608 @@
 <!doctype html>
-<html lang="pt-br">
+<html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="refresh" content="0; url=https://o-peixeiro-2peer.onrender.com/painel/">
-<link rel="canonical" href="https://o-peixeiro-2peer.onrender.com/painel/">
-<title>Painel de acessos (c&oacute;pia de testes)</title>
-<style>
-  body { margin:0; min-height:100vh; display:grid; place-items:center; background:#0b1220;
-         color:#e8eefc; font:16px/1.6 system-ui,Segoe UI,Roboto,sans-serif; text-align:center }
-  a { color:#5cc8ff; font-weight:600 }
-</style>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel do Peixeiro</title>
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<div>
-  <p>Abrindo o painel...</p>
-  <p><a href="https://o-peixeiro-2peer.onrender.com/painel/">Abrir o painel</a></p>
+<div class="wrap">
+
+  <!-- ============================================================ LOGIN -->
+  <section id="tela-login">
+    <div class="card" style="margin-top:40px">
+      <h1>Painel do Peixeiro</h1>
+      <p class="muted">Configuração do GreenAPI, avisos de vencimento e acessos. Só para você.</p>
+      <div class="erro" id="loginErro" hidden></div>
+      <form id="formLogin">
+        <label>Senha</label>
+        <input type="password" id="loginSenha" autocomplete="current-password" inputmode="text"
+               autocapitalize="none" autocorrect="off" spellcheck="false" required autofocus>
+        <div style="margin-top:14px"><button class="prim" type="submit">Entrar</button></div>
+      </form>
+      <p class="muted" style="margin-bottom:0">A sessão dura 30 dias neste aparelho. Trocar a senha derruba todas as sessões.</p>
+    </div>
+  </section>
+
+  <!-- ============================================================ PAINEL -->
+  <div id="site" hidden>
+    <nav id="nav">
+      <a href="#inicio" data-tela="inicio">Início</a>
+      <a href="#config" data-tela="config">Configuração</a>
+      <a href="#avisos" data-tela="avisos">Avisos</a>
+      <a href="#acessos" data-tela="acessos">Acessos</a>
+      <a href="#recuperacao" data-tela="recuperacao">Recuperação</a>
+      <a href="#clientes" data-tela="clientes">Clientes</a>
+      <a href="#deletar" data-tela="deletar">Deletar</a>
+      <a href="#links" data-tela="links">Links</a>
+      <a href="#senha" data-tela="senha">Senha</a>
+      <a href="#sair" data-tela="sair">Sair</a>
+    </nav>
+
+    <div class="aviso-teste" id="faixaTeste" hidden></div>
+    <div id="recado"></div>
+
+    <!-- ---------------------------------------------------------- INÍCIO -->
+    <section data-pagina="inicio">
+      <div class="card">
+        <h2>WhatsApp (GreenAPI)</h2>
+        <table>
+          <tr><th>Estado</th><td><span class="pill" id="iniEstado">…</span>
+            <span class="muted" id="iniEstadoDetalhe"></span>
+            <a href="#inicio" id="iniVerificar" class="muted">verificar agora</a></td></tr>
+          <tr><th>Instância</th><td id="iniInstancia"></td></tr>
+          <tr><th>Telefone</th><td id="iniTelefone"></td></tr>
+          <tr><th>Token</th><td id="iniToken"></td></tr>
+          <tr id="iniQrLinha" style="display:none"><th>QR</th><td><a id="iniQr" target="_blank" rel="noopener">abrir o QR do WhatsApp</a><br>
+            <span class="muted" style="word-break:break-all" id="iniQrTexto"></span></td></tr>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Aviso de vencimento</h2>
+        <table>
+          <tr><th>Agenda das 6h</th><td><span class="pill" id="iniAgenda">…</span></td></tr>
+          <tr><th>Com antecedência de</th><td id="iniAntecedencia"></td></tr>
+          <tr><th>PIX na legenda</th><td id="iniPix"></td></tr>
+          <tr><th>Foto do &ldquo;gerar&rdquo;</th><td id="iniFoto"></td></tr>
+          <tr><th>Registros com telefone</th><td id="iniTelefones"></td></tr>
+          <tr><th>Avisos já registrados</th><td id="iniAvisados"></td></tr>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Rodar a varredura agora</h2>
+        <p class="muted" style="margin-top:0">Mesmo caminho que a agenda das 6h da manhã percorre todo dia.</p>
+        <div class="linha">
+          <button class="verde" id="iniVarrer" type="button">Varrer e enviar</button>
+          <label class="cb" style="margin:0"><input type="checkbox" id="iniReenviar" value="1"> reenviar para quem já foi avisado</label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Atalhos</h2>
+        <div class="linha">
+          <a href="#config">Trocar instância / textos</a> &middot;
+          <a href="#avisos">Quem está por vencer</a> &middot;
+          <a href="#acessos">Acessos criados</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- CONFIGURAÇÃO -->
+    <section data-pagina="config" hidden>
+      <form id="formConfig">
+        <div class="card">
+          <h2>1. Instância do WhatsApp</h2>
+          <label>apiUrl</label>
+          <input type="text" name="api_url" id="cfApiUrl" inputmode="url">
+          <label>mediaUrl</label>
+          <input type="text" name="media_url" id="cfMediaUrl" inputmode="url">
+          <label>idInstance</label>
+          <input type="text" name="id_instance" id="cfIdInstance" inputmode="numeric" readonly data-travado>
+          <label>apiTokenInstance</label>
+          <input type="text" name="api_token" id="cfApiToken" autocapitalize="off" autocorrect="off" readonly data-travado>
+          <p class="linha" style="margin:10px 0 0">
+            <button class="segundo" type="button" id="btnvar">Editar variáveis</button>
+            <span class="muted" id="varaviso">travado para não perder a instância sem querer</span>
+          </p>
+          <label>Nome da instância</label>
+          <input type="text" name="instance_name" id="cfNome">
+          <label>Telefone da instância (o número do WhatsApp que envia)</label>
+          <input type="text" name="owner_phone" id="cfOwner" inputmode="tel">
+          <label>Link do QR (montado sozinho a partir do idInstance + apiTokenInstance)</label>
+          <p style="margin:0"><a id="qrlink" href="#" target="_blank" rel="noopener">sem instância configurada</a></p>
+          <p class="muted">Estado (última checagem vale por 3 minutos):
+            <span class="pill" id="cfEstado">…</span>
+            <a href="#config" id="cfVerificar">verificar agora</a>
+            <span class="muted" id="cfEstadoDetalhe"></span>
+          </p>
+        </div>
+
+        <div class="card">
+          <h2>O que o site vai usar de verdade</h2>
+          <table>
+            <tr><th>chamar a API</th><td><code id="cfUsaApi"></code></td></tr>
+            <tr><th>baixar mídia</th><td><code id="cfUsaMedia"></code></td></tr>
+            <tr><th>idInstance</th><td><code id="cfUsaInstancia"></code></td></tr>
+            <tr><th>estado</th><td><span class="pill" id="cfUsaEstado">…</span></td></tr>
+            <tbody id="cfInfos"></tbody>
+          </table>
+          <p class="muted" style="margin-bottom:0">Os dois endereços acima são montados a partir do número do servidor
+            (<code>.api.greenapi.com</code> para chamar, <code>.media.greenapi.com</code> para baixar), então colar o
+            endereço de mídia no campo apiUrl não quebra mais o envio.
+            <a href="#config" id="cfAtualizarConferencia">atualizar esta conferência</a></p>
+        </div>
+
+        <div class="card">
+          <h2>2. Foto enviada quando o cliente clica em &ldquo;gerar&rdquo;</h2>
+          <p class="muted" style="margin-top:0" id="cfHoje">Hoje: …</p>
+          <label>Anexar foto nova (jpg/png até 1,5 MB)</label>
+          <input type="file" id="cfFoto" accept="image/*">
+          <label>Legenda que vai junto da foto</label>
+          <textarea name="caption" id="cfLegenda"></textarea>
+          <label class="cb"><input type="checkbox" name="send_photo" id="cfSendFoto" value="on">
+            Enviar esta foto automaticamente para todo telefone que gerar acesso</label>
+          <label class="cb"><input type="checkbox" name="limpar_foto" id="cfLimparFoto" value="1"> apagar a foto guardada</label>
+        </div>
+
+        <div class="card">
+          <h2>3. Aviso de vencimento (agenda das 6h)</h2>
+          <label class="cb"><input type="checkbox" name="aviso_ativo" id="cfAvisoAtivo" value="on"> Aviso automático ligado</label>
+          <label>Dias de antecedência</label>
+          <input type="number" name="aviso_dias" id="cfAvisoDias" step="0.5" min="0.5" max="30" inputmode="decimal">
+          <label>PIX/CNPJ na legenda (a pessoa copia)</label>
+          <input type="text" name="aviso_pix_key" id="cfPixKey" inputmode="numeric">
+          <label>CNPJ escrito dentro da imagem</label>
+          <input type="text" name="aviso_pix_mascara" id="cfPixMascara">
+          <label>Título da imagem</label>
+          <input type="text" name="aviso_titulo" id="cfTitulo">
+          <label>Frase antes do PIX na imagem</label>
+          <input type="text" name="aviso_rodape" id="cfRodape">
+          <label>Mensagem enviada junto da imagem (use {dias} e {pix})</label>
+          <textarea name="aviso_legenda" id="cfLegendaAviso"></textarea>
+          <label>Token da agenda</label>
+          <input type="text" name="aviso_token" id="cfTokenAgenda" autocapitalize="off" autocorrect="off">
+        </div>
+
+        <div class="card">
+          <h2>4. Renovação de quem já venceu</h2>
+          <label class="cb"><input type="checkbox" name="renova_ativo" id="cfRenovaAtivo" value="on">
+            Mandar a cobrança de renovação automaticamente</label>
+          <p class="muted" style="margin-top:0">A mesma agenda das 6h percorre quem está sem acesso e repete a mensagem
+            a cada <b id="cfRenovaDiasTexto">3</b> dias para a mesma vencimento. O PIX usado é a chave do item 3.</p>
+          <label>Intervalo entre mensagens (dias)</label>
+          <input type="number" name="renova_dias" id="cfRenovaDias" step="1" min="1" max="30" inputmode="decimal">
+          <label>Só avisar quem venceu nos últimos (dias)</label>
+          <input type="number" name="renova_janela_dias" id="cfRenovaJanela" step="1" min="1" max="365" inputmode="decimal">
+          <label>Mensagem automática de renovação (use {pix})</label>
+          <textarea name="renova_legenda" id="cfRenovaLegenda"></textarea>
+          <label>Mensagem do botão &ldquo;recuperar&rdquo; (use {dias} e {pix})</label>
+          <textarea name="recupera_legenda" id="cfRecuperaLegenda"></textarea>
+          <p class="muted">{dias} vira &ldquo;há 1 mês e 4 dias&rdquo;, do jeito que aparece na tela Acessos.</p>
+        </div>
+
+        <div class="card">
+          <button class="prim" type="submit">Gravar no banco agora</button>
+          <p class="muted" style="margin-bottom:0">Grava na linha <code>greenapi_config</code> que o site e a agenda leem.</p>
+        </div>
+      </form>
+    </section>
+
+    <!-- ---------------------------------------------------------- AVISOS -->
+    <section data-pagina="avisos" hidden>
+      <div class="card">
+        <h2 id="avTitulo">Quem vence em até … dia(s)</h2>
+        <div class="erro" id="avErro" hidden></div>
+        <p class="muted" id="avVazio" hidden>Ninguém nessa janela agora.</p>
+        <table>
+          <tr><th></th><th>Usuário</th><th>Vence</th><th>Telefone</th></tr>
+          <tbody id="avLinhas"></tbody>
+        </table>
+        <div class="linha" style="margin-top:14px">
+          <button class="verde" type="button" id="avMarcados">Enviar para os marcados</button>
+          <button type="button" id="avTodos">Enviar para todos com telefone</button>
+          <a href="#avisos" id="avAlternar">mostrar já avisados</a>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Prévia da imagem</h2>
+        <img class="prev" id="avPrevia" alt="prévia do aviso" hidden>
+        <p class="muted" id="avPreviaLegenda"></p>
+        <p class="erro" id="avPreviaErro" hidden>Não consegui desenhar a prévia (falta fonte no servidor).</p>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- ACESSOS -->
+    <section data-pagina="acessos" hidden>
+      <div class="card">
+        <h2>Acessos do painel MC</h2>
+        <div class="erro" id="acErro" hidden></div>
+        <div class="linha">
+          <input type="text" id="acBusca" placeholder="buscar usuário ou nota" style="flex:1;min-width:180px"
+                 autocomplete="off" autocapitalize="off" spellcheck="false">
+          <button type="button" id="acBuscar">Buscar</button>
+          <button type="button" class="segundo" id="btnMesclar">Mesclar</button>
+          <button type="button" class="segundo" id="btnLote">Não recuperados</button>
+        </div>
+        <p class="muted" id="acPaginacao" style="margin:8px 0 0"></p>
+        <table style="margin-top:10px" id="tabela">
+          <thead>
+            <tr>
+              <th class="chk">&nbsp;</th>
+              <th class="lote">pular</th>
+              <th>Usuário</th><th>Telefone</th><th>Expira</th><th>Faltam</th><th>Status</th><th>Nota</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="acLinhas"></tbody>
+        </table>
+        <p class="muted" style="margin-bottom:0">Digite o telefone na caixinha e toque <b>salvar</b> para cadastrar ou corrigir —
+          a máscara já coloca <code>(DDD) nnnnn-nnnn</code> e o 55 do Brasil entra sozinho. Funciona também nos parados.
+          <b>Mesclar</b> marca os usuários: o <b>primeiro</b> empresta o telefone para o <b>segundo</b> e nada é apagado.
+          O botão <b>recuperar</b> manda o PIX pelo WhatsApp para o telefone guardado na linha.
+          <b>Não recuperados</b> abre a coluna <b>pular</b>: marque só quem <b>não</b> deve receber, em qualquer página,
+          e o envio vai para todos os vencidos do painel &mdash; inclusive das páginas que não estão na tela.</p>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- RECUPERAÇÃO -->
+    <section data-pagina="recuperacao" hidden>
+      <div class="card">
+        <h2>O que sai quando você clica em &ldquo;recuperar&rdquo;</h2>
+        <p class="muted">O botão fica na aba <a href="#acessos">Acessos</a>, nas linhas vencidas.
+          Tudo aqui vale para todo clique, sem precisar mexer em mais nada.</p>
+        <form id="formRecuperacao">
+          <label for="rcLegenda">Mensagem ({dias} vira &ldquo;há 1 mês e 4 dias&rdquo;, {pix} vira a chave PIX da Configuração)</label>
+          <textarea id="rcLegenda" name="recupera_legenda" rows="4"></textarea>
+          <label for="rcFoto">Foto que vai sempre junto (jpg ou png, até 1,5 MB) &mdash; escolher o arquivo já liga o envio</label>
+          <input type="file" id="rcFoto" name="foto" accept="image/*">
+          <label class="cb"><input type="checkbox" name="recupera_send_photo" id="rcSendFoto" value="on">
+            Mandar essa foto junto de cada recuperação</label>
+          <label class="cb"><input type="checkbox" name="limpar_foto" id="rcLimparFoto" value="1">
+            Apagar a foto guardada (o recuperar volta a mandar só texto)</label>
+          <p style="margin-top:14px"><button class="prim" type="submit">Salvar</button></p>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Foto guardada hoje</h2>
+        <div class="erro" id="rcErroFoto" hidden>A foto está guardada, mas o envio dela está <b>desligado</b>: por isso o último recuperar saiu
+          só com texto. Use o botão abaixo para ligar.</div>
+        <div class="linha" id="rcTemFoto" style="align-items:flex-start">
+          <img class="prev" id="rcImg" alt="foto da recuperação">
+          <div>
+            <p id="rcInfoFoto"></p>
+            <p class="muted">Envio automático de foto: <span class="pill" id="rcPillFoto">…</span></p>
+            <button type="button" id="rcAlternar"></button>
+            <p class="muted" style="margin-top:8px">Esse botão não apaga a foto e não mexe na mensagem.</p>
+          </div>
+        </div>
+        <div id="rcSemFoto">
+          <p class="muted">Nenhuma foto guardada. Enquanto estiver assim, o recuperar manda só o texto.</p>
+          <p class="muted">Escolha o arquivo no campo acima e toque em <b>Salvar</b> &mdash; guardar a foto já liga o envio.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Assim o cliente vai receber</h2>
+        <p class="muted">Texto de exemplo, com {dias} trocado por &ldquo;há 1 mês e 4 dias&rdquo;:</p>
+        <pre class="exemplo" id="rcExemplo"></pre>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- CLIENTES -->
+    <section data-pagina="clientes" hidden>
+      <div class="card">
+        <h2>Espelho no Supabase</h2>
+        <p class="muted" style="margin-top:0" id="clResumo">…</p>
+        <div class="linha">
+          <button class="verde" type="button" id="clSincronizar">Sincronizar agora do painel MC</button>
+          <span class="muted">copia usuário, telefone, expiração, status e nota para o banco</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Telefone avulso</h2>
+        <p class="muted" style="margin-top:0">Para quem não aparece na lista (linha de teste, acesso antigo):
+          digite o usuário exatamente como ele é e o número. Fica guardado no Supabase e vale para os avisos.</p>
+        <form id="formAvulso" class="linha">
+          <input type="text" id="clAvulsoUsuario" placeholder="usuário (sem @, sem espaço)" style="flex:1;min-width:170px"
+                 autocomplete="off" autocapitalize="off" spellcheck="false">
+          <input type="tel" id="clAvulsoTelefone" class="maq" inputmode="tel" autocomplete="off" placeholder="(11) 91234-5678">
+          <button type="submit" class="verde" style="width:auto">Salvar telefone</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Exportar e importar CSV</h2>
+        <p class="muted" style="margin-top:0">As colunas são sempre
+          <code>Usuário;Telefone;Expira;Status;Nota</code>. Na importação o que estiver vazio é ignorado e o
+          telefone vai para a lista de envios do WhatsApp.</p>
+        <div class="linha"><span class="baixar" id="clExportar">Baixar clientes.csv</span></div>
+        <div style="margin-top:12px">
+          <label>Anexar CSV (até 5 MB)</label>
+          <input type="file" id="clCsv" accept=".csv,text/csv">
+          <div style="margin-top:10px"><button class="prim" type="button" id="clImportar">Importar para o banco</button></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Clientes guardados</h2>
+        <p class="muted" style="margin-top:0" id="clAvisoLista"></p>
+        <div class="linha" style="margin-bottom:10px" id="clBarraLote" hidden>
+          <button type="button" class="segundo" id="btnLoteClientes">Não recuperados</button>
+          <span class="muted">marque quem <b>não</b> deve receber &mdash; as mesmas marcas da aba
+            <a href="#acessos">Acessos</a>.</span>
+        </div>
+        <table id="tabelaClientes">
+          <thead>
+            <tr><th class="lote">pular</th><th>Usuário</th><th>Telefone</th><th>Expira</th>
+              <th>Faltam</th><th>Status</th><th>Nota</th><th></th></tr>
+          </thead>
+          <tbody id="clLinhas"></tbody>
+        </table>
+        <p class="muted" style="margin-bottom:0">O <b>recuperar</b> da linha manda a mensagem da aba
+          <a href="#recuperacao">Recuperação</a> (com a foto, se a foto estiver ligada) para o
+          telefone guardado nesse cliente. O <b>Não recuperados</b> manda para todos os vencidos do painel MC de uma vez
+          &mdash; a lista é contada no servidor, então nada depende desta tela; só fica de fora o que você marcar e o que
+          já recebeu nas últimas 3 horas.</p>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- DELETAR -->
+    <section data-pagina="deletar" hidden>
+      <div class="card">
+        <h2>Apagar por intervalo</h2>
+        <p class="muted" style="margin-top:0">Para usuário que é <b>prefixo + número</b>, tipo
+          <code>r566001</code>. O intervalo conta as duas pontas: de <b>566001</b> até <b>566100</b>
+          são <b>100</b> usuários. Zero na frente (<code>r0566001</code>) também bate.</p>
+        <div class="linha">
+          <div style="flex:1;min-width:110px">
+            <label for="apPrefixo">prefixo do usuário</label>
+            <input type="text" id="apPrefixo" value="r" autocomplete="off" autocapitalize="off" spellcheck="false">
+          </div>
+          <div style="flex:1;min-width:110px">
+            <label for="apDe">de</label>
+            <input type="text" id="apDe" inputmode="numeric" autocomplete="off" placeholder="566001">
+          </div>
+          <div style="flex:1;min-width:110px">
+            <label for="apAte">até</label>
+            <input type="text" id="apAte" inputmode="numeric" autocomplete="off" placeholder="566100">
+          </div>
+        </div>
+        <div class="linha" style="margin-top:12px">
+          <button type="button" class="verm" id="btnApagar">Detectar e apagar</button>
+          <span class="muted">limite de <span id="apLimite">300</span> nomes por lote &middot; nada é apagado antes do modal</span>
+        </div>
+        <p class="muted" style="margin-bottom:0">A lista é montada no servidor, varrendo todas as páginas
+          do painel MC &mdash; não depende do que está na tela. Depois de apagar, a linha some do MC e o
+          acesso para de funcionar na hora.</p>
+      </div>
+
+      <div class="barra" id="apAndamento" hidden>
+        <b>Exclusão em andamento</b>
+        <span class="muted" id="apAndamentoTexto">contando&hellip;</span>
+        <button type="button" class="verde" id="btnVerExclusao">Ver a exclusão</button>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- LINKS -->
+    <section data-pagina="links" hidden>
+      <div class="card">
+        <h2>Encurtar um link</h2>
+        <p class="muted" style="margin-top:0">Sai pelo seu serviço de links (<code id="lkBase"></code>), então o clique
+          aparece lá no relatório. <span id="lkLogado"></span></p>
+        <label for="lkUrl">endereço comprido</label>
+        <input type="url" id="lkUrl" autocomplete="off" autocapitalize="off" spellcheck="false"
+               placeholder="https://exemplo.com.br/pagina">
+        <div class="linha" style="margin-top:12px">
+          <div style="flex:1;min-width:130px">
+            <label for="lkSlug">final do link (opcional)</label>
+            <input type="text" id="lkSlug" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="pix-peixeiro">
+          </div>
+          <div style="flex:1;min-width:130px">
+            <label for="lkTitulo">nome para o relatório (opcional)</label>
+            <input type="text" id="lkTitulo" autocomplete="off" placeholder="renovacao">
+          </div>
+        </div>
+        <div class="linha" style="margin-top:12px">
+          <button type="button" class="verde" id="lkBotao">Encurtar</button>
+          <span class="muted">letra minúscula, número e traço no final do link</span>
+        </div>
+        <p class="erro" id="lkErro" style="margin:10px 0 0" hidden></p>
+        <div class="ok" id="lkResultado" hidden>
+          <b id="lkCurto"></b>
+          <div class="linha" style="margin-top:8px">
+            <button type="button" id="lkCopiar">Copiar</button>
+            <a href="#" id="lkAbrir" target="_blank" rel="noopener">abrir</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Usar no código</h2>
+        <p class="muted" style="margin-top:0">Toda ação do painel está atrás do login, então o navegador nunca vê
+          chave nenhuma. Lá na função:</p>
+        <pre class="exemplo">import { encurtar } from "./encurtador.ts";
+await encurtar("https://...", "pix", "renovacao");
+// { ok: true, curto: "https://.../pix", alvo: "https://...", visita: false }</pre>
+        <p class="muted">Se o encurtador estiver fora, volta <code>ok=false</code> e nada quebra:
+          quem chama usa o endereço comprido.</p>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- SENHA -->
+    <section data-pagina="senha" hidden>
+      <div class="card">
+        <h2>Trocar a senha do painel</h2>
+        <div class="erro" id="snErro" hidden></div>
+        <form id="formSenha">
+          <label>Senha atual</label>
+          <input type="password" id="snAtual" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+          <label>Senha nova (mínimo 8 caracteres)</label>
+          <input type="password" id="snNova" autocomplete="new-password" minlength="8" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+          <div style="margin-top:14px"><button class="prim" type="submit">Trocar e sair</button></div>
+        </form>
+        <p class="muted" style="margin-bottom:0">A senha é guardada como hash (PBKDF2, 200 mil iterações) na linha
+          <code>greenapi_config</code>. Trocar derruba todas as sessões abertas, inclusive neste aparelho.</p>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- APAGAR UMA LINHA -->
+    <section data-pagina="apagar" hidden>
+      <div class="card">
+        <h2>Apagar este acesso?</h2>
+        <table>
+          <tr><th>ID da linha</th><td><b id="alId"></b></td></tr>
+          <tr><th>Usuário</th><td id="alUsuario"></td></tr>
+          <tr><th>Telefone</th><td id="alTelefone"></td></tr>
+          <tr><th>Expira</th><td id="alExpira"></td></tr>
+          <tr><th>Nota</th><td class="muted" id="alNota"></td></tr>
+        </table>
+        <div class="erro" style="margin-top:14px">Isso é irreversível: a linha sai do painel MC na hora e o cliente perde o acesso.</div>
+        <form id="formApagarLinha" class="linha">
+          <label class="cb" style="margin:0 10px 0 0"><input type="checkbox" id="alConfirmar" value="sim" style="width:auto">
+            entendo que o cliente perde o acesso agora</label>
+          <button class="verm" type="submit" id="alBotao">Sim, apagar</button>
+          <a href="#acessos">cancelar</a>
+        </form>
+      </div>
+    </section>
+
+    <p class="muted" style="margin-top:20px">Painel online &middot; direto do GitHub Pages &middot; <span id="relogio"></span></p>
+  </div>
 </div>
-<script>location.replace("https://o-peixeiro-2peer.onrender.com/painel/");</script>
+
+<!-- ============================================================ MODAIS -->
+<div class="modal" id="modalMescla" hidden role="dialog" aria-modal="true" aria-labelledby="mdTitulo">
+  <div class="modal-caixa">
+    <h2 id="mdTitulo">Confirmar a mesclagem</h2>
+    <p class="muted" style="margin-top:0">O telefone do <b>1</b> vai para o <b>2</b>. Os acessos, notas e
+      a expiração continuam como estão.</p>
+    <div class="linha">
+      <div class="col"><span class="rotulo">1 &middot; empresta o telefone</span><div id="mdOrigem"></div></div>
+      <div class="col"><span class="rotulo">2 &middot; recebe o telefone</span><div id="mdDestino"></div></div>
+    </div>
+    <p id="mdAviso" class="erro" style="margin-top:12px"></p>
+    <div class="linha" style="margin-top:12px">
+      <button type="button" id="mdVoltar">Voltar</button>
+      <button type="button" class="verde" id="mdConfirmar">Sim, mesclar os telefones</button>
+    </div>
+  </div>
+</div>
+
+<div class="barra" id="mesclaBarra" hidden>
+  <b>Mesclar telefone</b>
+  <span class="muted" id="mesclaContagem">escolha 2 usuários</span>
+  <button type="button" class="verde" id="btnConfirmar" disabled>Revisar e confirmar</button>
+  <button type="button" id="btnSairMesclar">Cancelar</button>
+</div>
+
+<div class="barra" id="loteBarra" hidden>
+  <b>Não recuperados</b>
+  <span class="muted" id="loteContagem">nenhum marcado: vai para TODOS os vencidos</span>
+  <button type="button" class="verde" id="btnRevisarLote">Revisar e enviar</button>
+  <button type="button" id="btnDesmarcar">Desmarcar todos</button>
+  <button type="button" id="btnSairLote">Sair</button>
+</div>
+
+<div class="barra" id="loteAndamento" hidden>
+  <b>Envio em andamento</b>
+  <span class="muted" id="loteAndamentoTexto">contando&hellip;</span>
+  <button type="button" class="verde" id="btnVerEnvio">Ver o envio</button>
+</div>
+
+<div class="modal" id="modalLote" hidden role="dialog" aria-modal="true" aria-labelledby="mlTitulo">
+  <div class="modal-caixa">
+    <div id="mlRevisar">
+      <h2 id="mlTitulo">Confirmar o envio para os não recuperados</h2>
+      <p class="muted" style="margin-top:0">A lista é remontada na função, página por página, direto do
+        painel MC &mdash; não é o que está na tela. Vai a mensagem da aba
+        <a href="#recuperacao">Recuperação</a> para todos os vencidos,
+        <b>menos</b> os marcados na coluna <b>pular</b>.</p>
+      <div class="numeros">
+        <div><span class="rotulo">vão receber</span><b id="mlAlvos">?</b></div>
+        <div><span class="rotulo">vencidos no painel MC</span><b id="mlVencidos">?</b></div>
+        <div><span class="rotulo">marcados para pular</span><b id="mlPulados">0</b></div>
+        <div><span class="rotulo">sem telefone</span><b id="mlSemTelefone">0</b></div>
+        <div><span class="rotulo">já receberam nas últimas 3h</span><b id="mlEsperando">0</b></div>
+        <div><span class="rotulo">só no espelho, sem linha no MC</span><b id="mlForaMC">0</b></div>
+      </div>
+      <p class="muted" style="margin:6px 0">Foto junto: <b id="mlFoto">?</b></p>
+      <p class="muted" style="margin:6px 0" id="mlBusca"></p>
+      <p class="muted" style="margin:6px 0">Os primeiros que vão receber: <span class="nomes" id="mlNomes"></span></p>
+      <p class="muted" style="margin:6px 0" id="mlFora" hidden></p>
+      <p id="mlAviso" class="erro" style="margin-top:12px" hidden></p>
+      <div class="linha" style="margin-top:12px">
+        <button type="button" id="mlVoltar">Voltar</button>
+        <button type="button" class="verde" id="mlEnviar" disabled>Sim, enviar para todos</button>
+      </div>
+    </div>
+
+    <div id="mlProgresso" hidden>
+      <h2>Enviando as recuperações</h2>
+      <p class="muted" style="margin-top:0">Não feche o painel até terminar &mdash; se fechar, o lote para
+        sozinho no item que faltava e nada fica marcado como enviado duas vezes.</p>
+      <div class="prog"><i id="lpBarra"></i></div>
+      <p style="margin:6px 0"><b id="lpTexto">preparando&hellip;</b></p>
+      <p class="muted" style="margin:6px 0">Erros: <span class="nomes" id="lpErros"></span></p>
+      <p id="lpMotivo" class="erro" style="margin-top:12px" hidden></p>
+      <div class="linha" style="margin-top:12px">
+        <button type="button" class="verm" id="lpParar">Parar de enviar</button>
+        <button type="button" id="lpFechar">Fechar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="modalApagar" hidden role="dialog" aria-modal="true" aria-labelledby="maTitulo">
+  <div class="modal-caixa">
+    <div id="maRevisar">
+      <h2 id="maTitulo">Confirmar a exclusão no painel MC</h2>
+      <p class="muted" id="maIntervalo" style="margin-top:0"></p>
+      <div class="numeros">
+        <div><span class="rotulo">vão ser apagados</span><b id="maAlvos">?</b></div>
+        <div><span class="rotulo">nomes no intervalo</span><b id="maQtd">?</b></div>
+        <div><span class="rotulo">existem no painel MC</span><b id="maNoMc">?</b></div>
+        <div><span class="rotulo">não existem (buracos)</span><b id="maFaltando">?</b></div>
+        <div><span class="rotulo">marcados para manter</span><b id="maMantidos">0</b></div>
+        <div><span class="rotulo">ainda ativos</span><b id="maAtivos">?</b></div>
+      </div>
+      <p class="erro" id="maAviso" style="margin:6px 0" hidden></p>
+      <p class="erro" id="maTudo" style="margin:6px 0" hidden></p>
+      <label class="cb"><input type="checkbox" id="maAtivosCb" value="1">
+        apagar também quem ainda está <b>ativo</b> (não venceu)</label>
+      <label class="cb"><input type="checkbox" id="maEspelho" value="1">
+        tirar também do espelho (some da aba Clientes)</label>
+      <label class="rotulo" for="maLista">marque a caixinha de quem deve FICAR (não ser apagado)</label>
+      <div class="lista" id="maLista"></div>
+      <label for="maPalavra">escreva <b>deletar</b> para liberar o botão</label>
+      <input type="text" id="maPalavra" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="deletar">
+      <div class="linha" style="margin-top:12px">
+        <button type="button" id="maVoltar">Voltar</button>
+        <button type="button" class="verm" id="maConfirmar" disabled>Confirmar e apagar</button>
+      </div>
+    </div>
+
+    <div id="maProgresso" hidden>
+      <h2>Apagando os acessos</h2>
+      <p class="muted" style="margin-top:0">Não feche o painel até terminar &mdash; se fechar, a exclusão para
+        no item que faltava e a conferência continua valendo por 10 minutos.</p>
+      <div class="prog"><i id="apBarra"></i></div>
+      <p style="margin:6px 0"><b id="apTexto">preparando&hellip;</b></p>
+      <p class="muted" style="margin:6px 0">Erros: <span class="nomes" id="apErros"></span></p>
+      <p id="apMotivo" class="erro" style="margin-top:12px" hidden></p>
+      <div class="linha" style="margin-top:12px">
+        <button type="button" class="verm" id="apParar">Parar de apagar</button>
+        <button type="button" id="apFechar">Fechar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
