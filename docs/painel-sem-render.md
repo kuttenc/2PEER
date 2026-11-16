@@ -145,6 +145,13 @@ aviso vai aparecer de vez em quando — é por isso, não é senha errada.
 - Lote (Não recuperados / Deletar) é conduzido pelo navegador: a conferência congela a lista
   no banco (`painel_lote`), cada clique manda um item por vez, e fechar a aba para o lote sem
   deixar metade enviado. A conferência vale 15 minutos (recuperar) / 10 minutos (apagar).
+- **Ritmo do "Não recuperados"**: depois de cada mensagem a função sorteia a espera entre
+  `recupera_pausa_min` e `recupera_pausa_max` (colunas de `greenapi_config`, reguláveis na aba
+  Configuração, item 5; padrão 4,5 s a 1 min 45 s) e devolve em `esperar` na resposta do
+  `lote_item`. O navegador obedece e mostra a contagem. O sorteio é no servidor de propósito:
+  Acessos e Clientes usam o mesmo motor e um F5 no meio do lote não muda o ritmo. Não vale para
+  apagar nem para a agenda das 6h. Com 900 clientes na lista, a conta é de horas com o painel
+  aberto (4,5–105 s ≈ 13 h 40 no meio-termo) — por isso a régua existe.
 
 ## Provar sem mexer em cliente de verdade
 
