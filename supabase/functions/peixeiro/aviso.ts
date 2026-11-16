@@ -33,8 +33,9 @@ async function carregarBytes(nome: string): Promise<Uint8Array> {
   for (const caminho of candidatos) {
     try {
       return await Deno.readFile(new URL(caminho, import.meta.url));
-    } catch (erro) {
-      if ((erro as { code?: string }).code !== "NotFound") throw erro;
+    } catch {
+      // No Edge Runtime a leitura fora do pacote morre com NotFound, NotCapable ou um erro
+      // de SO sem `code`: qualquer um deles só significa "tenta o próximo, no fim baixa".
     }
   }
   const base = (Deno.env.get("PAINEL_ASSETS_URL") || "https://kuttenc.github.io/2PEER/assets").replace(/\/+$/, "");
@@ -146,7 +147,9 @@ export async function gerarImagemAviso(conf: Conf, textoDias: string): Promise<U
 export async function previaAvisoEmB64(conf: Conf, textoDias: string): Promise<string> {
   try {
     return "data:image/png;base64," + bytesParaB64(await gerarImagemAviso(conf, textoDias));
-  } catch {
+  } catch (exc) {
+    // A tela segue sem imagem, mas o log diz o porquê: sem isto o erro some junto com o "".
+    console.error("[aviso] previa falhou:", String(exc).slice(0, 300));
     return "";
   }
 }

@@ -50,6 +50,19 @@ function cabecalhoAuth(bearer: string): Record<string, string> {
   return { ...CABECALHOS, authorization: `Bearer ${normalizarBearer(bearer)}` };
 }
 
+/** Joga fora o bearer guardado. Sem isto um token recusado pelo MC (401) fica no cache até
+ *  a expiração e o painel continua mostrando "logado" enquanto toda leitura falha. */
+export async function limparCacheToken(): Promise<void> {
+  await consultar("delete from public.mcapi_token_cache where id = 1");
+}
+
+/** GET /lines pelas páginas. O 401/403 limpa o cache para a próxima chamada logar de novo. */
+async function getLinhas(bearer: string, params: URLSearchParams): Promise<Response> {
+  const resp = await fetch(`${LINES_URL}?${params}`, { headers: cabecalhoAuth(bearer) });
+  if (resp.status === 401 || resp.status === 403) await limparCacheToken();
+  return resp;
+}
+
 // ---------------------------------------------------------------- login + cache do token
 
 export type TokenInfo = { ok: boolean; token?: string; login_status?: number; erro?: string };
@@ -171,7 +184,7 @@ export async function listarLinhas(
   if (busca) params.set("generalSearch", busca);
   let resp: Response;
   try {
-    resp = await fetch(`${LINES_URL}?${params}`, { headers: cabecalhoAuth(bearer) });
+    resp = await getLinhas(bearer, params);
   } catch (exc) {
     return { linhas: [], info: { pagina, paginas: pagina, total: 0, exato: false, error: String(exc).slice(0, 160) }, brutos: [] };
   }
@@ -240,7 +253,7 @@ export async function varrerMc(
     if (busca) params.set("generalSearch", busca);
     let body: Record<string, unknown> = {}, status = 0;
     try {
-      const resp = await fetch(`${LINES_URL}?${params}`, { headers: cabecalhoAuth(bearer) });
+      const resp = await getLinhas(bearer, params);
       status = resp.status;
       body = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
     } catch (exc) {
@@ -280,7 +293,7 @@ export async function coletarLinhasVencendo(
     const params = new URLSearchParams({ quantityPerPage: "200", orderBy: "exp_date.ASC", page: String(pagina) });
     let body: Record<string, unknown>;
     try {
-      const resp = await fetch(`${LINES_URL}?${params}`, { headers: cabecalhoAuth(bearer) });
+      const resp = await getLinhas(bearer, params);
       status = resp.status;
       if (resp.status >= 400) return { itens: saida, status };
       body = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
@@ -323,7 +336,7 @@ export async function coletarLinhasVencidas(
     const params = new URLSearchParams({ quantityPerPage: "200", orderBy: "exp_date.DESC", page: String(pagina) });
     let body: Record<string, unknown>;
     try {
-      const resp = await fetch(`${LINES_URL}?${params}`, { headers: cabecalhoAuth(bearer) });
+      const resp = await getLinhas(bearer, params);
       status = resp.status;
       if (resp.status >= 400) return { itens: saida, status };
       body = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
@@ -380,7 +393,7 @@ export async function linhaPorId(bearer: string, linhaId: string, maxPaginas = 4
     const params = new URLSearchParams({ page: String(pagina), quantityPerPage: "200", orderBy: "createdAt.DESC" });
     let itens: Record<string, unknown>[] = [];
     try {
-      const resp = await fetch(`${LINES_URL}?${params}`, { headers: cabecalhoAuth(bearer) });
+      const resp = await getLinhas(bearer, params);
       itens = (((await resp.json()) || {}) as Record<string, unknown>).items as Record<string, unknown>[] || [];
     } catch {
       return null;
