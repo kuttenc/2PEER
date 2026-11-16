@@ -234,7 +234,9 @@ alter table public.greenapi_config
   add column if not exists recupera_photo_base64 text not null default '',
   add column if not exists recupera_photo_name text not null default '',
   add column if not exists recupera_send_photo boolean not null default false,
-  add column if not exists recupera_destino text not null default '';
+  add column if not exists recupera_destino text not null default '',
+  add column if not exists recupera_pausa_min numeric not null default 4.5,
+  add column if not exists recupera_pausa_max numeric not null default 105;
 
 create table if not exists public.vencimento_avisos (
   username text not null,

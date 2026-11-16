@@ -184,6 +184,28 @@
         </div>
 
         <div class="card">
+          <h2>5. Ritmo do botão &ldquo;Não recuperados&rdquo;</h2>
+          <p class="muted" style="margin-top:0">Só mexe no lote que manda a mensagem com foto para os
+            vencidos &mdash; o botão das abas Acessos e Clientes, que fazem a mesma coisa. Entre uma
+            mensagem e outra o painel espera um tempo <b>sorteado</b> aí dentro, nunca o mesmo número
+            duas vezes, para nada sair em bloco. Não toca na agenda das 6h nem no
+            &ldquo;recuperar&rdquo; de uma linha só.</p>
+          <div class="linha">
+            <div style="flex:1;min-width:130px">
+              <label for="cfPausaMin">espera mínima (segundos)</label>
+              <input type="number" name="recupera_pausa_min" id="cfPausaMin" step="0.5" min="0.5" max="600"
+                     inputmode="decimal">
+            </div>
+            <div style="flex:1;min-width:130px">
+              <label for="cfPausaMax">espera máxima (segundos)</label>
+              <input type="number" name="recupera_pausa_max" id="cfPausaMax" step="1" min="1" max="900"
+                     inputmode="decimal">
+            </div>
+          </div>
+          <p class="muted" id="cfPausaResumo" style="margin-bottom:0"></p>
+        </div>
+
+        <div class="card">
           <button class="prim" type="submit">Gravar no banco agora</button>
           <p class="muted" style="margin-bottom:0">Grava na linha <code>greenapi_config</code> que o site e a agenda leem.</p>
         </div>
@@ -563,9 +585,11 @@
     <div id="mlProgresso" hidden>
       <h2>Enviando as recuperações</h2>
       <p class="muted" style="margin-top:0">Não feche o painel até terminar &mdash; se fechar, o lote para
-        sozinho no item que faltava e nada fica marcado como enviado duas vezes.</p>
+        sozinho no item que faltava e nada fica marcado como enviado duas vezes. Entre uma mensagem e outra
+        o painel espera o tempo regulado em Configuração (sempre sorteado), então muita gente leva horas.</p>
       <div class="prog"><i id="lpBarra"></i></div>
       <p style="margin:6px 0"><b id="lpTexto">preparando&hellip;</b></p>
+      <p class="muted" id="lpPausa" style="margin:6px 0" hidden></p>
       <p class="muted" style="margin:6px 0">Erros: <span class="nomes" id="lpErros"></span></p>
       <p id="lpMotivo" class="erro" style="margin-top:12px" hidden></p>
       <div class="linha" style="margin-top:12px">

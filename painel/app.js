@@ -344,12 +344,41 @@
     $("cfRenovaJanela").value = texto(conf.renova_janela_dias);
     $("cfRenovaLegenda").value = texto(conf.renova_legenda);
     $("cfRecuperaLegenda").value = texto(conf.recupera_legenda);
+    $("cfPausaMin").value = texto(conf.recupera_pausa_min);
+    $("cfPausaMax").value = texto(conf.recupera_pausa_max);
+    desenharPausa();
     $("cfRenovaDiasTexto").textContent = texto(conf.renova_dias);
     $("cfHoje").textContent = "Hoje: " + (conf.photo_present
       ? (texto(conf.photo_name) || "arquivo") + " · " + conf.photo_kb + " KB"
       : "nenhuma foto guardada");
     atualizarQr();
   }
+
+  /** A régua do "Não recuperados": o resumo em horas é o que ele precisa ver antes de
+   *  apertar o botão com 300 ou 900 clientes na lista. */
+  function desenharPausa() {
+    var caixa = $("cfPausaResumo");
+    if (!caixa) return;
+    var min = Number($("cfPausaMin").value), max = Number($("cfPausaMax").value);
+    if (!isFinite(min) || !isFinite(max) || max <= min) {
+      caixa.textContent = "a espera máxima precisa ser maior que a mínima.";
+      return;
+    }
+    var media = (min + max) / 2;
+    caixa.textContent = "sorteia entre " + min + "s e " + max + "s para cada mensagem · na média, " +
+      "300 clientes levam " + emHoras(300 * media) + " e 900 levam " + emHoras(900 * media) +
+      ". O painel tem de ficar aberto esse tempo todo.";
+  }
+
+  function emHoras(segundos) {
+    var h = Math.floor(segundos / 3600), m = Math.round((segundos - h * 3600) / 60);
+    if (m === 60) { h += 1; m = 0; }
+    return h ? h + "h" + (m ? " " + m + "min" : "") : m + "min";
+  }
+
+  ["cfPausaMin", "cfPausaMax"].forEach(function (id) {
+    $(id).addEventListener("input", desenharPausa);
+  });
 
   function escreverEstado(pill, estado) {
     pill.textContent = texto(estado.state);
@@ -452,6 +481,8 @@
         renova_janela_dias: $("cfRenovaJanela").value,
         renova_legenda: $("cfRenovaLegenda").value,
         recupera_legenda: $("cfRecuperaLegenda").value,
+        recupera_pausa_min: $("cfPausaMin").value,
+        recupera_pausa_max: $("cfPausaMax").value,
         editar_instancia: $("btnvar").dataset.editando || "",
         foto_base64: dataUrl || "",
         foto_nome: arquivo ? arquivo.name : "",
@@ -852,7 +883,7 @@
 
   // ------------------------------------------------------------------ motor dos lotes
 
-  var lote = { tipo: "recuperar", rodando: false, temporizador: null, terminou: false };
+  var lote = { tipo: "recuperar", rodando: false, temporizador: null, terminou: false, passo: null };
 
   function desenharProgresso(tipo, estado) {
     var total = estado.total || 0;
@@ -882,11 +913,13 @@
     lote.tipo = tipo;
     lote.rodando = true;
     lote.terminou = false;
-    var passo = function () {
+    lote.passo = function () {
       if (!lote.rodando) return;
       chamar("lote_item", { tipo: tipo }, 120).then(function (d) {
+        if (!lote.rodando) return;
         if (!d.ok) {
           lote.rodando = false;
+          pararTemporizador();
           recado(d.erro, d.detalhe);
           return;
         }
@@ -896,10 +929,36 @@
           terminarLote(tipo, estado);
           return;
         }
-        setTimeout(passo, 120);
+        esperar(Number(d.esperar || 0) * 1000 || 120);
       });
     };
-    passo();
+    lote.passo();
+  }
+
+  /** A função devolve quantos segundos esperar antes do próximo item (0 = sem espera,
+   *  como no lote de apagar). A contagem na tela é para ele saber que o lote está vivo. */
+  function esperar(ms) {
+    pararTemporizador();
+    var alvo = $("lpPausa");
+    if (ms <= 1000 || !alvo) {
+      lote.temporizador = setTimeout(function () { lote.temporizador = null; lote.passo(); }, ms);
+      return;
+    }
+    var restante = Math.ceil(ms / 1000);
+    alvo.hidden = false;
+    alvo.textContent = "próxima mensagem em " + restante + "s";
+    lote.temporizador = setInterval(function () {
+      restante -= 1;
+      if (restante > 0) { alvo.textContent = "próxima mensagem em " + restante + "s"; return; }
+      pararTemporizador();
+      if (lote.rodando) lote.passo();
+    }, 1000);
+  }
+
+  function pararTemporizador() {
+    if (lote.temporizador) { clearTimeout(lote.temporizador); clearInterval(lote.temporizador); lote.temporizador = null; }
+    var alvo = $("lpPausa");
+    if (alvo) { alvo.hidden = true; alvo.textContent = ""; }
   }
 
   function mostrarEstado(tipo, estado) {
@@ -921,6 +980,7 @@
   }
 
   function terminarLote(tipo, estado) {
+    pararTemporizador();
     lote.rodando = false;
     lote.terminou = true;
     mostrarEstado(tipo, estado);
@@ -958,6 +1018,7 @@
     var botao = $(tipo === "apagar" ? "apParar" : "lpParar");
     if (botao) { botao.disabled = true; botao.textContent = "parando…"; }
     chamar("lote_parar", { tipo: tipo }, 30).then(function () {
+      pararTemporizador();
       lote.rodando = false;
       if (botao) { botao.disabled = false; botao.textContent = tipo === "apagar" ? "Parar de apagar" : "Parar de enviar"; }
     });

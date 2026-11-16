@@ -107,7 +107,7 @@ const CAMPOS_TEXTO = [
   "renova_legenda", "recupera_legenda",
 ];
 const CAMPOS_BOOL = ["send_photo", "aviso_ativo", "renova_ativo"];
-const CAMPOS_NUMERICO = ["aviso_dias", "renova_dias", "renova_janela_dias"];
+const CAMPOS_NUMERICO = ["aviso_dias", "renova_dias", "renova_janela_dias", "recupera_pausa_min", "recupera_pausa_max"];
 const OBRIGATORIOS = ["api_url", "media_url", "id_instance", "api_token"];
 const TRAVADOS = ["id_instance", "api_token"];
 const PARADA_ERROS = 3;
@@ -769,7 +769,24 @@ export async function loteItem(dados: Registro, ctx: Contexto): Promise<Saida> {
     erro: resultado.erro,
     ...(resultado.parar ? { parar: resultado.parar } : { limiteSeguidas: PARADA_ERROS }),
   });
-  return ok({ item: resultado.info, estado, proximo: estado.rodando && estado.indice < estado.total });
+  const vaiContinuar = estado.rodando && estado.indice < estado.total;
+  const saida: Registro = { item: resultado.info, estado, proximo: vaiContinuar };
+  // A pausa é sorteada aqui, e não no navegador, para que o ritmo seja o mesmo em qualquer
+  // tela (Acessos e Clientes) e sobreviva a um F5 no meio do lote.
+  if (tipo === "recuperar" && vaiContinuar) saida.esperar = await pausaRecuperar();
+  return ok(saida);
+}
+
+/** Quantos segundos esperar antes da próxima mensagem do "Não recuperados". Nunca o mesmo
+ *  número duas vezes: o sorteio é o ponto da regulagem, para as mensagens não saírem em bloco. */
+async function pausaRecuperar(): Promise<number> {
+  const conf = await obterConfig();
+  let de = Number(conf?.recupera_pausa_min ?? 4.5);
+  let ate = Number(conf?.recupera_pausa_max ?? 105);
+  if (!isFinite(de) || de < 0.5) de = 4.5;
+  if (!isFinite(ate) || ate < de) ate = Math.max(de, 105);
+  if (ate > 900) ate = 900;
+  return Math.round((de + Math.random() * (ate - de)) * 10) / 10;
 }
 
 async function itemRecuperar(
