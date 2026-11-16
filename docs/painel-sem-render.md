@@ -66,12 +66,34 @@ são para chamar o banco/Auth/Storage, e o CLI responde `Invalid access token fo
 | `PAINEL_ASSETS_URL` | onde ficam o wasm e a fonte da imagem do aviso | endereço do Pages |
 | `PAINEL_LINK_BASE` | para onde o `{link}` da mensagem de recuperação leva o cliente | `https://kuttenc.github.io/2PEER` |
 
-O `{link}` da Recuperação é montado assim: o endereço acima + `/?d=` + o usuário e o telefone
-em base64 (`abc1234|11999998888` vira `YWJjMTIzNHwxMTk5OTk5ODg4OA`), e esse endereço comprido é
-encurtado no Urtador com o final `rc-<usuario>-<base64>`. Mesmo cliente e mesmo telefone reusam
-sempre o mesmo link; trocou o telefone, o link é outro. Se o encurtador estiver fora, a mensagem
-sai com o endereço comprido — nunca sai sem link. Na virada para produção, é este secret que tem
-de apontar para a página real do cliente.
+O `{link}` da Recuperação é montado assim: o endereço acima + `/r/?l=` + o final `rc-<usuario>-<base64>`
+(o base64 do usuário e do telefone, tudo em minúscula). Mesmo cliente e mesmo telefone reusam sempre
+o mesmo link; trocou o telefone, o link é outro. Se o encurtador estiver fora, a mensagem sai com o
+endereço comprido — nunca sai sem link. Na virada para produção, é este secret que tem de apontar
+para a página real do cliente.
+
+**O final `rc-...` nunca muda, mas o destino muda quando você quiser.** A página `/2PEER/r/` não tem
+endereço nenhum escrito nela: no clique ela pergunta à função (`links_destino`, sem login) para onde
+aquele cliente vai hoje, e a resposta vem de `painel_links.destino` — se estiver vazio, vale
+`greenapi_config.recupera_destino`, o padrão da aba **Links**. Editou na aba, vale também para o link
+que o cliente recebeu ontem, sem reenviar nada. Os links velhos no formato `?d=<base64>` entram pela
+mesma porta: a função decodifica o base64 e chega no mesmo `rc-...`.
+
+| Coluna / tabela | Para quê |
+|---|---|
+| `painel_links` (`slug`, `destino`, `usuario`, `telefone`) | um registro por link enviado; criado sozinho no `recuperar_um` e no lote |
+| `greenapi_config.recupera_destino` | endereço padrão de todos os links sem endereço próprio |
+
+A aba **Links** (`#links`) tem três blocos: o padrão, a lista de links com um campo de endereço por
+cliente, e o encurtador avulso de sempre. As ações novas são `links_padrao_salvar` e
+`links_destino_salvar` (com login) e `links_destino` (sem login, é o clique do cliente).
+
+Cuidado com o que o encurtador responde no clique: link criado **como visita** (sem `URTADOR_TOKEN`)
+tem período de acesso. Em 16/11/2026 o `rc-11zc083-...` que já está no WhatsApp do Pedroso respondia
+`{"accessExpired": true}` e devolvia o cliente para a home do Urtador, enquanto outro link do mesmo
+dia ainda abria. Antes de mandar recuperação para cliente de verdade, coloque o `URTADOR_TOKEN` dele
+como secret da função para o link nascer na conta, e confira no admin do Urtador se os links já
+enviados ainda abrem.
 
 Com o modo teste desligado, **a cópia age de verdade**: o botão da aba Deletar apaga a linha no
 painel MC real, e recuperar/avisar disparam no WhatsApp assim que a instância GreenAPI for
