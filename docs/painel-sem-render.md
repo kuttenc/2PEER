@@ -59,11 +59,25 @@ são para chamar o banco/Auth/Storage, e o CLI responde `Invalid access token fo
 | Nome | Para quê | Na cópia hoje |
 |---|---|---|
 | `DATABASE_URL` | Postgres do Supabase (o painel abre a conexão direto) | banco da cópia |
-| `MC_USERNAME` / `MC_PASSWORD` | logar no painel MC | **vazio** |
-| `PEIXEIRO_MODO_TESTE` | `1` = nada é enviado nem apagado de verdade; a tela mostra a faixa "MODO DE TESTE" | ligado |
+| `MC_USERNAME` / `MC_PASSWORD` | logar no painel MC | preenchidas (a conta real do revendedor) |
+| `PEIXEIRO_MODO_TESTE` | `1` = nada é enviado nem apagado de verdade; a tela mostra a faixa "MODO DE TESTE" | **desligado** desde 16/11/2026 |
 | `URTADOR_TOKEN` | links curtos na sua conta em vez de visita | vazio |
 | `PAINEL_ORIGENS` | origens permitidas no CORS, separadas por vírgula | `https://kuttenc.github.io` |
 | `PAINEL_ASSETS_URL` | onde ficam o wasm e a fonte da imagem do aviso | endereço do Pages |
+
+Com o modo teste desligado, **a cópia age de verdade**: o botão da aba Deletar apaga a linha no
+painel MC real, e recuperar/avisar disparam no WhatsApp assim que a instância GreenAPI for
+colocada na aba Configuração (sem ela, o envio morre em `sem configuracao`). É a mesma conta e
+os mesmos acessos da produção, só que o banco de clientes/telefones é o da cópia.
+
+Para religar a trava enquanto testar:
+
+```bash
+npx supabase secrets set --yes --remote=bzgtptbwcvwpgnhbctjn PEIXEIRO_MODO_TESTE=1
+```
+
+O `2peer/.env` não tem mais essa linha de propósito: se ela estivesse lá, o comando de publicar
+do item "Como publicar de novo" religaria o modo teste sem você querer.
 
 Sem `MC_USERNAME`/`MC_PASSWORD` só duas abas ficam paradas, e elas avisam o motivo na tela:
 **Acessos** e **Deletar** (é o que fala com o painel MC). Início, Configuração, Avisos,
