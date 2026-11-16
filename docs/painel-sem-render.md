@@ -30,11 +30,13 @@ Arquivos novos:
 
 ```bash
 cd 2peer
-SUPABASE_ACCESS_TOKEN=<token da Management API> npx supabase secrets set --yes \
+# o token (sbp_...) fica no .env como SUPABASE_PROJECT_2peer; o CLI só aceita no formato sbp_
+export SUPABASE_ACCESS_TOKEN=$(grep -oE 'SUPABASE_PROJECT_2peer=.*' .env | cut -d= -f2 | tr -d '\r')
+npx supabase secrets set --yes \
   --remote=bzgtptbwcvwpgnhbctjn --env-file .env \
   PAINEL_ORIGENS=https://kuttenc.github.io \
   PAINEL_ASSETS_URL=https://kuttenc.github.io/2PEER/assets
-SUPABASE_ACCESS_TOKEN=<token da Management API> npx supabase functions deploy peixeiro \
+npx supabase functions deploy peixeiro \
   --no-verify-jwt --yes --remote=bzgtptbwcvwpgnhbctjn
 ```
 
@@ -47,6 +49,10 @@ Se os dois comandos voltarem `403 (does not have the necessary privileges)`, o p
 `SUPABASE_ACCESS_TOKEN`, não o código: ele expira ou perde escopo na sua conta e é preciso
 gerar um novo em Account settings → Access tokens. A função que já está no ar continua
 respondendo enquanto isso.
+
+O token é **sempre** `sbp_...` (o da sua conta, em Account → API Tokens). As chaves da tela
+Settings → API Keys do projeto (`sb_publishable_...` e `sb_secret_...`) não servem aqui: elas
+são para chamar o banco/Auth/Storage, e o CLI responde `Invalid access token format` para elas.
 
 ## Secrets que a função usa
 
