@@ -3,6 +3,20 @@
 É o mesmo código do painel, rodando em cima de um **banco separado** e com a trava de
 teste ligada. Nada do que acontece aqui chega num cliente de verdade.
 
+| | |
+| --- | --- |
+| Painel | https://o-peixeiro-2peer.onrender.com/painel/ |
+| Porta fixa | https://kuttenc.github.io/2PEER/painel/ (só redireciona para o Render) |
+| Código | https://github.com/kuttenc/2PEER (público, sem segredo nenhum) |
+| Banco | projeto Supabase `bzgtptbwcvwpgnhbctjn`, só desta cópia |
+| Serviço no Render | `o-peixeiro-2peer`, plano free, Oregon |
+
+## Publicar uma mudança
+
+O Render não recebe webhook de repositório público: depois do push, é preciso entrar em
+*Deploy → Manual Deploy → Deploy latest commit*. (A porta do GitHub Pages atualiza sozinha
+a cada push.)
+
 ## O que está travado
 
 Com `PEIXEIRO_MODO_TESTE=1` (vem ligado no `render-2peer.yaml`):
@@ -30,6 +44,10 @@ atualização é manual: *Manual Deploy → Deploy latest commit* depois de cada
 O `render-2peer.yaml` é o desenho do serviço (blueprint); ele serve para conferir as
 variáveis ou para publicar por *New → Blueprint* caso o Render passe a enxergar a conta
 `kuttenc`.
+
+`MC_USERNAME` e `MC_PASSWORD` estão **fora** da cópia de propósito: sem elas o banco abre e
+o painel inteiro funciona, só as abas Acessos e Deletar avisam que não têm acesso ao painel
+MC. Colocar as duas ali faria a cópia ler (e, com a trava desligada, riscar) as linhas reais.
 
 | Variável | O que é |
 | --- | --- |
