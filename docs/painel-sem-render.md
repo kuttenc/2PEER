@@ -365,6 +365,11 @@ WhatsApp* (webhook não instalado), *no servidor*, *entregue ao WhatsApp*, *cheg
   `PEIXEIRO_MODO_TESTE=1` local e as contas conferidas contra o banco). O comando está na seção
   "As duas listas do Não recuperados", mais adiante.
 
+- Antes de mexer no espelho (`mc_linhas`), salve o que está lá: `python tools/_exporta_espelho.py`
+  traz as 980 linhas e `python tools/_exporta_espelho.py so-espelho` traz só as que nunca tiveram
+  linha no painel MC (o filtro `linha_id` vazio). O arquivo cai em `../backup-espelho/`, fora do
+  repositório de propósito — tem telefone de cliente dentro. É leitura pura, não apaga nada.
+
 ## Quando o "Sim, enviar para todos" não manda nada
 
 Medido em 16/11/2026 com o bearer que já estava no cache (sem logar de novo no MC):
@@ -427,6 +432,38 @@ entra, filtro, `lote_executar` sem confirmar, três envios simulados, o log, a f
 limpeza apaga a fila, os `renovacao_avisos` e os `painel_links` que a bateria criou. Com
 `PEIXEIRO_PROVA_URL=` apontando para a função publicada a bateria para antes do
 `lote_executar` — ela prova a contagem no ar sem abrir envio nenhum.
+
+## De onde vieram os 966 que não estão no MC (medido em 16/11/2026)
+
+O painel MC (`mcapi.knewcms.com:2087`) é o único lugar onde o acesso do cliente existe de verdade;
+`mc_linhas` é só o espelho daqui do banco. A conta que a cópia e o site usam é a mesma
+(`MC_USERNAME` dos secrets) e ela tem **14 linhas**. O CSV que virou o espelho tem **980 linhas**, e
+elas não são todas do mesmo balaio:
+
+- **963** começam com `r566`, e **960** dessas são exatamente `r566001` a `r566960` em ordem, sem
+  buraco — nome sequencial assim não sai do gerador do MC (os outros 17 têm cara de sempre: `11zc083`,
+  `3u432a1`). As 963 compartilham **uma data só** de expiração e trazem `xxxxxxxxxxx` na coluna do
+  nome do cliente; os 963 telefones são distintos entre si.
+- **17** têm nome no formato do MC. Dessas, **13** estão hoje no MC (com `linha_id`), **4** não estão
+  mais (foram apagadas de lá), e **1** linha do MC (`r5660a6`) é a única da série `r566` que existe de
+  fato — por isso o total do espelho é 980 e o de linhas de verdade é 14.
+
+Ou seja: os 966 que ficam de fora do lote montado no painel MC nunca foram acessos dessa conta. A
+prova pelo lado do site: os 1.000 eventos mais recentes de renovação (`line_test` / `line_test_reuse`)
+no banco de produção falam de 27 usuários e **nenhum** começa com `r566` — se eles vivessem na conta
+do MC, já teriam aparecido por aí.
+
+Por que isso importa para "importar direito pelo MC": o que a API do MC faz de escrita, e que o
+painel usa, é criar linha nova (`POST /lines/test`, que sorteia usuário e senha próprios) e apagar
+(`DELETE /lines/<id>`). Não tem como pedir uma linha **com o nome que o cliente já tem**, então os
+`r566…` não voltam para o MC pelo caminho de sempre. Restam três caminhos, e a escolha é do dono:
+(A) eles existem em outra conta do MC → trocar `MC_USERNAME`/`MC_PASSWORD` dos secrets e "Sincronizar
+agora"; (B) não existem mais em lugar nenhum → criar 960 linhas novas (todo cliente recebe usuário e
+senha novos) ; (C) apagar os 966 do espelho e ficar só com as 14 de verdade.
+
+O passo seguro de qualquer um dos três é o backup antes: `python tools/_exporta_espelho.py` (tudo) e
+`python tools/_exporta_espelho.py so-espelho` (só os 966 sem `linha_id`). Sai em `../backup-espelho/`,
+fora do git, porque tem telefone de cliente dentro. Nenhum apagamento foi feito.
 
 ## O que os logs do MC guardavam
 
