@@ -361,6 +361,42 @@ WhatsApp* (webhook não instalado), *no servidor*, *entregue ao WhatsApp*, *cheg
   nenhum acesso é criado. Os números da prova (`5511900000011` e vizinhos) são inventados e
   conferidos contra `mc_linhas` antes de entrar no arquivo.
 
+## Quando o "Sim, enviar para todos" não manda nada
+
+Medido em 16/11/2026 com o bearer que já estava no cache (sem logar de novo no MC):
+
+- O **lote só conhece quem existe no painel MC agora**. `varrerMc` varre as páginas do `/lines` e
+  `recuperarContagem` conta em cima disso. Naquela conta o MC devolveu `total: 14`, `pagesQuantity: 1`
+  — 14 linhas, 10 vencidas. Procurar um usuário que só existe no CSV devolve **0**, enquanto a busca
+  de um usuário que está no MC devolve 1: não é filtro nem paginação quebrada, a linha não existe lá.
+- O **espelho** (`mc_linhas`) tinha 980 usuários, 974 com telefone, todos criados no import do CSV das
+  17:07. Import não cria linha no MC: ele preenche o espelho. Por isso o modal mostra
+  "SÓ NO ESPELHO, SEM LINHA NO MC = 966" (980 − 14) e manda usar o botão recuperar da própria linha.
+- `MARCADOS PARA PULAR` é o `localStorage["peixeiro_lote_pular"]` daquele navegador: as marcas
+  **sobrevivem ao F5, à troca de aba e ao login**. Com 12 marcas e 10 vencidos, os 10 bateram nas
+  marcas, `alvos` ficou 0 e a fila nunca nasceu — por isso a aba "Não recuperados" não tinha nada em
+  "enviando". O botão **Desmarcar todos** (`#btnDesmarcar`, ao lado do iniciar do lote) limpa a lista
+  inteira; sem ele o `lote_contagem` continua contando os mesmos pulados.
+- O que fazer com os 966 é decisão dele, não bug: ou o MC deles deveria ter essas linhas (aí a
+  pergunta é para o knewcms — quantas linhas a conta do MC que a função usa tem na tela do painel?), ou o
+  lote precisa de uma fonte nova (varrer o espelho em vez do MC), que hoje não existe.
+
+## O que os logs do MC guardavam
+
+`mcapi_events` é texto puro e o `login_refresh` gravava o corpo inteiro da chamada — **a senha do MC
+aparecia literal** em cada login (34 das 61 linhas do banco da cópia em 16/11/2026), mais o bearer em
+5. A senha não expira como o bearer, então aquele registro valia para sempre. Desde
+`fc28c0c` (cópia) e `dd62cfd` (site do Render) o log guarda só o usuário e as chaves de acesso viram
+`(oculto N chars)`; a limpeza do que já estava gravado é:
+
+```sql
+update public.mcapi_events
+   set request_payload = request_payload - 'password'
+ where request_payload ? 'password';
+```
+
+Rodar no banco da cópia já foi feito (34 linhas limpas, 0 sobras). Na produção é com ele.
+
 ## Quando for para a produção
 
 Nada aqui está pronto para produção enquanto você não decidir. A ordem segura é:
