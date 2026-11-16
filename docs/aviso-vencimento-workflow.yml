@@ -1,0 +1,56 @@
+name: Aviso de vencimento
+
+on:
+  schedule:
+    # 09:00 UTC = 06:00 de Brasília (America/Sao_Paulo, UTC-3)
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      reenviar:
+        description: "reenviar para quem já foi avisado deste vencimento"
+        required: false
+        default: "0"
+        type: choice
+        options:
+          - "0"
+          - "1"
+
+permissions: {}
+
+concurrency:
+  group: aviso-vencimento
+  cancel-in-progress: false
+
+jobs:
+  avisar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      BASE_URL: https://wplay-teste-4h.onrender.com
+      AVISO_TOKEN: ${{ secrets.AVISO_CRON_TOKEN }}
+      REENVIA: ${{ github.event.inputs.reenviar || '0' }}
+    steps:
+      - name: Acordar o serviço no Render
+        run: |
+          curl -sS -m 30 "$BASE_URL/healthz" || echo "healthz ainda dormindo"
+          sleep 75
+
+      - name: Rodar a varredura de vencimento
+        run: |
+          set -uo pipefail
+          url="$BASE_URL/webhook/vencimentos?token=$AVISO_TOKEN&reenviar=$REENVIA"
+          for tentativa in 1 2 3; do
+            echo "== tentativa $tentativa =="
+            saida=$(curl -sS -m 180 -w "\n%{http_code}" "$url" || echo "curl falhou\n000")
+            corpo=${saida%$'\n'*}
+            codigo=${saida##*$'\n'}
+            echo "$corpo"
+            if [ "$codigo" = "200" ]; then
+              echo "OK (HTTP 200)"
+              exit 0
+            fi
+            echo "HTTP $codigo - aguardando o serviço esfriar/acordar e tentando de novo"
+            sleep 40
+          done
+          echo "A varredura não respondeu 200 em 3 tentativas" >&2
+          exit 1

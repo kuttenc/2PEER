@@ -1,0 +1,100 @@
+{% extends "painel_base.html" %}
+{% block titulo %}Links{% endblock %}
+{% block corpo %}
+<div class="card">
+  <h2>Encurtar um link</h2>
+  <p class="muted" style="margin-top:0">Sai pelo seu servico de links
+    (<code>{{ base }}</code>), entao o clique aparece la no relatorio.
+    {% if logado %}Como voce: limite de 30 por minuto.{% else %}Como visita: limite de 10 por minuto por IP.
+    Para o link ficar na sua conta, configure <code>URTADOR_TOKEN</code>.{% endif %}</p>
+  <label for="lkUrl">endereco comprido</label>
+  <input type="url" id="lkUrl" autocomplete="off" autocapitalize="off" spellcheck="false"
+         placeholder="https://exemplo.com.br/pagina">
+  <div class="linha" style="margin-top:12px">
+    <div style="flex:1;min-width:130px">
+      <label for="lkSlug">final do link (opcional)</label>
+      <input type="text" id="lkSlug" autocomplete="off" autocapitalize="off" spellcheck="false"
+             placeholder="pix-peixeiro">
+    </div>
+    <div style="flex:1;min-width:130px">
+      <label for="lkTitulo">nome para o relatorio (opcional)</label>
+      <input type="text" id="lkTitulo" autocomplete="off" placeholder="renovacao">
+    </div>
+  </div>
+  <div class="linha" style="margin-top:12px">
+    <button type="button" class="verde" id="lkBotao" onclick="encurtar()">Encurtar</button>
+    <span class="muted">letra minuscula, numero e traco no final do link</span>
+  </div>
+  <p class="erro" id="lkErro" style="margin:10px 0 0" hidden></p>
+  <div class="ok" id="lkResultado" hidden>
+    <b id="lkCurto"></b>
+    <div class="linha" style="margin-top:8px">
+      <button type="button" onclick="copiarLink()">Copiar</button>
+      <a href="#" id="lkAbrir" target="_blank" rel="noopener">abrir</a>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Usar no codigo</h2>
+  <p class="muted" style="margin-top:0">Toda rota do painel esta atras do login, entao o
+    navegador nunca ve chave nenhuma. La no servidor:</p>
+  <pre class="muted">import encurtador
+encurtador.encurtar("https://...", slug="pix", titulo="renovacao")
+# {"ok": True, "curto": "https://.../pix", "alvo": "https://...", "visita": False}</pre>
+  <p class="muted">Se o encurtador estiver fora, volta <code>ok=False</code> e nada quebra:
+    quem chama usa o endereco comprido.</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const HDR = { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' };
+const ENCURTAR_URL = {{ url_for('painel.links_encurtar') | tojson }};
+let ultimo = '';
+
+function errou(texto) {
+  const caixa = document.getElementById('lkErro');
+  caixa.textContent = texto;
+  caixa.hidden = !texto;
+  document.getElementById('lkResultado').hidden = true;
+}
+
+function encurtar() {
+  const botao = document.getElementById('lkBotao');
+  const corpo = new URLSearchParams();
+  corpo.append('url', document.getElementById('lkUrl').value.trim());
+  corpo.append('slug', document.getElementById('lkSlug').value.trim());
+  corpo.append('titulo', document.getElementById('lkTitulo').value.trim());
+  if (!corpo.get('url')) { errou('Escreva o endereco que vai virar link curto.'); return; }
+  botao.disabled = true;
+  botao.textContent = 'encurtando\u2026';
+  fetch(ENCURTAR_URL, { method: 'POST', headers: HDR, credentials: 'same-origin', body: corpo.toString() })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d.ok) { errou(d.erro || 'o encurtador nao devolveu o link.'); return; }
+      ultimo = d.curto;
+      document.getElementById('lkErro').hidden = true;
+      document.getElementById('lkCurto').textContent = d.curto;
+      document.getElementById('lkAbrir').href = d.curto;
+      document.getElementById('lkResultado').hidden = false;
+    })
+    .catch(function () { errou('o site nao respondeu. Tente de novo.'); })
+    .finally(function () {
+      botao.disabled = false;
+      botao.textContent = 'Encurtar';
+    });
+}
+
+function copiarLink() {
+  if (!ultimo) return;
+  if (navigator.clipboard) { navigator.clipboard.writeText(ultimo); return; }
+  const campo = document.createElement('textarea');
+  campo.value = ultimo;
+  document.body.appendChild(campo);
+  campo.select();
+  document.execCommand('copy');
+  document.body.removeChild(campo);
+}
+</script>
+{% endblock %}

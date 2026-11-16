@@ -1,0 +1,140 @@
+{% extends "painel_base.html" %}
+{% block titulo %}Configuração{% endblock %}
+{% block corpo %}
+{% if msg_ok %}<div class="ok">{{ msg_ok }}</div>{% endif %}
+{% if msg_erro %}<div class="erro">{{ msg_erro }}</div>{% endif %}
+{% if request.args.get('ajuste') %}<div class="ok">{{ request.args.get('ajuste') }}</div>{% endif %}
+
+<form method="post" enctype="multipart/form-data">
+  <div class="card">
+    <h2>1. Instância do WhatsApp</h2>
+    <label>apiUrl</label>
+    <input type="text" name="api_url" value="{{ conf.api_url }}" inputmode="url">
+    <label>mediaUrl</label>
+    <input type="text" name="media_url" value="{{ conf.media_url }}" inputmode="url">
+    <label>idInstance</label>
+    <input type="text" name="id_instance" value="{{ conf.id_instance }}" inputmode="numeric" readonly data-travado>
+    <label>apiTokenInstance</label>
+    <input type="text" name="api_token" value="{{ conf.api_token }}" autocapitalize="off" autocorrect="off" readonly data-travado>
+    <p class="linha" style="margin:10px 0 0">
+      <button class="segundo" type="button" id="btnvar" onclick="alternarVariaveis()">Editar variáveis</button>
+      <span class="muted" id="varaviso">travado para não perder a instância sem querer</span>
+    </p>
+    <input type="hidden" name="editar_instancia" id="editar_instancia" value="0">
+    <label>Nome da instância</label>
+    <input type="text" name="instance_name" value="{{ conf.instance_name }}">
+    <label>Telefone da instância (o número do WhatsApp que envia)</label>
+    <input type="text" name="owner_phone" value="{{ conf.owner_phone }}" inputmode="tel">
+    <label>Link do QR (montado sozinho a partir do idInstance + apiTokenInstance)</label>
+    <p style="margin:0"><a id="qrlink" href="{{ qr_link }}" target="_blank" rel="noopener">{{ qr_link or 'sem instância configurada' }}</a></p>
+    <p class="muted">Estado (última checagem vale por 3 minutos):
+      <span class="pill {{ 'on' if estado.ok and estado.state == 'AUTHORIZED' else '' }}">{{ estado.state }}</span>
+      <a href="{{ url_for('painel.config', estado='1') }}">verificar agora</a>
+      {% if not estado.ok %}<span class="muted">{{ estado.error or estado.status_code or '' }}</span>{% endif %}
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>O que o site vai usar de verdade</h2>
+    <table>
+      <tr><th>chamar a API</th><td><code>{{ conf.api_url }}</code></td></tr>
+      <tr><th>baixar mídia</th><td><code>{{ conf.media_url }}</code></td></tr>
+      <tr><th>idInstance</th><td><code>{{ conf.id_instance }}</code></td></tr>
+      <tr><th>estado</th><td><span class="pill {{ 'on' if estado.ok and estado.state == 'AUTHORIZED' else '' }}">{{ estado.state }}</span></td></tr>
+      {% if infos.ok %}
+      <tr><th>WhatsApp conectado na instância</th><td>{{ telefone_br(infos.numero) }}
+        <span class="muted">(o campo "Telefone da instância" acima está como {{ conf.owner_phone or 'vazio' }})</span></td></tr>
+      <tr><th>webhook dentro do GreenAPI</th>
+        <td>{% if infos.webhook_url %}<code>{{ infos.webhook_url }}</code>{% else %}<span class="verm">nenhum — as mensagens recebidas não chegam no site</span>{% endif %}
+          <span class="muted">incomingWebhook: {{ infos.incoming_webhook or 'no' }}</span></td></tr>
+      {% else %}
+      <tr><th>instância</th><td class="verm">não respondeu{% if infos.error %} &middot; {{ infos.error }}{% endif %}{% if infos.status_code %} &middot; HTTP {{ infos.status_code }}{% endif %}</td></tr>
+      {% endif %}
+    </table>
+    <p class="muted" style="margin-bottom:0">Os dois endereços acima são montados a partir do número do servidor
+      (<code>.api.greenapi.com</code> para chamar, <code>.media.greenapi.com</code> para baixar), então colar o
+      endereço de mídia no campo apiUrl não quebra mais o envio.
+      <a href="{{ url_for('painel.config', estado='1') }}">atualizar esta conferência</a></p>
+  </div>
+
+  <div class="card">
+    <h2>2. Foto enviada quando o cliente clica em "gerar"</h2>
+    <p class="muted" style="margin-top:0">Hoje:
+      {{ ('%s · %s KB' % (conf.photo_name or 'arquivo', (conf.photo_base64|length / 1024)|round(0))) if conf.photo_base64 else 'nenhuma foto guardada' }}</p>
+    <label>Anexar foto nova (jpg/png até 1,5 MB)</label>
+    <input type="file" name="foto" accept="image/*">
+    <label>Legenda que vai junto da foto</label>
+    <textarea name="caption">{{ conf.caption }}</textarea>
+    <label class="cb"><input type="checkbox" name="send_photo" value="on" {% if conf.send_photo %}checked{% endif %}>
+      Enviar esta foto automaticamente para todo telefone que gerar acesso</label>
+    <label class="cb"><input type="checkbox" name="limpar_foto" value="1"> apagar a foto guardada</label>
+  </div>
+
+  <div class="card">
+    <h2>3. Aviso de vencimento (agenda das 6h)</h2>
+    <label class="cb"><input type="checkbox" name="aviso_ativo" value="on" {% if conf.aviso_ativo %}checked{% endif %}>
+      Aviso automático ligado</label>
+    <label>Dias de antecedência</label>
+    <input type="number" name="aviso_dias" value="{{ conf.aviso_dias }}" step="0.5" min="0.5" max="30" inputmode="decimal">
+    <label>PIX/CNPJ na legenda (a pessoa copia)</label>
+    <input type="text" name="aviso_pix_key" value="{{ conf.aviso_pix_key }}" inputmode="numeric">
+    <label>CNPJ escrito dentro da imagem</label>
+    <input type="text" name="aviso_pix_mascara" value="{{ conf.aviso_pix_mascara }}">
+    <label>Título da imagem</label>
+    <input type="text" name="aviso_titulo" value="{{ conf.aviso_titulo }}">
+    <label>Frase antes do PIX na imagem</label>
+    <input type="text" name="aviso_rodape" value="{{ conf.aviso_rodape }}">
+    <label>Mensagem enviada junto da imagem (use {dias} e {pix})</label>
+    <textarea name="aviso_legenda">{{ conf.aviso_legenda }}</textarea>
+    <label>Token da agenda</label>
+    <input type="text" name="aviso_token" value="{{ conf.aviso_token }}" autocapitalize="off" autocorrect="off">
+  </div>
+
+  <div class="card">
+    <h2>4. Renovação de quem já venceu</h2>
+    <label class="cb"><input type="checkbox" name="renova_ativo" value="on" {% if conf.renova_ativo %}checked{% endif %}>
+      Mandar a cobrança de renovação automaticamente</label>
+    <p class="muted" style="margin-top:0">A mesma agenda das 6h percorre quem está sem acesso e repete a mensagem
+      a cada <b>{{ conf.renova_dias }}</b> dias para a mesma vencimento. O PIX usado é a chave do item 3.</p>
+    <label>Intervalo entre mensagens (dias)</label>
+    <input type="number" name="renova_dias" value="{{ conf.renova_dias }}" step="1" min="1" max="30" inputmode="decimal">
+    <label>Só avisar quem venceu nos últimos (dias)</label>
+    <input type="number" name="renova_janela_dias" value="{{ conf.renova_janela_dias }}" step="1" min="1" max="365" inputmode="decimal">
+    <label>Mensagem automática de renovação (use {pix})</label>
+    <textarea name="renova_legenda">{{ conf.renova_legenda }}</textarea>
+    <label>Mensagem do botão "recuperar" (use {dias} e {pix})</label>
+    <textarea name="recupera_legenda">{{ conf.recupera_legenda }}</textarea>
+    <p class="muted">{dias} vira "há 1 mês e 4 dias", do jeito que aparece na tela Acessos.</p>
+  </div>
+
+  <div class="card">
+    <button class="prim" type="submit">Gravar no banco agora</button>
+    <p class="muted" style="margin-bottom:0">Grava na linha <code>greenapi_config</code> que o site e a agenda leem.</p>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const QR_BASE = {{ (qr_base or 'https://qr.green-api.com/waInstance') | tojson }};
+function atualizarQr() {
+  const i = document.querySelector('[name=id_instance]').value.trim();
+  const t = document.querySelector('[name=api_token]').value.trim();
+  const a = document.getElementById('qrlink');
+  const url = (i && t) ? QR_BASE + i + '/' + t : '';
+  a.textContent = url || 'sem instância configurada';
+  a.href = url || '#';
+}
+function alternarVariaveis() {
+  const escondido = document.getElementById('editar_instancia').value === '1';
+  document.getElementById('editar_instancia').value = escondido ? '0' : '1';
+  document.querySelectorAll('[data-travado]').forEach(function (c) { c.readOnly = escondido; });
+  document.getElementById('btnvar').textContent = escondido ? 'Editar variáveis' : 'Travar variáveis';
+  document.getElementById('varaviso').textContent = escondido
+    ? 'travado para não perder a instância sem querer'
+    : 'editando — só muda no banco se você clicar em Gravar';
+  atualizarQr();
+}
+document.querySelectorAll('[data-travado]').forEach(function (c) { c.addEventListener('input', atualizarQr); });
+</script>
+{% endblock %}

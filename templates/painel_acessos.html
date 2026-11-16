@@ -1,0 +1,240 @@
+{% extends "painel_base.html" %}
+{% block titulo %}Acessos criados{% endblock %}
+{% block corpo %}
+{% if msg_ok %}<div class="ok">{{ msg_ok }}
+  {% if request.args.get('de') %}de <b>{{ request.args.get('de') }}</b> para <b>{{ request.args.get('para') }}</b>
+    &middot; telefone {{ telefone_br(request.args.get('tel')) }}{% endif %}
+  {{ ('(' ~ request.args.get('q','') ~ ')') if request.args.get('q') and not request.args.get('de') else '' }}
+  {% if request.args.get('dias') %}<br><span class="muted">texto enviado:
+    <b>&ldquo;{{ request.args.get('dias') }}&rdquo;</b>
+    (data tirada da {{ 'linha do MC' if request.args.get('data') == 'linha' else 'tabela espelho' if request.args.get('data') == 'espelho' else 'nenhuma data encontrada' }})
+    &middot; {% if request.args.get('foto') == '1' %}com a foto da aba Recuperação
+    {% elif request.args.get('foto') == 'desligada' %}<span class="verm">só texto: a foto está guardada, mas o envio dela está
+      desligado &mdash; ligue no botão da aba <a href="{{ url_for('painel.recuperacao') }}">Recuperação</a></span>
+    {% elif request.args.get('foto') == 'sem_foto' %}<span class="verm">só texto: ainda não há foto guardada na aba
+      <a href="{{ url_for('painel.recuperacao') }}">Recuperação</a></span>{% endif %}</span>{% endif %}
+</div>{% endif %}
+{% if msg_erro %}<div class="erro">{{ msg_erro }} {{ request.args.get('detalhe','') }}</div>{% endif %}
+
+<div class="card">
+  <h2>Acessos do painel MC</h2>
+  {% if sem_token %}<div class="erro">O site não conseguiu logar no painel MC.</div>{% endif %}
+  <form method="get" class="linha">
+    <input type="text" name="q" value="{{ busca }}" placeholder="buscar usuário ou nota" style="flex:1;min-width:180px">
+    <button type="submit">Buscar</button>
+    <button type="button" class="segundo" id="btnMesclar" onclick="alternarMesclar()">Mesclar</button>
+    <button type="button" class="segundo" id="btnLote" onclick="alternarLote()">Não recuperados</button>
+    {% if lines_status and lines_status.paginas %}
+      {% if pagina > 1 %}<a href="{{ url_for('painel.acessos', pagina=pagina-1, q=busca) }}">‹ anterior</a>{% endif %}
+      <span class="muted">página {{ pagina }} de {{ lines_status.paginas }} &middot; {{ lines_status.total }} registros{{ ' nesta página' if not lines_status.exato }}</span>
+      {% if pagina < lines_status.paginas %}<a href="{{ url_for('painel.acessos', pagina=pagina+1, q=busca) }}">próxima ›</a>{% endif %}
+    {% endif %}
+  </form>
+
+  <table style="margin-top:10px" id="tabela">
+    <tr>
+      <th class="chk">&nbsp;</th>
+      <th class="lote">pular</th>
+      <th>Usuário</th><th>Telefone</th><th>Expira</th><th>Faltam</th><th>Status</th><th>Nota</th><th></th>
+    </tr>
+    {% for l in linhas %}
+    <tr>
+      <td class="chk">
+        <input type="checkbox" class="mescla" value="{{ l.username }}"
+               data-usuario="{{ l.username }}" data-nota="{{ l.notes }}"
+               data-telefone="{{ telefone_br(telefones.get(l.username)) }}"
+               data-status="{{ 'ativo' if l.status == 1 else 'parado' }}"
+               data-expira="{{ l.expira or '—' }}"
+               aria-label="escolher {{ l.username }}">
+      </td>
+      <td class="lote">
+        {% if l.vencido %}
+        <input type="checkbox" class="pula" value="{{ l.username }}"
+               data-usuario="{{ l.username }}" data-nota="{{ l.notes }}"
+               data-dias="{{ l.texto_dias or '—' }}"
+               data-telefone="{{ telefone_br(telefones.get(l.username)) }}"
+               aria-label="não mandar para {{ l.username }}">
+        {% else %}<span class="muted">—</span>{% endif %}
+      </td>
+      <td><b>{{ l.username }}</b><br><span class="muted">{{ l.senha }}</span></td>
+      <td>
+        <form method="post" action="{{ url_for('painel.telefone') }}" class="tel">
+          <input type="hidden" name="username" value="{{ l.username }}">
+          <input type="hidden" name="q" value="{{ busca }}">
+          <input type="tel" name="telefone" class="maq" autocomplete="off" inputmode="tel"
+                 placeholder="(11) 91234-5678" value="{{ telefone_br(telefones.get(l.username)) }}"
+                 aria-label="telefone de {{ l.username }}">
+          <button type="submit" class="mini{{ ' alerta' if not telefones.get(l.username) }}">salvar</button>
+        </form>
+        {% if not telefones.get(l.username) %}<span class="verm muted" style="font-size:12px">sem telefone</span>{% endif %}
+      </td>
+      <td class="{{ 'muted' if l.vencido else '' }}">{{ l.expira or '—' }}</td>
+      <td class="{{ 'verm' if l.vencido else '' }}">{{ l.texto_dias or '—' }}</td>
+      <td><span class="pill {{ 'on' if l.status == 1 else '' }}">{{ 'ativo' if l.status == 1 else 'parado' }}</span></td>
+      <td class="muted">{{ l.notes }}</td>
+      <td class="linha" style="gap:6px">
+        {% if l.vencido %}
+        <form method="post" action="{{ url_for('painel.recuperar') }}">
+          <input type="hidden" name="username" value="{{ l.username }}">
+          <input type="hidden" name="exp_iso" value="{{ l.exp_iso }}">
+          <button class="verde" type="submit" title="{{ telefones.get(l.username) or 'sem telefone cadastrado' }}">recuperar</button>
+        </form>
+        {% endif %}
+        <a class="pill" href="{{ url_for('painel.apagar', linha_id=l.id) }}">apagar</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <div class="barra" id="mesclaBarra" hidden>
+    <b>Mesclar telefone</b>
+    <span class="muted" id="mesclaContagem">escolha 2 usuários</span>
+    <button type="button" class="verde" id="btnConfirmar" onclick="abrirModal()" disabled>Revisar e confirmar</button>
+    <button type="button" onclick="sairMesclar()">Cancelar</button>
+  </div>
+
+  <p class="muted" style="margin-bottom:0">Digite o telefone na caixinha e toque <b>salvar</b> para cadastrar ou corrigir —
+    a máscara já coloca <code>(DDD) nnnnn-nnnn</code> e o 55 do Brasil entra sozinho. Funciona também nos parados.
+    <b>Mesclar</b> marca os usuários: o <b>primeiro</b> empresta o telefone para o <b>segundo</b> e nada é apagado.
+    O botão <b>recuperar</b> manda o PIX pelo WhatsApp para o telefone guardado na linha.
+    <b>Não recuperados</b> abre a coluna <b>pular</b>: marque só quem <b>não</b> deve receber, em qualquer página,
+    e o envio vai para todos os vencidos do painel &mdash; inclusive das páginas que não estão na tela.</p>
+</div>
+
+<div class="modal" id="modalMescla" hidden role="dialog" aria-modal="true" aria-labelledby="mdTitulo">
+  <div class="modal-caixa">
+    <h2 id="mdTitulo">Confirmar a mesclagem</h2>
+    <p class="muted" style="margin-top:0">O telefone do <b>1</b> vai para o <b>2</b>. Os acessos, notas e
+      a expiração continuam como estão.</p>
+    <div class="linha">
+      <div class="col"><span class="rotulo">1 &middot; empresta o telefone</span><div id="mdOrigem"></div></div>
+      <div class="col"><span class="rotulo">2 &middot; recebe o telefone</span><div id="mdDestino"></div></div>
+    </div>
+    <p id="mdAviso" class="erro" style="margin-top:12px"></p>
+    <div class="linha" style="margin-top:12px">
+      <button type="button" onclick="fecharModal()">Voltar</button>
+      <button type="button" class="verde" onclick="confirmarMescla()">Sim, mesclar os telefones</button>
+    </div>
+  </div>
+</div>
+
+{% set lote_busca = busca %}
+{% include "_lote_recuperados.html" %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const MESCLAR_URL = {{ url_for('painel.mesclar') | tojson }};
+const BUSCA_ATUAL = {{ busca | tojson }};
+let ordem = [];
+
+function linhaDados(caixa) {
+  return {
+    nome: caixa.value,
+    usuario: caixa.dataset.usuario,
+    nota: caixa.dataset.nota,
+    telefone: caixa.dataset.telefone,
+    status: caixa.dataset.status,
+    expira: caixa.dataset.expira
+  };
+}
+
+function escreverBloco(alvo, dados) {
+  alvo.textContent = '';
+  const nome = document.createElement('b');
+  nome.textContent = dados.usuario;
+  const nota = document.createElement('div');
+  nota.className = 'muted';
+  nota.textContent = 'nota: ' + (dados.nota || '(vazia)');
+  const resto = document.createElement('div');
+  resto.className = 'muted';
+  resto.textContent = dados.status + ' · vence ' + dados.expira + ' · ' + (dados.telefone || 'sem telefone');
+  alvo.appendChild(nome);
+  alvo.appendChild(nota);
+  alvo.appendChild(resto);
+}
+
+function alternarMesclar() {
+  if (document.body.classList.contains('mesclar')) { sairMesclar(); return; }
+  sairLote();
+  document.body.classList.add('mesclar');
+  document.getElementById('btnMesclar').textContent = 'Sair da mesclagem';
+  atualizarBarra();
+}
+
+function sairMesclar() {
+  ordem.forEach(function (c) { c.checked = false; });
+  ordem = [];
+  document.body.classList.remove('mesclar');
+  document.getElementById('btnMesclar').textContent = 'Mesclar';
+  fecharModal();
+  atualizarBarra();
+}
+
+function atualizarBarra() {
+  const barra = document.getElementById('mesclaBarra');
+  barra.hidden = !document.body.classList.contains('mesclar');
+  const textos = ['escolha 2 usuários', 'falta 1 usuário', '2 escolhidos: o primeiro empresta para o segundo'];
+  document.getElementById('mesclaContagem').textContent = textos[ordem.length] || textos[0];
+  document.getElementById('btnConfirmar').disabled = ordem.length !== 2;
+}
+
+document.addEventListener('change', function (evento) {
+  const alvo = evento.target;
+  if (!alvo.classList || !alvo.classList.contains('mescla')) return;
+  if (alvo.checked) {
+    if (ordem.length >= 2) {
+      alvo.checked = false;
+      document.getElementById('mesclaContagem').textContent = 'vale só 2 de cada vez';
+      return;
+    }
+    ordem.push(alvo);
+  } else {
+    ordem = ordem.filter(function (c) { return c !== alvo; });
+  }
+  atualizarBarra();
+});
+
+function abrirModal() {
+  if (ordem.length !== 2) return;
+  const origem = linhaDados(ordem[0]);
+  const destino = linhaDados(ordem[1]);
+  escreverBloco(document.getElementById('mdOrigem'), origem);
+  escreverBloco(document.getElementById('mdDestino'), destino);
+  const aviso = document.getElementById('mdAviso');
+  if (!origem.telefone) {
+    aviso.textContent = 'Atenção: ' + origem.usuario + ' está sem telefone. Cadastre na caixinha dele antes de mesclar.';
+  } else if (destino.telefone && destino.telefone !== origem.telefone) {
+    aviso.textContent = 'Atenção: ' + destino.usuario + ' já tem ' + destino.telefone +
+      ' e vai passar a ter ' + origem.telefone + '.';
+  } else {
+    aviso.textContent = 'Os dois vão ficar com o telefone ' + origem.telefone + '.';
+  }
+  document.getElementById('modalMescla').hidden = false;
+}
+
+function fecharModal() {
+  document.getElementById('modalMescla').hidden = true;
+}
+
+function confirmarMescla() {
+  if (ordem.length !== 2) return;
+  const form = document.createElement('form');
+  form.method = 'post';
+  form.action = MESCLAR_URL;
+  [[ 'origem', ordem[0].value ], [ 'destino', ordem[1].value ], [ 'q', BUSCA_ATUAL ]].forEach(function (par) {
+    const campo = document.createElement('input');
+    campo.type = 'hidden';
+    campo.name = par[0];
+    campo.value = par[1];
+    form.appendChild(campo);
+  });
+  document.body.appendChild(form);
+  form.submit();
+}
+
+document.addEventListener('keydown', function (evento) {
+  if (evento.key === 'Escape') fecharModal();
+});
+</script>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends "painel_base.html" %}
+{% block titulo %}Avisos de vencimento{% endblock %}
+{% block corpo %}
+{% if msg_ok %}<div class="ok">{{ msg_ok }}{% if request.args.get('n') %} ({{ request.args.get('n') }}) {% endif %}{% if request.args.get('enviados') is not none %} {{ request.args.get('avaliados') }} vencendo, {{ request.args.get('enviados') }} enviado(s), {{ request.args.get('sem_telefone') }} sem telefone.{% endif %}{% if request.args.get('renova_enviados') is not none %}<br>Renovação: {{ request.args.get('renova_avaliados') }} vencido(s) na janela, {{ request.args.get('renova_enviados') }} enviada(s), {{ request.args.get('renova_esperando') }} ainda no intervalo. Espelho: {{ request.args.get('espelho') }} cliente(s) no banco.{% endif %}</div>{% endif %}
+{% if msg_erro %}<div class="erro">{{ msg_erro }} {{ request.args.get('detalhe','') }}</div>{% endif %}
+{% if request.args.get('cota') %}<div class="erro">A varredura parou cedo: o GreenAPI está sem saldo de mensagens do mês.
+  Nenhum WhatsApp foi entregue. No plano gratuito (Developer) a instância só interage com 3 conversas por mês;
+  troque o plano da instância no painel do GreenAPI. Refazer depois é seguro: quem falhou não ficou marcado como avisado.</div>{% endif %}
+
+<div class="card">
+  <h2>Quem vence em até {{ limite }} dia(s)</h2>
+  {% if sem_token %}<div class="erro">{{ msg_erro or 'O site não conseguiu logar no painel MC.' }}</div>{% endif %}
+  {% if not itens %}<p class="muted">Ninguém nessa janela agora.</p>{% endif %}
+  <form method="post" action="{{ url_for('painel.avisos_enviar') }}">
+    <table>
+      <tr><th></th><th>Usuário</th><th>Vence</th><th>Telefone</th></tr>
+      {% for i in itens %}
+      <tr>
+        <td>{% if i.telefone %}<input type="checkbox" name="username" value="{{ i.username }}" {% if not i.ja_enviado %}checked{% endif %}>{% endif %}</td>
+        <td><b>{{ i.username }}</b>{% if i.ja_enviado %} <span class="pill on">já avisado</span>{% endif %}</td>
+        <td>{{ i.expira_brasilia }}<br><span class="muted">{{ i.texto_dias }}</span></td>
+        <td>{{ i.telefone or 'sem telefone' }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <div class="linha" style="margin-top:14px">
+      <button class="verde" type="submit">Enviar para os marcados</button>
+      <button type="submit" name="todos" value="1">Enviar para todos com telefone</button>
+      <a href="{{ url_for('painel.avisos', dias=limite, todos='1' if not mostrar_todos else none) }}">
+        {{ 'mostrar já avisados' if not mostrar_todos else 'esconder já avisados' }}</a>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Prévia da imagem</h2>
+  {% if previa %}<img class="prev" src="{{ previa }}" alt="prévia do aviso">
+    <p class="muted">A legenda enviada: {{ (conf.aviso_legenda or '')|replace('{dias}', previa_dias)|replace('{pix}', conf.aviso_pix_key or '') }}</p>
+  {% else %}<p class="erro">Não consegui desenhar a prévia (falta fonte no servidor).</p>{% endif %}
+</div>
+{% endblock %}

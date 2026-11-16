@@ -1,0 +1,17 @@
+{% extends "painel_base.html" %}
+{% block titulo %}Trocar senha{% endblock %}
+{% block corpo %}
+<div class="card">
+  <h2>Trocar a senha do painel</h2>
+  {% if erro %}<div class="erro">{{ erro }}</div>{% endif %}
+  <form method="post">
+    <label>Senha atual</label>
+    <input type="password" name="atual" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+    <label>Senha nova (mínimo 8 caracteres)</label>
+    <input type="password" name="nova" autocomplete="new-password" minlength="8" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+    <div style="margin-top:14px"><button class="prim" type="submit">Trocar e sair</button></div>
+  </form>
+  <p class="muted" style="margin-bottom:0">A senha é guardada como hash (PBKDF2, 200 mil iterações) na linha
+    <code>greenapi_config</code>. Trocar derruba todas as sessões abertas, inclusive neste aparelho.</p>
+</div>
+{% endblock %}

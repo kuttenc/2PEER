@@ -1,0 +1,53 @@
+{% extends "painel_base.html" %}
+{% block titulo %}Painel &mdash; resumo{% endblock %}
+{% block corpo %}
+{% if msg_ok %}<div class="ok">{{ msg_ok }}</div>{% endif %}
+{% if msg_erro %}<div class="erro">{{ msg_erro }} {{ request.args.get('detalhe','') }}</div>{% endif %}
+
+<div class="card">
+  <h2>WhatsApp (GreenAPI)</h2>
+  <table>
+    <tr><th>Estado</th><td>
+      <span class="pill {{ 'on' if estado.ok and estado.state == 'AUTHORIZED' else '' }}">{{ estado.state }}</span>
+      {% if not estado.ok %}<span class="muted">{{ estado.error or estado.status_code or '' }}</span>{% endif %}
+      <a href="{{ url_for('painel.index', estado='1') }}" class="muted">verificar agora</a>
+    </td></tr>
+    <tr><th>Instância</th><td>{{ conf.id_instance or '(vazio)' }}</td></tr>
+    <tr><th>Telefone</th><td>{{ conf.owner_phone or '(vazio)' }}</td></tr>
+    <tr><th>Token</th><td>{{ 'preenchido' if conf.api_token else 'VAZIO &mdash; preencha na Configuração' }}</td></tr>
+    {% if qr_link %}<tr><th>QR</th><td><a href="{{ qr_link }}" target="_blank" rel="noopener">abrir o QR do WhatsApp</a><br>
+      <span class="muted" style="word-break:break-all">{{ qr_link }}</span></td></tr>{% endif %}
+  </table>
+</div>
+
+<div class="card">
+  <h2>Aviso de vencimento</h2>
+  <table>
+    <tr><th>Agenda das 6h</th><td><span class="pill {{ 'on' if conf.aviso_ativo else '' }}">{{ 'LIGADO' if conf.aviso_ativo else 'desligado' }}</span></td></tr>
+    <tr><th>Com antecedência de</th><td>{{ conf.aviso_dias }} dia(s)</td></tr>
+    <tr><th>PIX na legenda</th><td>{{ conf.aviso_pix_key }}</td></tr>
+    <tr><th>Foto do "gerar"</th><td>{{ ('guardada (' ~ foto_kb ~ ' KB)') if tem_foto else 'nenhuma' }}
+      &middot; envio automático {{ 'ligado' if conf.send_photo else 'desligado' }}</td></tr>
+    <tr><th>Registros com telefone</th><td>{{ total_telefones }}</td></tr>
+    <tr><th>Avisos já registrados</th><td>{{ total_avisados }}</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Rodar a varredura agora</h2>
+  <p class="muted" style="margin-top:0">Mesmo caminho que a agenda das 6h da manhã percorre todo dia.</p>
+  <form method="post" action="{{ url_for('painel.avisos_varrer') }}" class="linha">
+    <button class="verde" type="submit">Varrer e enviar</button>
+    <label class="cb" style="margin:0"><input type="checkbox" name="reenviar" value="1"> reenviar para quem já foi avisado</label>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Atalhos</h2>
+  <div class="linha">
+    <a href="{{ url_for('painel.config') }}">Trocar instância / textos</a> &middot;
+    <a href="{{ url_for('painel.avisos') }}">Quem está por vencer</a> &middot;
+    <a href="{{ url_for('painel.acessos') }}">Acessos criados</a>
+  </div>
+</div>
+{% endblock %}

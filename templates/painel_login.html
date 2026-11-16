@@ -1,0 +1,15 @@
+{% extends "painel_base.html" %}
+{% block titulo %}Entrar no painel{% endblock %}
+{% block corpo %}
+<div class="card" style="margin-top:40px">
+  <h1>Painel do Peixeiro</h1>
+  <p class="muted">Configuração do GreenAPI, avisos de vencimento e acessos. Só para você.</p>
+  {% if erro %}<div class="erro">{{ erro }}</div>{% endif %}
+  <form method="post">
+    <label>Senha</label>
+    <input type="password" name="senha" autocomplete="current-password" inputmode="text" autocapitalize="none" autocorrect="off" spellcheck="false" required autofocus>
+    <div style="margin-top:14px"><button class="prim" type="submit">Entrar</button></div>
+  </form>
+  <p class="muted" style="margin-bottom:0">A sessão dura 30 dias neste aparelho. Trocar a senha derruba todas as sessões.</p>
+</div>
+{% endblock %}

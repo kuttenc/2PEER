@@ -1,0 +1,122 @@
+{% extends "painel_base.html" %}
+{% block titulo %}Clientes{% endblock %}
+{% block corpo %}
+{% if msg_ok %}<div class="ok">{{ msg_ok }} {{ ('(' ~ request.args.get('n','') ~ ' linhas)') if request.args.get('n') else '' }}
+  {% if request.args.get('dias') %}<br><span class="muted">texto enviado:
+    <b>&ldquo;{{ request.args.get('dias') }}&rdquo;</b>
+    (data tirada da {{ 'tabela espelho' if request.args.get('data') == 'espelho' else 'linha do MC' if request.args.get('data') == 'linha' else 'nenhuma data encontrada' }})
+    &middot; {% if request.args.get('foto') == '1' %}com a foto da aba Recuperação
+    {% elif request.args.get('foto') == 'desligada' %}<span class="verm">só texto: a foto está guardada, mas o envio dela está
+      desligado &mdash; ligue no botão da aba <a href="{{ url_for('painel.recuperacao') }}">Recuperação</a></span>
+    {% elif request.args.get('foto') == 'sem_foto' %}<span class="verm">só texto: ainda não há foto guardada na aba
+      <a href="{{ url_for('painel.recuperacao') }}">Recuperação</a></span>{% endif %}</span>{% endif %}
+</div>{% endif %}
+{% if msg_erro %}<div class="erro">{{ msg_erro }} {{ request.args.get('detalhe','') }}</div>{% endif %}
+
+<div class="card">
+  <h2>Espelho no Supabase</h2>
+  <p class="muted" style="margin-top:0">
+    {{ linhas|length }} clientes &middot; {{ com_telefone }} com telefone
+    {% if linhas and linhas[0].sincronizado %} &middot; última sincronização {{ linhas[0].sincronizado }}{% endif %}
+  </p>
+  <form method="post" action="{{ url_for('painel.clientes_sincronizar') }}" class="linha">
+    <button class="verde" type="submit">Sincronizar agora do painel MC</button>
+    <span class="muted">copia usuário, telefone, expiração, status e nota para o banco</span>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Telefone avulso</h2>
+  <p class="muted" style="margin-top:0">Para quem não aparece na lista (linha de teste, acesso antigo):
+    digite o usuário exatamente como ele é e o número. Fica guardado no Supabase e vale para os avisos.</p>
+  <form method="post" action="{{ url_for('painel.telefone') }}" class="linha">
+    <input type="hidden" name="destino" value="clientes">
+    <input type="text" name="username" placeholder="usuário (sem @, sem espaço)" style="flex:1;min-width:170px"
+           autocomplete="off" autocapitalize="off" spellcheck="false">
+    <input type="tel" name="telefone" class="maq" inputmode="tel" autocomplete="off" placeholder="(11) 91234-5678">
+    <button type="submit" class="verde" style="width:auto">Salvar telefone</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Exportar e importar CSV</h2>
+  <p class="muted" style="margin-top:0">As colunas são sempre
+    <code>Usuário;Telefone;Expira;Status;Nota</code>. Na importação o que estiver vazio é ignorado e o
+    telefone vai para a lista de envios do WhatsApp.</p>
+  <div class="linha">
+    <a class="verde" style="padding:12px 16px;border-radius:8px;background:#1b3320;border:1px solid var(--verde);color:#7ee787"
+       href="{{ url_for('painel.clientes_exportar') }}">Baixar clientes.csv</a>
+  </div>
+  <form method="post" action="{{ url_for('painel.clientes_importar') }}" enctype="multipart/form-data" style="margin-top:12px">
+    <label>Anexar CSV (até 5 MB)</label>
+    <input type="file" name="csv" accept=".csv,text/csv">
+    <div style="margin-top:10px"><button class="prim" type="submit">Importar para o banco</button></div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Clientes guardados</h2>
+  {% if linhas %}<p class="muted" style="margin-top:0">Corrija ou cadastre o número na caixinha e toque <b>salvar</b> —
+    a máscara já formata <code>(DDD) nnnnn-nnnn</code> e o 55 entra sozinho.</p>{% endif %}
+  {% if not linhas %}<p class="muted" style="margin-top:0">Nada no espelho ainda. Use "Sincronizar agora" ou abra a tela
+    <a href="{{ url_for('painel.acessos') }}">Acessos</a> — cada página aberta já grava aqui.</p>{% endif %}
+  {% if linhas %}
+  <div class="linha" style="margin-bottom:10px">
+    <button type="button" class="segundo" id="btnLote" onclick="alternarLote()">Não recuperados</button>
+    <span class="muted">marque quem <b>não</b> deve receber &mdash; as mesmas marcas da aba
+      <a href="{{ url_for('painel.acessos') }}">Acessos</a>.</span>
+  </div>
+  <table>
+    <tr><th class="lote">pular</th><th>Usuário</th><th>Telefone</th><th>Expira</th>
+      <th>Faltam</th><th>Status</th><th>Nota</th><th></th></tr>
+    {% for c in linhas %}
+    <tr>
+      <td class="lote">
+        {% if c.vencido %}
+        <input type="checkbox" class="pula" value="{{ c.username }}"
+               data-usuario="{{ c.username }}" data-nota="{{ c.notes }}"
+               data-dias="{{ c.texto_dias or '—' }}"
+               data-telefone="{{ telefone_br(c.telefone) }}"
+               aria-label="não mandar para {{ c.username }}">
+        {% else %}<span class="muted">—</span>{% endif %}
+      </td>
+      <td><b>{{ c.username }}</b></td>
+      <td>
+        <form method="post" action="{{ url_for('painel.telefone') }}" class="tel">
+          <input type="hidden" name="username" value="{{ c.username }}">
+          <input type="hidden" name="destino" value="clientes">
+          <input type="tel" name="telefone" class="maq" autocomplete="off" inputmode="tel"
+                 placeholder="(11) 91234-5678" value="{{ telefone_br(c.telefone) }}"
+                 aria-label="telefone de {{ c.username }}">
+          <button type="submit" class="mini{{ ' alerta' if not c.telefone }}">salvar</button>
+        </form>
+        {% if not c.telefone %}<span class="verm muted" style="font-size:12px">sem telefone</span>{% endif %}
+      </td>
+      <td>{{ c.expira or '—' }}</td>
+      <td class="{{ 'verm' if c.vencido else '' }}">{{ c.texto_dias or '—' }}</td>
+      <td><span class="pill {{ 'on' if c.ativo else '' }}">{{ 'ativo' if c.ativo else 'parado' }}</span></td>
+      <td class="muted">{{ c.notes }}</td>
+      <td class="linha" style="gap:6px">
+        {% if c.vencido %}
+        <form method="post" action="{{ url_for('painel.recuperar') }}">
+          <input type="hidden" name="username" value="{{ c.username }}">
+          <input type="hidden" name="exp_iso" value="{{ c.exp_iso }}">
+          <input type="hidden" name="destino" value="clientes">
+          <button class="verde" type="submit" title="{{ telefone_br(c.telefone) or 'sem telefone cadastrado' }}">recuperar</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  <p class="muted" style="margin-bottom:0">O <b>recuperar</b> da linha manda a mensagem da aba
+    <a href="{{ url_for('painel.recuperacao') }}">Recuperação</a> (com a foto, se a foto estiver ligada) para o
+    telefone guardado nesse cliente. O <b>Não recuperados</b> manda para todos os vencidos do painel MC de uma vez
+    &mdash; a lista é contada no servidor, então nada depende desta tela; só fica de fora o que você marcar e o que
+    já recebeu nas últimas 3 horas.</p>
+</div>
+
+{% set lote_busca = '' %}
+{% include "_lote_recuperados.html" %}
+{% endblock %}

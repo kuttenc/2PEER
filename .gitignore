@@ -1,0 +1,18 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# local runtime artifacts
+cloudflared.out.log
+cloudflared.err.log
+public_link.pids.json
+analytics.sqlite3*
+
+# local tools/cache
+.tools/
+
+# curl copiado do navegador (tem bearer do MC)
+http.txt

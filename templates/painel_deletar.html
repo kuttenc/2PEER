@@ -1,0 +1,351 @@
+{% extends "painel_base.html" %}
+{% block titulo %}Deletar{% endblock %}
+{% block corpo %}
+{% if msg_ok %}<div class="ok">{{ msg_ok }}</div>{% endif %}
+{% if msg_erro %}<div class="erro">{{ msg_erro }} {{ request.args.get('detalhe','') }}</div>{% endif %}
+
+<div class="card">
+  <h2>Apagar por intervalo</h2>
+  <p class="muted" style="margin-top:0">Para usuário que é <b>prefixo + número</b>, tipo
+    <code>r566001</code>. O intervalo conta as duas pontas: de <b>566001</b> até <b>566100</b>
+    são <b>100</b> usuários. Zero na frente (<code>r0566001</code>) também bate.</p>
+  <div class="linha">
+    <div style="flex:1;min-width:110px">
+      <label for="apPrefixo">prefixo do usuário</label>
+      <input type="text" id="apPrefixo" value="r" autocomplete="off" autocapitalize="off" spellcheck="false">
+    </div>
+    <div style="flex:1;min-width:110px">
+      <label for="apDe">de</label>
+      <input type="text" id="apDe" inputmode="numeric" autocomplete="off" placeholder="566001">
+    </div>
+    <div style="flex:1;min-width:110px">
+      <label for="apAte">até</label>
+      <input type="text" id="apAte" inputmode="numeric" autocomplete="off" placeholder="566100">
+    </div>
+  </div>
+  <div class="linha" style="margin-top:12px">
+    <button type="button" class="verm" id="btnApagar" onclick="abrirModalApagar()">Detectar e apagar</button>
+    <span class="muted">limite de {{ limite }} nomes por lote &middot; nada é apagado antes do modal</span>
+  </div>
+  <p class="muted" style="margin-bottom:0">A lista é montada no servidor, varrendo todas as páginas
+    do painel MC &mdash; não depende do que está na tela. Depois de apagar, a linha some do MC e o
+    acesso para de funcionar na hora.</p>
+</div>
+
+<div class="barra" id="apAndamento" hidden>
+  <b>Exclusão em andamento</b>
+  <span class="muted" id="apAndamentoTexto">contando&hellip;</span>
+  <button type="button" class="verde" onclick="abrirModalProgresso()">Ver a exclusão</button>
+</div>
+
+<div class="modal" id="modalApagar" hidden role="dialog" aria-modal="true" aria-labelledby="maTitulo">
+  <div class="modal-caixa">
+    <div id="maRevisar">
+      <h2 id="maTitulo">Confirmar a exclusão no painel MC</h2>
+      <p class="muted" id="maIntervalo" style="margin-top:0"></p>
+      <div class="numeros">
+        <div><span class="rotulo">vão ser apagados</span><b id="maAlvos">?</b></div>
+        <div><span class="rotulo">nomes no intervalo</span><b id="maQtd">?</b></div>
+        <div><span class="rotulo">existem no painel MC</span><b id="maNoMc">?</b></div>
+        <div><span class="rotulo">não existem (buracos)</span><b id="maFaltando">?</b></div>
+        <div><span class="rotulo">marcados para manter</span><b id="maMantidos">0</b></div>
+        <div><span class="rotulo">ainda ativos</span><b id="maAtivos">?</b></div>
+      </div>
+      <p class="erro" id="maAviso" style="margin:6px 0" hidden></p>
+      <p class="erro" id="maTudo" style="margin:6px 0" hidden></p>
+      <label class="cb"><input type="checkbox" id="maAtivosCb" value="1">
+        apagar também quem ainda está <b>ativo</b> (não venceu)</label>
+      <label class="cb"><input type="checkbox" id="maEspelho" value="1">
+        tirar também do espelho (some da aba Clientes)</label>
+      <label class="rotulo" for="maLista">marque a caixinha de quem deve FICAR (não ser apagado)</label>
+      <div class="lista" id="maLista"></div>
+      <label for="maPalavra">escreva <b>{{ palavra }}</b> para liberar o botão</label>
+      <input type="text" id="maPalavra" autocomplete="off" autocapitalize="off" spellcheck="false"
+             placeholder="{{ palavra }}">
+      <div class="linha" style="margin-top:12px">
+        <button type="button" onclick="fecharModalApagar()">Voltar</button>
+        <button type="button" class="verm" id="maConfirmar" onclick="confirmarApagar()" disabled>
+          Confirmar e apagar</button>
+      </div>
+    </div>
+
+    <div id="maProgresso" hidden>
+      <h2>Apagando os acessos</h2>
+      <p class="muted" style="margin-top:0">Não feche o painel até terminar &mdash; mas se fechar, a
+        exclusão continua porque quem manda é o servidor.</p>
+      <div class="prog"><i id="mpBarra"></i></div>
+      <p style="margin:6px 0"><b id="mpTexto">preparando&hellip;</b></p>
+      <p class="muted" style="margin:6px 0">Erros: <span class="nomes" id="mpErros"></span></p>
+      <p id="mpMotivo" class="erro" style="margin-top:12px" hidden></p>
+      <div class="linha" style="margin-top:12px">
+        <button type="button" class="verm" id="mpParar" onclick="pararApagar()">Parar de apagar</button>
+        <button type="button" onclick="fecharModalApagar()">Fechar</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const AP_CONTAGEM_URL = {{ url_for('painel.deletar_contagem') | tojson }};
+const AP_EXECUTAR_URL = {{ url_for('painel.deletar_executar') | tojson }};
+const AP_STATUS_URL = {{ url_for('painel.deletar_status') | tojson }};
+const AP_PARAR_URL = {{ url_for('painel.deletar_parar') | tojson }};
+const PALAVRA = {{ palavra | tojson }};
+const HDR = { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' };
+
+let linhas = [];
+let temporizador = null;
+let exclusaoTerminou = false;
+
+function campo(id) { return document.getElementById(id); }
+function caixasManter() {
+  return Array.prototype.slice.call(document.querySelectorAll('input.mantem'));
+}
+function mantidos() {
+  return new Set(caixasManter().filter(function (c) { return c.checked; })
+                 .map(function (c) { return c.value; }));
+}
+function alvoDoDia() {
+  const ativos = campo('maAtivosCb').checked;
+  const guardar = mantidos();
+  return linhas.filter(function (l) {
+    return !guardar.has(l.usuario) && (ativos || l.vencido) && l.id;
+  });
+}
+
+function escreverPlano(d) {
+  linhas = d.linhas || [];
+  const ponta = d.prefixo ? (d.prefixo + d.de + ' até ' + d.prefixo + d.ate)
+                          : (d.de + ' até ' + d.ate);
+  campo('maIntervalo').textContent = 'Intervalo ' + ponta +
+    ' — ' + d.qtd + ' nomes conferidos linha por linha no painel MC.';
+  campo('maQtd').textContent = d.qtd;
+  campo('maNoMc').textContent = d.no_mc;
+  campo('maFaltando').textContent = d.faltando;
+  campo('maAtivos').textContent = d.ativos;
+  const lista = campo('maLista');
+  lista.textContent = '';
+  if (!linhas.length) {
+    const vazio = document.createElement('p');
+    vazio.className = 'muted';
+    vazio.textContent = 'Nenhum usuário do intervalo existe no painel MC.';
+    lista.appendChild(vazio);
+  }
+  linhas.forEach(function (l) {
+    const item = document.createElement('div');
+    item.className = 'item';
+    const caixa = document.createElement('input');
+    caixa.type = 'checkbox';
+    caixa.className = 'mantem';
+    caixa.value = l.usuario;
+    caixa.checked = false;
+    caixa.title = 'marque para MANTER ' + l.usuario + ' (não apagar)';
+    item.appendChild(caixa);
+    const nome = document.createElement('b');
+    nome.textContent = l.usuario;
+    item.appendChild(nome);
+    const detalhes = document.createElement('span');
+    detalhes.className = 'muted';
+    detalhes.textContent = (l.telefone || 'sem telefone') + ' · ' +
+      (l.expira ? 'expira ' + l.expira : 'sem data') +
+      (l.nota ? ' · ' + l.nota : '') + (l.vencido ? '' : ' · ATIVO');
+    item.appendChild(detalhes);
+    lista.appendChild(item);
+  });
+  const tudo = campo('maTudo');
+  tudo.hidden = !d.painel_inteiro;
+  tudo.textContent = d.painel_inteiro
+    ? 'Atenção: este intervalo pega TODAS as ' + d.no_mc + ' linhas que existem no painel MC.'
+    : '';
+  const aviso = campo('maAviso');
+  aviso.hidden = !d.aviso;
+  if (d.aviso) aviso.textContent = 'A varrida parou antes do fim: ' + d.aviso;
+}
+
+function atualizarConta() {
+  const alvos = alvoDoDia();
+  const nomes = new Set(alvos.map(function (l) { return l.usuario; }));
+  campo('maAlvos').textContent = alvos.length;
+  campo('maMantidos').textContent = caixasManter().filter(function (c) {
+    return c.checked;
+  }).length;
+  caixasManter().forEach(function (c) {
+    c.parentNode.classList.toggle('fora', !nomes.has(c.value));
+  });
+  const botao = campo('maConfirmar');
+  const palavra_ok = campo('maPalavra').value.trim().toLowerCase() === PALAVRA;
+  botao.disabled = !(palavra_ok && alvos.length);
+  botao.textContent = alvos.length ? 'Sim, apagar ' + alvos.length + ' acesso(s)'
+                                   : 'Ninguém sobrou para apagar';
+}
+
+function abrirModalApagar() {
+  const corpo = new URLSearchParams();
+  corpo.append('prefixo', campo('apPrefixo').value.trim());
+  corpo.append('de', campo('apDe').value.trim());
+  corpo.append('ate', campo('apAte').value.trim());
+  campo('maRevisar').hidden = false;
+  campo('maProgresso').hidden = true;
+  campo('maAviso').hidden = true;
+  campo('maPalavra').value = '';
+  campo('maAtivosCb').checked = false;
+  campo('maEspelho').checked = false;
+  campo('maConfirmar').disabled = true;
+  campo('maAlvos').textContent = '…';
+  campo('maLista').textContent = 'procurando no painel MC…';
+  campo('modalApagar').hidden = false;
+  exclusaoTerminou = false;
+  fetch(AP_CONTAGEM_URL, { method: 'POST', headers: HDR, credentials: 'same-origin',
+                           body: corpo.toString() })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d.ok) {
+        linhas = [];
+        campo('maLista').textContent = '';
+        campo('maAlvos').textContent = '0';
+        campo('maQtd').textContent = campo('maNoMc').textContent = campo('maFaltando').textContent = '0';
+        const aviso = campo('maAviso');
+        aviso.textContent = d.erro || 'o site não conseguiu contar agora.';
+        aviso.hidden = false;
+        campo('maConfirmar').disabled = true;
+        return;
+      }
+      escreverPlano(d);
+      atualizarConta();
+    })
+    .catch(function () {
+      campo('maLista').textContent = '';
+      const aviso = campo('maAviso');
+      aviso.textContent = 'o site não respondeu. Abra o modal de novo.';
+      aviso.hidden = false;
+    });
+}
+
+function confirmarApagar() {
+  const corpo = new URLSearchParams();
+  corpo.append('confirmar', 'sim');
+  corpo.append('palavra', campo('maPalavra').value.trim());
+  if (campo('maAtivosCb').checked) corpo.append('ativos', '1');
+  if (campo('maEspelho').checked) corpo.append('espelho', '1');
+  mantidos().forEach(function (nome) { corpo.append('manter', nome); });
+  const botao = campo('maConfirmar');
+  botao.disabled = true;
+  botao.textContent = 'abrindo a exclusão…';
+  fetch(AP_EXECUTAR_URL, { method: 'POST', headers: HDR, credentials: 'same-origin',
+                           body: corpo.toString() })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d.ok) {
+        botao.textContent = 'Sim, apagar';
+        const aviso = campo('maAviso');
+        aviso.textContent = d.erro || 'a exclusão não começou.';
+        aviso.hidden = false;
+        if (!d.rodando) botao.disabled = false;
+        return;
+      }
+      iniciarProgresso(d.total);
+    })
+    .catch(function () {
+      botao.disabled = false;
+      atualizarConta();
+      const aviso = campo('maAviso');
+      aviso.textContent = 'o site não respondeu. Confira a lista antes de tentar de novo.';
+      aviso.hidden = false;
+    });
+}
+
+function iniciarProgresso(total) {
+  campo('maRevisar').hidden = true;
+  campo('maProgresso').hidden = false;
+  campo('mpParar').hidden = false;
+  campo('mpMotivo').hidden = true;
+  desenhar({ total: total, apagados: 0, falhas: 0, erros: [] });
+  if (temporizador) clearInterval(temporizador);
+  temporizador = setInterval(consultarStatus, 1500);
+}
+
+function desenhar(s) {
+  const total = s.total || 0;
+  const feitos = (s.apagados || 0) + (s.falhas || 0);
+  const pct = total ? Math.round(100 * feitos / total) : 0;
+  campo('mpBarra').style.width = pct + '%';
+  campo('mpTexto').textContent =
+    (s.apagados || 0) + ' apagados de ' + total + ' · ' + (s.falhas || 0) + ' com erro';
+  const erros = campo('mpErros');
+  erros.textContent = '';
+  (s.erros || []).forEach(function (e) {
+    const span = document.createElement('span');
+    span.textContent = e.usuario + ': ' + e.motivo;
+    erros.appendChild(span);
+  });
+}
+
+function consultarStatus() {
+  fetch(AP_STATUS_URL, { credentials: 'same-origin' }).then(function (r) {
+    return r.json();
+  }).then(function (s) {
+    desenhar(s);
+    if (campo('apAndamento') && !s.rodando) campo('apAndamento').hidden = true;
+    if (s.rodando) {
+      if (campo('apAndamentoTexto'))
+        campo('apAndamentoTexto').textContent = (s.apagados || 0) + ' de ' + s.total + ' apagados';
+      return;
+    }
+    if (temporizador) { clearInterval(temporizador); temporizador = null; }
+    exclusaoTerminou = true;
+    campo('mpParar').hidden = true;
+    campo('mpTexto').textContent =
+      'terminou: ' + (s.apagados || 0) + ' apagados, ' + (s.falhas || 0) + ' com erro';
+    if (s.motivo) {
+      campo('mpMotivo').textContent = s.motivo;
+      campo('mpMotivo').hidden = false;
+    }
+  }).catch(function () {});
+}
+
+function abrirModalProgresso() {
+  campo('maRevisar').hidden = true;
+  campo('maProgresso').hidden = false;
+  campo('modalApagar').hidden = false;
+  if (!temporizador) temporizador = setInterval(consultarStatus, 1500);
+}
+
+function pararApagar() {
+  const botao = campo('mpParar');
+  botao.disabled = true;
+  botao.textContent = 'parando…';
+  fetch(AP_PARAR_URL, { method: 'POST', headers: HDR, credentials: 'same-origin',
+                        body: 'confirmar=sim' })
+    .catch(function () {
+      botao.disabled = false;
+      botao.textContent = 'Parar de apagar';
+    });
+}
+
+function fecharModalApagar() {
+  campo('modalApagar').hidden = true;
+  if (exclusaoTerminou) window.location.reload();
+}
+
+document.addEventListener('keydown', function (evento) {
+  if (evento.key === 'Escape') fecharModalApagar();
+});
+
+campo('maPalavra').addEventListener('input', atualizarConta);
+campo('maAtivosCb').addEventListener('change', atualizarConta);
+campo('maLista').addEventListener('change', atualizarConta);
+
+(function verificarAndamento() {
+  fetch(AP_STATUS_URL, { credentials: 'same-origin' }).then(function (r) {
+    return r.json();
+  }).then(function (s) {
+    if (!s.rodando) return;
+    campo('apAndamento').hidden = false;
+    campo('apAndamentoTexto').textContent = (s.apagados || 0) + ' de ' + s.total + ' apagados';
+    if (!temporizador) temporizador = setInterval(consultarStatus, 1500);
+  }).catch(function () {});
+})();
+</script>
+{% endblock %}

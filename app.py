@@ -1,0 +1,768 @@
+import os
+import hmac
+import hashlib
+import json
+import sqlite3
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+from flask import Flask, redirect, render_template, request, url_for
+from automate_mcapi import (
+    add_ip_liberado,
+    check_ip_limits,
+    executar_aviso_vencimentos,
+    executar_config_painel,
+    fetch_catalog_request_tracks_for_user,
+    fetch_recent_streams_for_user,
+    generate_access_once,
+    get_active_access_for_ip,
+    list_ip_liberados,
+    process_kirvano_webhook,
+    register_usuario_criado_ip,
+    remove_ip_liberado,
+    submit_content_request_for_user,
+)
+
+import painel_web
+
+app = Flask(__name__)
+app.register_blueprint(painel_web.PAINEL)
+ANALYTICS_DB_PATH = os.getenv("ANALYTICS_DB_PATH", os.path.join(os.path.dirname(__file__), "analytics.sqlite3"))
+ANALYTICS_ORIGINS = {
+    "https://fabiodkk.github.io",
+    "https://wplay-teste-4h.onrender.com",
+    "http://localhost:5000",
+}
+
+
+def default_limit_info(reason=""):
+    return {
+        "allowed": True,
+        "is_liberado": False,
+        "first_seeded": False,
+        "day_count": 0,
+        "week_count": 0,
+        "reason": reason,
+    }
+
+
+def safe_check_ip_limits(client_ip: str):
+    try:
+        return check_ip_limits(client_ip)
+    except Exception:
+        return default_limit_info("Controle temporariamente indisponivel.")
+
+
+def to_brasilia(iso_date: str) -> str:
+    if not iso_date:
+        return ""
+    dt = datetime.fromisoformat(iso_date.replace("Z", "+00:00"))
+    return dt.astimezone(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S")
+
+
+def safe_to_brasilia(iso_date: str) -> str:
+    try:
+        return to_brasilia(iso_date)
+    except Exception:
+        return iso_date or ""
+
+
+def analytics_cors_response(payload=None, status=200):
+    response = app.response_class(
+        response=json.dumps(payload or {}, ensure_ascii=False),
+        status=status,
+        mimetype="application/json",
+    )
+    origin = request.headers.get("Origin", "")
+    response.headers["Access-Control-Allow-Origin"] = origin if origin in ANALYTICS_ORIGINS else "https://fabiodkk.github.io"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
+    response.headers["Vary"] = "Origin"
+    return response
+
+
+def analytics_db():
+    conn = sqlite3.connect(ANALYTICS_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        create table if not exists page_views (
+          id integer primary key autoincrement,
+          created_at text not null,
+          page text not null,
+          url text,
+          referrer text,
+          visitor_id text,
+          session_id text,
+          ip_hash text,
+          user_agent text
+        )
+        """
+    )
+    conn.execute("create index if not exists idx_page_views_page_created on page_views (page, created_at)")
+    conn.execute("create index if not exists idx_page_views_visitor on page_views (visitor_id)")
+    conn.commit()
+    return conn
+
+
+def parse_analytics_payload(req):
+    payload = req.get_json(silent=True)
+    if isinstance(payload, dict):
+        return payload
+    raw = req.get_data(as_text=True) or ""
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def ip_hash_for_request(req):
+    ip = get_client_ip(req)
+    salt = os.getenv("ANALYTICS_IP_SALT", "wplay-obrigado")
+    return hashlib.sha256(f"{salt}:{ip}".encode("utf-8")).hexdigest()[:24]
+
+
+def get_client_ip(req) -> str:
+    forwarded = req.headers.get("X-Forwarded-For", "").strip()
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real_ip = req.headers.get("X-Real-IP", "").strip()
+    if real_ip:
+        return real_ip
+    return req.remote_addr or "desconhecido"
+
+
+def extract_bearer_from_request(req) -> str:
+    auth = (req.headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth.split(" ", 1)[1].strip()
+    return (req.args.get("bearer") or "").strip()
+
+
+def extract_kirvano_token(req, payload=None) -> str:
+    auth = (req.headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth.split(" ", 1)[1].strip()
+
+    for header_name in ("X-Kirvano-Token", "X-Webhook-Token", "X-Token", "Token"):
+        token = (req.headers.get(header_name) or "").strip()
+        if token:
+            return token
+
+    if isinstance(payload, dict):
+        token = str(payload.get("token") or "").strip()
+        if token:
+            return token
+
+    return (req.args.get("token") or "").strip()
+
+
+def kirvano_token_is_valid(req, payload=None) -> bool:
+    expected = (os.getenv("KIRVANO_WEBHOOK_TOKEN") or "").strip()
+    if not expected:
+        return True
+    received = extract_kirvano_token(req, payload=payload)
+    return hmac.compare_digest(received, expected)
+
+
+def safe_recent_media(req, client_ip: str):
+    bearer = extract_bearer_from_request(req)
+    preferred_user_id = (req.args.get("user_id") or req.headers.get("X-Mcapi-User-Id") or "").strip()
+    try:
+        result = fetch_recent_streams_for_user(
+            provided_bearer=bearer,
+            preferred_user_id=preferred_user_id,
+            movies_limit=10,
+            channels_limit=10,
+            client_ip=client_ip,
+            allow_shared_fallback=True,
+        )
+    except Exception:
+        return {"items": [], "ok": False, "token_source": "error"}
+
+    return {
+        "items": result.get("merged", [])[:12],
+        "ok": bool(result.get("ok")),
+        "token_source": result.get("token_source", "none"),
+    }
+
+
+def safe_request_media(req, client_ip: str, search_query: str = ""):
+    bearer = extract_bearer_from_request(req)
+    preferred_user_id = (req.args.get("user_id") or req.headers.get("X-Mcapi-User-Id") or "").strip()
+    safe_search = (search_query or "").strip()
+    if not safe_search:
+        return {"items": [], "ok": True, "token_source": "idle", "user_id": preferred_user_id}
+    try:
+        result = fetch_catalog_request_tracks_for_user(
+            provided_bearer=bearer,
+            preferred_user_id=preferred_user_id,
+            search_query=safe_search,
+            findall_limit=14,
+            tmdb_limit=14,
+            merged_limit=18,
+            client_ip=client_ip,
+            allow_shared_fallback=True,
+        )
+    except Exception:
+        return {"items": [], "ok": False, "token_source": "error", "user_id": preferred_user_id}
+
+    return {
+        "items": result.get("merged_items", [])[:18],
+        "ok": bool(result.get("ok")),
+        "token_source": result.get("token_source", "none"),
+        "user_id": result.get("user_id") or preferred_user_id,
+    }
+
+
+def render_liberados(status_msg="", is_error=False):
+    client_ip = get_client_ip(request)
+    rows = list_ip_liberados()
+    return render_template(
+        "indexdeliberados.html",
+        rows=rows,
+        client_ip=client_ip,
+        status_msg=status_msg,
+        is_error=is_error,
+    )
+
+
+@app.get("/")
+def index():
+    client_ip = get_client_ip(request)
+    limit_info = safe_check_ip_limits(client_ip)
+    recent_media = safe_recent_media(request, client_ip)
+    request_media = safe_request_media(request, client_ip)
+    return render_template(
+        "index.html",
+        result=None,
+        basic=None,
+        client_ip=client_ip,
+        limit_info=limit_info,
+        recent_media=recent_media["items"],
+        request_media=request_media["items"],
+        request_user_id=request_media.get("user_id", ""),
+        error_msg="",
+        info_msg="",
+        form_phone="",
+        form_telegram_id="",
+    )
+
+
+@app.get("/gerar")
+def gerar_get():
+    return redirect(url_for("index"))
+
+
+@app.get("/liberado")
+def liberado_health():
+    return {"ok": True, "service": "kirvano-webhook", "events": ["SALE_APPROVED", "SUBSCRIPTION_RENEWED"]}, 200
+
+
+@app.post("/liberado")
+def liberado_webhook():
+    payload = request.get_json(silent=True)
+    if payload is None and request.form:
+        payload = request.form.to_dict(flat=True)
+
+    if payload is None:
+        payload = {}
+
+    if not kirvano_token_is_valid(request, payload=payload):
+        return {"ok": False, "error": "Token invalido."}, 401
+
+    if not payload:
+        return {"ok": True, "service": "kirvano-webhook", "message": "Endpoint ativo."}, 200
+
+    try:
+        result = process_kirvano_webhook(payload)
+    except Exception:
+        app.logger.exception("Falha ao processar webhook Kirvano")
+        return {"ok": False, "error": "Falha ao processar webhook."}, 500
+
+    status_code = 200
+    if not result.get("ok") and result.get("event") in {"SALE_APPROVED", "SUBSCRIPTION_RENEWED"}:
+        status_code = 500
+    return result, status_code
+
+
+@app.route("/api/obrigado-view", methods=["POST", "OPTIONS"])
+def api_obrigado_view():
+    if request.method == "OPTIONS":
+        return analytics_cors_response({"ok": True})
+
+    payload = parse_analytics_payload(request)
+    page = str(payload.get("page") or "/obrigado").strip()[:120] or "/obrigado"
+    url = str(payload.get("url") or "").strip()[:800]
+    referrer = str(payload.get("referrer") or "").strip()[:800]
+    visitor_id = str(payload.get("visitor_id") or "").strip()[:120]
+    session_id = str(payload.get("session_id") or "").strip()[:120]
+    user_agent = (request.headers.get("User-Agent") or "").strip()[:500]
+
+    try:
+        conn = analytics_db()
+        try:
+            conn.execute(
+                """
+                insert into page_views (
+                  created_at, page, url, referrer, visitor_id, session_id, ip_hash, user_agent
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    datetime.now(timezone.utc).isoformat(),
+                    page,
+                    url,
+                    referrer,
+                    visitor_id or None,
+                    session_id or None,
+                    ip_hash_for_request(request),
+                    user_agent,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        app.logger.exception("Falha ao registrar visita da pagina obrigado")
+        return analytics_cors_response({"ok": False, "error": "Falha ao registrar visita."}, status=500)
+
+    return analytics_cors_response({"ok": True})
+
+
+@app.route("/api/obrigado-stats", methods=["GET", "OPTIONS"])
+def api_obrigado_stats():
+    if request.method == "OPTIONS":
+        return analytics_cors_response({"ok": True})
+
+    try:
+        days = int(request.args.get("days") or 30)
+    except ValueError:
+        days = 30
+    days = max(1, min(days, 180))
+    page = str(request.args.get("page") or "/obrigado").strip()[:120] or "/obrigado"
+
+    brt = ZoneInfo("America/Sao_Paulo")
+    now_brt = datetime.now(brt)
+    start_date = now_brt.date() - timedelta(days=days - 1)
+    start_brt = datetime.combine(start_date, datetime.min.time(), tzinfo=brt)
+    start_utc = start_brt.astimezone(timezone.utc).isoformat()
+
+    daily = {}
+    for index in range(days):
+        day = start_date + timedelta(days=index)
+        key = day.isoformat()
+        daily[key] = {
+            "date": key,
+            "label": day.strftime("%d/%m"),
+            "visits": 0,
+            "visitors": set(),
+        }
+
+    hourly = {
+        hour: {
+            "hour": hour,
+            "label": f"{hour:02d}:00",
+            "visits": 0,
+            "visitors": set(),
+        }
+        for hour in range(24)
+    }
+    total_visitors = set()
+    today_visits = 0
+    today_visitors = set()
+    recent = []
+
+    try:
+        conn = analytics_db()
+        try:
+            rows = conn.execute(
+                """
+                select created_at, page, url, referrer, visitor_id, ip_hash
+                from page_views
+                where page = ? and created_at >= ?
+                order by created_at asc
+                """,
+                (page, start_utc),
+            ).fetchall()
+            recent_rows = conn.execute(
+                """
+                select created_at, referrer, visitor_id, ip_hash
+                from page_views
+                where page = ?
+                order by created_at desc
+                limit 30
+                """,
+                (page,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        app.logger.exception("Falha ao ler contador da pagina obrigado")
+        return analytics_cors_response({"ok": False, "error": "Falha ao ler contador."}, status=500)
+
+    for row in rows:
+        try:
+            created = datetime.fromisoformat(row["created_at"]).astimezone(brt)
+        except Exception:
+            continue
+        visitor_key = row["visitor_id"] or row["ip_hash"] or "sem-id"
+        day_key = created.date().isoformat()
+        if day_key in daily:
+            daily[day_key]["visits"] += 1
+            daily[day_key]["visitors"].add(visitor_key)
+        hourly[created.hour]["visits"] += 1
+        hourly[created.hour]["visitors"].add(visitor_key)
+        total_visitors.add(visitor_key)
+        if created.date() == now_brt.date():
+            today_visits += 1
+            today_visitors.add(visitor_key)
+
+    for row in recent_rows:
+        try:
+            created = datetime.fromisoformat(row["created_at"]).astimezone(brt)
+        except Exception:
+            continue
+        recent.append(
+            {
+                "date": created.strftime("%d/%m/%Y"),
+                "time": created.strftime("%H:%M:%S"),
+                "visitor": (row["visitor_id"] or row["ip_hash"] or "")[:10],
+                "referrer": row["referrer"] or "",
+            }
+        )
+
+    daily_list = []
+    for item in daily.values():
+        daily_list.append(
+            {
+                "date": item["date"],
+                "label": item["label"],
+                "visits": item["visits"],
+                "visitors": len(item["visitors"]),
+            }
+        )
+    hourly_list = [
+        {
+            "hour": item["hour"],
+            "label": item["label"],
+            "visits": item["visits"],
+            "visitors": len(item["visitors"]),
+        }
+        for item in hourly.values()
+    ]
+
+    return analytics_cors_response(
+        {
+            "ok": True,
+            "page": page,
+            "days": days,
+            "updated_at": now_brt.strftime("%d/%m/%Y %H:%M:%S"),
+            "totals": {
+                "visits": len(rows),
+                "visitors": len(total_visitors),
+                "today_visits": today_visits,
+                "today_visitors": len(today_visitors),
+            },
+            "daily": daily_list,
+            "hourly": hourly_list,
+            "recent": recent,
+        }
+    )
+
+
+@app.post("/")
+@app.post("/gerar")
+def gerar():
+    client_ip = get_client_ip(request)
+    recent_media = safe_recent_media(request, client_ip)
+    request_media = safe_request_media(request, client_ip)
+    telefone = (request.form.get("telefone") or "").strip()
+    telegram_id = (request.form.get("telegram_id") or "").strip()
+
+    if not telefone:
+        return render_template(
+            "index.html",
+            result={"ok": False},
+            basic=None,
+            client_ip=client_ip,
+            limit_info=safe_check_ip_limits(client_ip),
+            recent_media=recent_media["items"],
+            request_media=request_media["items"],
+            request_user_id=request_media.get("user_id", ""),
+            error_msg="Para liberar seu teste, informe um WhatsApp valido.",
+            info_msg="",
+            form_phone=telefone,
+            form_telegram_id=telegram_id,
+        )
+
+    try:
+        active_access = get_active_access_for_ip(client_ip)
+    except Exception:
+        app.logger.exception("Falha ao consultar acesso ativo para IP %s", client_ip)
+        active_access = None
+
+    if active_access:
+        try:
+            register_usuario_criado_ip(
+                client_ip=client_ip,
+                username=active_access.get("username", ""),
+                telefone=telefone,
+                telegram_id=telegram_id,
+                exp_date_text=active_access.get("exp_date", ""),
+            )
+        except Exception:
+            app.logger.exception("Falha ao registrar reutilizacao de acesso para IP %s", client_ip)
+
+        basic = {
+            "username": active_access.get("username", ""),
+            "password": active_access.get("password", ""),
+            "exp_date_brasilia": safe_to_brasilia(active_access.get("exp_date", "")),
+        }
+        return render_template(
+            "index.html",
+            result={"ok": True, "reused": True, "test_response": active_access},
+            basic=basic,
+            client_ip=client_ip,
+            limit_info=safe_check_ip_limits(client_ip),
+            recent_media=recent_media["items"],
+            request_media=request_media["items"],
+            request_user_id=request_media.get("user_id", ""),
+            error_msg="",
+            info_msg="Seu teste atual ainda esta ativo. Reapresentamos o mesmo acesso para voce continuar.",
+            form_phone=telefone,
+            form_telegram_id=telegram_id,
+        )
+
+    limit_info = safe_check_ip_limits(client_ip)
+
+    if not limit_info.get("allowed"):
+        return render_template(
+            "index.html",
+            result={"ok": False},
+            basic=None,
+            client_ip=client_ip,
+            limit_info=limit_info,
+            recent_media=recent_media["items"],
+            request_media=request_media["items"],
+            request_user_id=request_media.get("user_id", ""),
+            error_msg="Seu teste ja foi gerado recentemente. Assim que liberar novamente, voce consegue gerar de novo.",
+            info_msg="",
+            form_phone=telefone,
+            form_telegram_id=telegram_id,
+        )
+
+    try:
+        result = generate_access_once(client_ip=client_ip, telefone=telefone, telegram_id=telegram_id)
+    except Exception:
+        app.logger.exception("Falha inesperada ao gerar acesso para IP %s", client_ip)
+        result = {
+            "ok": False,
+            "error": "Falha inesperada ao gerar acesso.",
+        }
+
+    basic = None
+    error_msg = ""
+    info_msg = ""
+    if result.get("ok"):
+        test_response = result.get("test_response", {})
+        basic = {
+            "username": test_response.get("username", ""),
+            "password": test_response.get("password", ""),
+            "exp_date_brasilia": safe_to_brasilia(test_response.get("exp_date", "")),
+        }
+        info_msg = "Teste liberado com sucesso. Agora e so configurar e aproveitar."
+    else:
+        app.logger.warning(
+            "Geracao de acesso falhou para IP %s: error=%s login_status=%s test_status=%s",
+            client_ip,
+            result.get("error", ""),
+            result.get("login_status", ""),
+            result.get("test_status", ""),
+        )
+        error_msg = "Nao conseguimos liberar agora. Tente novamente em instantes ou fale com nosso time no WhatsApp."
+
+    limit_info = safe_check_ip_limits(client_ip)
+    return render_template(
+        "index.html",
+        result=result,
+        basic=basic,
+        client_ip=client_ip,
+        limit_info=limit_info,
+        recent_media=recent_media["items"],
+        request_media=request_media["items"],
+        request_user_id=request_media.get("user_id", ""),
+        error_msg=error_msg,
+        info_msg=info_msg,
+        form_phone=telefone,
+        form_telegram_id=telegram_id,
+    )
+
+
+@app.route("/webhook/config", methods=["GET", "POST"])
+def webhook_config():
+    """O painel local lê e grava a configuração do GreenAPI/avisos por aqui."""
+    token = (request.args.get("token") or request.headers.get("X-Painel-Token") or "").strip()
+    campos = None
+    if request.method == "POST":
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return {"ok": False, "error": "Envie o corpo em JSON."}, 400
+        campos = payload
+
+    try:
+        resultado = executar_config_painel(token=token, campos=campos)
+    except Exception:
+        app.logger.exception("Falha ao ler/salvar configuracao do painel")
+        return {"ok": False, "error": "Falha ao gravar a configuracao."}, 500
+
+    status = int(resultado.pop("status", 200) or 200)
+    return resultado, status
+
+
+@app.route("/webhook/vencimentos", methods=["GET", "POST"])
+def webhook_vencimentos():
+    """Chamado pelo pg_cron do Supabase: avisa quem está a menos de N dias de vencer."""
+    token = (request.args.get("token") or request.headers.get("X-Aviso-Token") or "").strip()
+    forcar = (request.args.get("reenviar") or "") in ("1", "true", "sim")
+    try:
+        resultado = executar_aviso_vencimentos(token=token, forcar=forcar, client_ip=get_client_ip(request))
+    except Exception:
+        app.logger.exception("Falha ao rodar aviso de vencimento")
+        return {"ok": False, "error": "Falha ao rodar o aviso."}, 500
+
+    status = int(resultado.pop("status", 200) or 200)
+    return resultado, status
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True, "service": "wplay-teste-4h"}, 200
+
+
+@app.get("/api/recentes")
+def api_recentes():
+    client_ip = get_client_ip(request)
+    bearer = extract_bearer_from_request(request)
+    preferred_user_id = (request.args.get("user_id") or request.headers.get("X-Mcapi-User-Id") or "").strip()
+    try:
+        result = fetch_recent_streams_for_user(
+            provided_bearer=bearer,
+            preferred_user_id=preferred_user_id,
+            movies_limit=20,
+            channels_limit=20,
+            client_ip=client_ip,
+            allow_shared_fallback=True,
+        )
+    except Exception:
+        app.logger.exception("Falha ao buscar recentes para IP %s", client_ip)
+        return {"ok": False, "error": "Recentes temporariamente indisponiveis.", "merged": []}, 503
+
+    status_code = 200 if result.get("ok") else 400
+    return result, status_code
+
+
+@app.get("/api/solicitacoes")
+def api_solicitacoes():
+    client_ip = get_client_ip(request)
+    bearer = extract_bearer_from_request(request)
+    preferred_user_id = (request.args.get("user_id") or request.headers.get("X-Mcapi-User-Id") or "").strip()
+    search_query = (request.args.get("query") or request.args.get("search") or "ss").strip() or "ss"
+
+    try:
+        result = fetch_catalog_request_tracks_for_user(
+            provided_bearer=bearer,
+            preferred_user_id=preferred_user_id,
+            search_query=search_query,
+            findall_limit=18,
+            tmdb_limit=18,
+            merged_limit=24,
+            client_ip=client_ip,
+            allow_shared_fallback=True,
+        )
+    except Exception:
+        app.logger.exception("Falha ao buscar solicitacoes para IP %s", client_ip)
+        return {"ok": False, "error": "Busca temporariamente indisponivel.", "merged_items": []}, 503
+
+    status_code = 200 if result.get("ok") else 400
+    return result, status_code
+
+
+@app.post("/api/pedir-conteudo")
+def api_pedir_conteudo():
+    client_ip = get_client_ip(request)
+    bearer = extract_bearer_from_request(request)
+    preferred_user_id = (request.args.get("user_id") or request.headers.get("X-Mcapi-User-Id") or "").strip()
+
+    payload = request.get_json(silent=True) or {}
+    content_name = (payload.get("content_name") or request.form.get("content_name") or "").strip()
+    content_type = (payload.get("content_type") or request.form.get("content_type") or "filme").strip().lower()
+    tmdb_id = (payload.get("tmdb_id") or request.form.get("tmdb_id") or "").strip()
+    img_url = (payload.get("img_url") or request.form.get("img_url") or "").strip()
+    user_id = (payload.get("user_id") or request.form.get("user_id") or "").strip()
+
+    if not content_name:
+        return {"ok": False, "error": "Informe o nome do conteudo para solicitar."}, 400
+
+    if content_type not in {"filme", "serie", "canal"}:
+        content_type = "filme"
+
+    try:
+        result = submit_content_request_for_user(
+            provided_bearer=bearer,
+            preferred_user_id=preferred_user_id,
+            content_name=content_name,
+            content_type=content_type,
+            tmdb_id=tmdb_id,
+            img_url=img_url,
+            user_id=user_id,
+            client_ip=client_ip,
+            allow_shared_fallback=True,
+        )
+    except Exception:
+        app.logger.exception("Falha ao enviar pedido de conteudo para IP %s", client_ip)
+        return {"ok": False, "error": "Pedido temporariamente indisponivel."}, 503
+
+    status_code = result.get("status_code") if isinstance(result.get("status_code"), int) else None
+    if status_code is None:
+        status_code = 200 if result.get("ok") else 400
+    return result, status_code
+
+
+@app.get("/indexdeliberados")
+def indexdeliberados():
+    return render_liberados()
+
+
+@app.post("/indexdeliberados/adicionar")
+def adicionar_deliberado():
+    ip = (request.form.get("ip") or "").strip()
+    descricao = (request.form.get("descricao") or "Liberado manualmente").strip()
+    if not ip:
+        return render_liberados("IP invalido.", is_error=True)
+
+    add_ip_liberado(ip, descricao)
+    return render_liberados(f"IP {ip} liberado com sucesso.")
+
+
+@app.post("/indexdeliberados/liberar-meu-ip")
+def liberar_meu_ip():
+    ip = get_client_ip(request)
+    add_ip_liberado(ip, "Liberado pelo botao 'Liberar meu IP'")
+    return render_liberados(f"Seu IP {ip} foi liberado com sucesso.")
+
+
+@app.post("/indexdeliberados/remover")
+def remover_deliberado():
+    ip = (request.form.get("ip") or "").strip()
+    if not ip:
+        return render_liberados("IP invalido.", is_error=True)
+
+    remove_ip_liberado(ip)
+    return render_liberados(f"IP {ip} removido da liberacao.")
+
+
+if __name__ == "__main__":
+    debug_enabled = os.getenv("FLASK_DEBUG", "0") == "1"
+    app.run(host="0.0.0.0", port=5000, debug=debug_enabled)

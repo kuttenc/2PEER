@@ -1,0 +1,318 @@
+{# Lote "Não recuperados": coluna pular + barra + modal + envio em segundo plano.
+   Incluído nas abas Acessos e Clientes; recebe lote_busca e lote_destino do pai. #}
+<div class="barra" id="loteBarra" hidden>
+  <b>Não recuperados</b>
+  <span class="muted" id="loteContagem">nada marcado</span>
+  <button type="button" class="verde" onclick="abrirModalLote()">Revisar e enviar</button>
+  <button type="button" onclick="limparMarcas()">Desmarcar todos</button>
+  <button type="button" onclick="sairLote()">Sair</button>
+</div>
+
+<div class="barra" id="loteAndamento" hidden>
+  <b>Envio em andamento</b>
+  <span class="muted" id="loteAndamentoTexto">contando&hellip;</span>
+  <button type="button" class="verde" onclick="abrirModalLoteProgresso()">Ver o envio</button>
+</div>
+
+<div class="modal" id="modalLote" hidden role="dialog" aria-modal="true" aria-labelledby="mlTitulo">
+  <div class="modal-caixa">
+    <div id="mlRevisar">
+      <h2 id="mlTitulo">Confirmar o envio para os não recuperados</h2>
+      <p class="muted" style="margin-top:0">A lista é remontada no servidor, página por página, direto do
+        painel MC &mdash; não é o que está na tela. Vai a mensagem da aba
+        <a href="{{ url_for('painel.recuperacao') }}">Recuperação</a> para todos os vencidos,
+        <b>menos</b> os marcados na coluna <b>pular</b>.</p>
+      <div class="numeros">
+        <div><span class="rotulo">vão receber</span><b id="mlAlvos">?</b></div>
+        <div><span class="rotulo">vencidos no painel MC</span><b id="mlVencidos">?</b></div>
+        <div><span class="rotulo">marcados para pular</span><b id="mlPulados">0</b></div>
+        <div><span class="rotulo">sem telefone</span><b id="mlSemTelefone">0</b></div>
+        <div><span class="rotulo">já receberam nas últimas 3h</span><b id="mlEsperando">0</b></div>
+        <div><span class="rotulo">só no espelho, sem linha no MC</span><b id="mlForaMC">0</b></div>
+      </div>
+      <p class="muted" style="margin:6px 0">Foto junto: <b id="mlFoto">?</b></p>
+      <p class="muted" style="margin:6px 0" id="mlBusca"></p>
+      <p class="muted" style="margin:6px 0">Os primeiros que vão receber:
+        <span class="nomes" id="mlNomes"></span></p>
+      <p class="muted" style="margin:6px 0" id="mlFora" hidden></p>
+      <p id="mlAviso" class="erro" style="margin-top:12px" hidden></p>
+      <div class="linha" style="margin-top:12px">
+        <button type="button" onclick="fecharModalLote()">Voltar</button>
+        <button type="button" class="verde" id="mlEnviar" onclick="confirmarLote()" disabled>Sim, enviar para todos</button>
+      </div>
+    </div>
+
+    <div id="mlProgresso" hidden>
+      <h2>Enviando as recuperações</h2>
+      <p class="muted" style="margin-top:0">Não feche o painel até terminar &mdash; mas se fechar, o envio
+        continua igual porque quem manda é o servidor.</p>
+      <div class="prog"><i id="mpBarra"></i></div>
+      <p style="margin:6px 0"><b id="mpTexto">preparando&hellip;</b></p>
+      <p class="muted" style="margin:6px 0">Erros: <span class="nomes" id="mpErros"></span></p>
+      <p id="mpMotivo" class="erro" style="margin-top:12px" hidden></p>
+      <div class="linha" style="margin-top:12px">
+        <button type="button" class="verm" id="mpParar" onclick="pararLote()">Parar de enviar</button>
+        <button type="button" onclick="fecharModalLote()">Fechar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const LOTE_CONTAGEM_URL = {{ url_for('painel.recuperar_todos_contagem') | tojson }};
+const LOTE_ENVIAR_URL = {{ url_for('painel.recuperar_todos') | tojson }};
+const LOTE_STATUS_URL = {{ url_for('painel.recuperar_todos_status') | tojson }};
+const LOTE_PARAR_URL = {{ url_for('painel.recuperar_todos_parar') | tojson }};
+const LOTE_BUSCA = {{ (lote_busca or '') | tojson }};
+const CHAVE_PULAR = 'peixeiro_lote_pular';
+let pular = carregarPular();
+let temporizador = null;
+let envioTerminou = false;
+
+function carregarPular() {
+  try { return new Set(JSON.parse(localStorage.getItem(CHAVE_PULAR) || '[]')); }
+  catch (e) { return new Set(); }
+}
+
+function guardarPular() {
+  try { localStorage.setItem(CHAVE_PULAR, JSON.stringify(Array.from(pular))); } catch (e) {}
+}
+
+function caixasPular() { return Array.prototype.slice.call(document.querySelectorAll('input.pula')); }
+
+function alternarLote() {
+  if (document.body.classList.contains('lote')) { sairLote(); return; }
+  if (typeof sairMesclar === 'function') sairMesclar();
+  document.body.classList.add('lote');
+  document.getElementById('btnLote').textContent = 'Sair dos não recuperados';
+  caixasPular().forEach(function (c) { c.checked = pular.has(c.value); });
+  atualizarBarraLote();
+}
+
+function sairLote() {
+  document.body.classList.remove('lote');
+  const botao = document.getElementById('btnLote');
+  if (botao) botao.textContent = 'Não recuperados';
+  atualizarBarraLote();
+}
+
+function limparMarcas() {
+  pular.clear();
+  guardarPular();
+  caixasPular().forEach(function (c) { c.checked = false; });
+  atualizarBarraLote();
+}
+
+function atualizarBarraLote() {
+  const barra = document.getElementById('loteBarra');
+  if (barra) barra.hidden = !document.body.classList.contains('lote');
+  const nestaPagina = caixasPular().filter(function (c) { return c.checked; }).length;
+  const partes = [];
+  if (!pular.size) partes.push('nenhum marcado: vai para TODOS os vencidos');
+  else {
+    if (nestaPagina) partes.push(nestaPagina + ' marcado nesta página');
+    if (pular.size > nestaPagina) partes.push((pular.size - nestaPagina) + ' marcado em outra página');
+  }
+  const texto = document.getElementById('loteContagem');
+  if (texto) texto.textContent = partes.join(' · ');
+}
+
+document.addEventListener('change', function (evento) {
+  const alvo = evento.target;
+  if (!alvo.classList || !alvo.classList.contains('pula')) return;
+  if (alvo.checked) pular.add(alvo.value);
+  else pular.delete(alvo.value);
+  guardarPular();
+  atualizarBarraLote();
+});
+
+function corpoComMarcados() {
+  const corpo = new URLSearchParams();
+  if (LOTE_BUSCA) corpo.append('q', LOTE_BUSCA);
+  pular.forEach(function (nome) { corpo.append('pular', nome); });
+  return corpo.toString();
+}
+
+function formulario(par) {
+  const corpo = new URLSearchParams();
+  Object.keys(par).forEach(function (chave) { corpo.append(chave, par[chave]); });
+  return corpo.toString();
+}
+
+const FORM_HDR = { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' };
+
+function avisoLote(texto) {
+  const caixa = document.getElementById('mlAviso');
+  caixa.textContent = texto;
+  caixa.hidden = !texto;
+}
+
+function abrirModalLote() {
+  document.getElementById('mlRevisar').hidden = false;
+  document.getElementById('mlProgresso').hidden = true;
+  avisoLote('');
+  envioTerminou = false;
+  document.getElementById('mlEnviar').disabled = true;
+  document.getElementById('mlAlvos').textContent = '…';
+  document.getElementById('mlVencidos').textContent = '…';
+  document.getElementById('modalLote').hidden = false;
+  fetch(LOTE_CONTAGEM_URL, {
+    method: 'POST', headers: FORM_HDR, credentials: 'same-origin', body: corpoComMarcados()
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    if (!d.ok) { avisoLote(d.erro || 'o site não conseguiu contar agora.'); return; }
+    escreverPlano(d);
+  }).catch(function () {
+    avisoLote('o site não respondeu. Abra o modal de novo.');
+  });
+}
+
+function escreverPlano(d) {
+  document.getElementById('mlAlvos').textContent = d.alvos;
+  document.getElementById('mlVencidos').textContent = d.vencidos;
+  document.getElementById('mlPulados').textContent = d.pulados;
+  document.getElementById('mlSemTelefone').textContent = d.sem_telefone;
+  document.getElementById('mlEsperando').textContent = d.esperando;
+  document.getElementById('mlForaMC').textContent = d.so_no_espelho;
+  document.getElementById('mlFoto').textContent =
+    d.foto ? 'sim, a foto da aba Recuperação' : 'não — vai só o texto';
+  document.getElementById('mlBusca').textContent = (d.busca
+    ? 'Filtro "' + d.busca + '" ativo: só entra na conta quem bate nesse filtro.'
+    : 'Sem filtro: a varrida pega todas as páginas do painel MC.') +
+    (d.marcados > d.pulados ? ' ' + (d.marcados - d.pulados) +
+      ' marcado(s) não estavam entre os vencidos.' : '');
+  const fora = document.getElementById('mlFora');
+  fora.hidden = !d.so_no_espelho;
+  fora.textContent = d.so_no_espelho
+    ? ('Ficam de fora porque a linha não existe mais no painel MC (só no espelho): ' +
+       (d.fora_do_mc || []).join(', ') +
+       (d.so_no_espelho > (d.fora_do_mc || []).length ? '…' : '') +
+       ' — para esses, use o botão recuperar da própria linha.')
+    : '';
+  const nomes = document.getElementById('mlNomes');
+  nomes.textContent = '';
+  (d.primeiros || []).forEach(function (n) {
+    const span = document.createElement('span');
+    span.textContent = n;
+    nomes.appendChild(span);
+  });
+  const enviar = document.getElementById('mlEnviar');
+  enviar.disabled = !d.alvos;
+  if (!d.alvos) avisoLote('Ninguém sobrou para enviar. Desmarque alguém ou cadastre o telefone.');
+  else if (d.aviso) avisoLote('A varrida parou antes do fim: ' + d.aviso);
+  else avisoLote('');
+}
+
+function confirmarLote() {
+  const botao = document.getElementById('mlEnviar');
+  botao.disabled = true;
+  botao.textContent = 'abrindo o envio…';
+  fetch(LOTE_ENVIAR_URL, {
+    method: 'POST', headers: FORM_HDR, credentials: 'same-origin',
+    body: formulario({ confirmar: 'sim' })
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    botao.textContent = 'Sim, enviar para todos';
+    if (!d.ok) { botao.disabled = false; avisoLote(d.erro || 'o envio não começou.'); return; }
+    iniciarProgresso(d.total);
+  }).catch(function () {
+    botao.disabled = false;
+    botao.textContent = 'Sim, enviar para todos';
+    avisoLote('o site não respondeu. Confira na lista antes de mandar de novo.');
+  });
+}
+
+function iniciarProgresso(total) {
+  document.getElementById('mlRevisar').hidden = true;
+  document.getElementById('mlProgresso').hidden = false;
+  document.getElementById('mpParar').hidden = false;
+  document.getElementById('mpMotivo').hidden = true;
+  desenhar({ total: total, enviados: 0, falhas: 0, erros: [] });
+  if (temporizador) clearInterval(temporizador);
+  temporizador = setInterval(consultarStatus, 1500);
+}
+
+function desenhar(s) {
+  const total = s.total || 0;
+  const feitos = (s.enviados || 0) + (s.falhas || 0);
+  const pct = total ? Math.round(100 * feitos / total) : 0;
+  document.getElementById('mpBarra').style.width = pct + '%';
+  document.getElementById('mpTexto').textContent =
+    (s.enviados || 0) + ' enviados de ' + total + ' · ' + (s.falhas || 0) + ' com erro';
+  const erros = document.getElementById('mpErros');
+  erros.textContent = '';
+  (s.erros || []).forEach(function (e) {
+    const span = document.createElement('span');
+    span.textContent = e.usuario + ': ' + e.motivo;
+    erros.appendChild(span);
+  });
+}
+
+function consultarStatus() {
+  fetch(LOTE_STATUS_URL, { credentials: 'same-origin' }).then(function (r) {
+    return r.json();
+  }).then(function (s) {
+    desenhar(s);
+    const faixa = document.getElementById('loteAndamento');
+    if (faixa && !s.rodando) faixa.hidden = true;
+    if (s.rodando) {
+      const texto = document.getElementById('loteAndamentoTexto');
+      if (texto) texto.textContent = (s.enviados || 0) + ' de ' + s.total + ' enviados';
+      return;
+    }
+    if (temporizador) { clearInterval(temporizador); temporizador = null; }
+    envioTerminou = true;
+    document.getElementById('mpParar').hidden = true;
+    document.getElementById('mpTexto').textContent =
+      'terminou: ' + (s.enviados || 0) + ' enviados, ' + (s.falhas || 0) + ' com erro, ' +
+      (s.esperando || 0) + ' já tinham recebido nas últimas 3h';
+    if (s.motivo) {
+      const motivo = document.getElementById('mpMotivo');
+      motivo.textContent = s.motivo;
+      motivo.hidden = false;
+    }
+  }).catch(function () {});
+}
+
+function abrirModalLoteProgresso() {
+  document.getElementById('mlRevisar').hidden = true;
+  document.getElementById('mlProgresso').hidden = false;
+  document.getElementById('modalLote').hidden = false;
+  if (!temporizador) temporizador = setInterval(consultarStatus, 1500);
+}
+
+function pararLote() {
+  const botao = document.getElementById('mpParar');
+  botao.disabled = true;
+  botao.textContent = 'parando…';
+  fetch(LOTE_PARAR_URL, {
+    method: 'POST', headers: FORM_HDR, credentials: 'same-origin', body: formulario({ confirmar: 'sim' })
+  }).catch(function () {
+    botao.disabled = false;
+    botao.textContent = 'Parar de enviar';
+  });
+}
+
+function fecharModalLote() {
+  document.getElementById('modalLote').hidden = true;
+  if (envioTerminou) window.location.reload();
+}
+
+document.addEventListener('keydown', function (evento) {
+  if (evento.key === 'Escape') fecharModalLote();
+});
+
+caixasPular().forEach(function (c) { c.checked = pular.has(c.value); });
+atualizarBarraLote();
+verificarAndamento();
+
+function verificarAndamento() {
+  fetch(LOTE_STATUS_URL, { credentials: 'same-origin' }).then(function (r) {
+    return r.json();
+  }).then(function (s) {
+    if (!s.rodando) return;
+    document.getElementById('loteAndamento').hidden = false;
+    document.getElementById('loteAndamentoTexto').textContent =
+      (s.enviados || 0) + ' de ' + s.total + ' enviados';
+    if (!temporizador) temporizador = setInterval(consultarStatus, 1500);
+  }).catch(function () {});
+}
+</script>

@@ -1,0 +1,33 @@
+# Copia de testes do painel (2PEER). O banco e um projeto Supabase so desta copia e
+# PEIXEIRO_MODO_TESTE trava qualquer envio ou exclusao de verdade.
+services:
+  - type: web
+    name: o-peixeiro-2peer
+    runtime: python
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /healthz
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --threads 8 --timeout 120
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      # 1 = envio de WhatsApp vira "simulado" e o DELETE no painel MC nao e disparado.
+      - key: PEIXEIRO_MODO_TESTE
+        value: "1"
+      #conexao do projeto Supabase so desta copia
+      - key: DATABASE_URL
+        sync: false
+      #so as abas Acessos e Deletar usam; sem isto o resto do painel funciona
+      - key: MC_USERNAME
+        sync: false
+      - key: MC_PASSWORD
+        sync: false
+      #abre o painel na primeira vez; em branco ele sorteia e escreve a senha no log
+      - key: PAINEL_SENHA_INICIAL
+        sync: false
+      #opcional: com token o link curto sai na conta dele em vez de sair como visita
+      - key: URTADOR_TOKEN
+        sync: false
+      - key: URTADOR_BASE_URL
+        value: https://kuttenc.github.io/urtador

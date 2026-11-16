@@ -1,0 +1,62 @@
+{% extends "painel_base.html" %}
+{% block titulo %}Recuperação{% endblock %}
+{% block corpo %}
+{% if msg_ok %}<div class="ok">{{ msg_ok }}</div>{% endif %}
+{% if msg_erro %}<div class="erro">{{ msg_erro }}</div>{% endif %}
+
+<div class="card">
+  <h2>O que sai quando você clica em &ldquo;recuperar&rdquo;</h2>
+  <p class="muted">O botão fica na aba <a href="{{ url_for('painel.acessos') }}">Acessos</a>, nas linhas vencidas.
+    Tudo aqui vale para todo clique, sem precisar mexer em mais nada.</p>
+  <form method="post" action="{{ url_for('painel.recuperacao') }}" enctype="multipart/form-data">
+    <label for="legenda">Mensagem ({{ '{dias}' }} vira &ldquo;há 1 mês e 4 dias&rdquo;, {{ '{pix}' }} vira a chave PIX da Configuração)</label>
+    <textarea id="legenda" name="recupera_legenda" rows="4">{{ conf.recupera_legenda }}</textarea>
+
+    <label for="foto">Foto que vai sempre junto (jpg ou png, até 1,5 MB) &mdash; escolher o arquivo já liga o envio</label>
+    <input type="file" id="foto" name="foto" accept="image/*">
+
+    <label class="cb"><input type="checkbox" name="recupera_send_photo" value="on" {% if conf.recupera_send_photo %}checked{% endif %}>
+      Mandar essa foto junto de cada recuperação</label>
+    <label class="cb"><input type="checkbox" name="limpar_foto" value="1">
+      Apagar a foto guardada (o recuperar volta a mandar só texto)</label>
+
+    <p style="margin-top:14px"><button class="prim" type="submit">Salvar</button></p>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Foto guardada hoje</h2>
+  {% if conf.recupera_photo_base64 %}
+  {% if not conf.recupera_send_photo %}
+  <div class="erro">A foto está guardada, mas o envio dela está <b>desligado</b>: por isso o último recuperar saiu
+    só com texto. Use o botão abaixo para ligar.</div>
+  {% endif %}
+  <div class="linha" style="align-items:flex-start">
+    <img class="prev" src="{{ url_for('painel.recuperacao_foto') }}" alt="foto da recuperação">
+    <div>
+      <p>{{ conf.recupera_photo_name or 'arquivo' }} &middot;
+        {{ ((conf.recupera_photo_base64|length / 1024)|round(0))|int }} KB no banco</p>
+      <p class="muted">Envio automático de foto:
+        <span class="pill {{ 'on' if conf.recupera_send_photo else '' }}">{{ 'ligado' if conf.recupera_send_photo else 'desligado' }}</span></p>
+      <form method="post" action="{{ url_for('painel.recuperacao') }}">
+        <input type="hidden" name="alternar" value="1">
+        <button class="{{ 'verde' if not conf.recupera_send_photo else 'segundo' }}" type="submit">
+          {{ 'Ligar: mandar essa foto em todo recuperar' if not conf.recupera_send_photo else 'Desligar: recuperar manda só o texto' }}
+        </button>
+      </form>
+      <p class="muted" style="margin-top:8px">Esse botão não apaga a foto e não mexe na mensagem.</p>
+    </div>
+  </div>
+  {% else %}
+  <p class="muted">Nenhuma foto guardada. Enquanto estiver assim, o recuperar manda só o texto.</p>
+  <p class="muted">Escolha o arquivo no campo acima e toque em <b>Salvar</b> &mdash; guardar a foto já liga o envio.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Assim o cliente vai receber</h2>
+  <p class="muted">Texto de exemplo, com {{ '{dias}' }} trocado por &ldquo;há 1 mês e 4 dias&rdquo;:</p>
+  <pre style="white-space:pre-wrap;margin:0;padding:10px;border:1px solid var(--linha);
+       border-radius:8px;background:#0b0f14;font-family:inherit;font-size:14px">{{ exemplo }}</pre>
+</div>
+{% endblock %}

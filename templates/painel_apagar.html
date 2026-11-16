@@ -1,0 +1,21 @@
+{% extends "painel_base.html" %}
+{% block titulo %}Confirmar exclusão{% endblock %}
+{% block corpo %}
+{% if msg_erro %}<div class="erro">{{ msg_erro }}</div>{% endif %}
+<div class="card">
+  <h2>Apagar este acesso?</h2>
+  <table>
+    <tr><th>ID da linha</th><td><b>{{ linha_id }}</b></td></tr>
+    <tr><th>Usuário</th><td>{{ alvo.username or '(não encontrei nos primeiros resultados)' }}</td></tr>
+    <tr><th>Telefone</th><td>{{ telefone or '—' }}</td></tr>
+    <tr><th>Expira</th><td>{{ alvo.expira or '—' }}{% if alvo.parado %} <span class="pill">parado</span>{% endif %}</td></tr>
+    <tr><th>Nota</th><td class="muted">{{ alvo.notes or '—' }}</td></tr>
+  </table>
+  <div class="erro" style="margin-top:14px">Isso é irreversível: a linha sai do painel MC na hora e o cliente perde o acesso.</div>
+  <form method="post" class="linha">
+    <label style="margin:0 10px 0 0"><input type="checkbox" name="confirmar" value="sim" style="width:auto"> entendo que o cliente perde o acesso agora</label>
+    <button class="verm" type="submit">Sim, apagar {{ linha_id }}</button>
+    <a href="{{ url_for('painel.acessos') }}">cancelar</a>
+  </form>
+</div>
+{% endblock %}
