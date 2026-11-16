@@ -32,16 +32,22 @@ Arquivos novos:
 cd 2peer
 # o token (sbp_...) fica no .env como SUPABASE_PROJECT_2peer; o CLI só aceita no formato sbp_
 export SUPABASE_ACCESS_TOKEN=$(grep -oE 'SUPABASE_PROJECT_2peer=.*' .env | cut -d= -f2 | tr -d '\r')
-npx supabase secrets set --yes \
-  --remote=bzgtptbwcvwpgnhbctjn --env-file .env \
+# só quando os endereços mudam (a cópia hoje já tem estes dois gravados):
+npx supabase secrets set \
   PAINEL_ORIGENS=https://kuttenc.github.io \
-  PAINEL_ASSETS_URL=https://kuttenc.github.io/2PEER/assets
+  PAINEL_ASSETS_URL=https://kuttenc.github.io/2PEER/assets \
+  --project-ref bzgtptbwcvwpgnhbctjn
 npx supabase functions deploy peixeiro \
-  --no-verify-jwt --yes --remote=bzgtptbwcvwpgnhbctjn
+  --no-verify-jwt --yes --project-ref bzgtptbwcvwpgnhbctjn
 ```
 
 O `--no-verify-jwt` é obrigatório: quem chama é o navegador com o token de sessão do painel,
 não o JWT do Supabase. Sem ele toda chamada volta 401.
+
+O nome da flag é `--project-ref` (um `--remote=` desse jeito o CLI responde
+`Unrecognized flag`). Se o `npx supabase` falhar com `ENOSPC` ou "No matching Supabase CLI
+binary package found", use o binário que já está no cache do npm em vez de instalar de novo:
+`C:/Users/ps4la/AppData/Local/npm-cache/_npx/91eb58246759989d/node_modules/@supabase/cli-windows-x64/bin/supabase.exe`.
 
 O push do `painel/` para o GitHub Pages publica a página; não existe deploy separado.
 
@@ -153,6 +159,31 @@ aviso vai aparecer de vez em quando — é por isso, não é senha errada.
   apagar nem para a agenda das 6h. Com 900 clientes na lista, a conta é de horas com o painel
   aberto (4,5–105 s ≈ 13 h 40 no meio-termo) — por isso a régua existe.
 
+## A aba "Não recuperados" (a fila por dentro)
+
+O mesmo lote das abas Acessos e Clientes, visto linha por linha. Nada de novo é enviado por
+ela: quem começa o envio continua sendo o "Não recuperados → Revisar e enviar".
+
+- `lote_fila` devolve o plano congelado de `recuperar_todos` com a situação de cada posição
+  (`fila` / `enviando` / `enviado` / `falhou` / `fora`) e os contadores. O resultado de cada
+  tentativa fica em `estado.resultados` (chave = número da linha no plano), então **quem falhou
+  continua na tela depois que o lote acaba**, com o motivo que o GreenAPI deu.
+- `estado.enviando` guarda a posição que está no ar naquele instante. Por isso o "enviando…"
+  aparece mesmo quando o envio foi começado em outra aba ou em outro aparelho; a tela se refaz
+  sozinha a cada 4 s enquanto o lote corre.
+- **Parar** chama `lote_parar` (manda a mensagem que estiver no ar terminar e desliga).
+- **Retomar de onde parou** chama `lote_retomar`: continua o MESMO plano, na mesma posição, sem
+  recontar ninguém — ninguém recebe duas vezes. Não precisa de conferência fresca (diferente do
+  "Revisar e enviar", que exige os 15 minutos).
+- **Selecionar → Tirar da fila** chama `lote_tirar` com os números escolhidos. Só marca
+  `ignorado: true` no plano: não apaga nada no painel MC, não desfaz o que já foi enviado e o
+  motor simplesmente pula essas linhas. Por segurança ela só funciona com o envio parado
+  (`lote_rodando` no resto) e só pega linhas ainda não tentadas. A próxima conferência traz
+  todos de volta.
+- Remontar o plano (`lote_contagem`) com o lote andando foi travado na função: devolve
+  `lote_rodando` antes de varrer o MC, para o envio não ser jogado para outra lista no meio.
+- Acabou tudo? `lote_retomar` responde `fila_no_fim` em vez de mandar de novo.
+
 ## Provar sem mexer em cliente de verdade
 
 - Deixe `PEIXEIRO_MODO_TESTE=1`. Assim nada sai no WhatsApp e nada é apagado no MC, mas todas
@@ -168,6 +199,13 @@ aviso vai aparecer de vez em quando — é por isso, não é senha errada.
   resposta 401/403 do MC agora limpa essa linha sozinho.
 - As linhas de teste desses dois modos entram em `mc_linhas`, `usuarios_criados_ip`,
   `painel_lote` e `mcapi_events`. Para limpar o banco da cópia, apague o que vier de `stub%`.
+- A fila da aba "Não recuperados" foi provada com `tools/_probe_fila.py`: `install` grava seis
+  linhas `stub01..stub06` direto em `recuperar_todos`, `show` imprime o plano com a marca de cada
+  posição e `clean` apaga a fila e tudo o que saiu de `stub%`. Com `PEIXEIRO_MODO_TESTE=1` os
+  `lote_item` simulam o envio, então dá para ver o "enviando…", parar, retomar e tirar da fila
+  sem nenhum WhatsApp sair. **Nunca rode `lote_contagem` por fora com a fila de mentira montada**:
+  ela é substituída pela varredura dos clientes de verdade (o travamento novo só impede isso
+  enquanto o lote está no ar).
 
 ## Quando for para a produção
 
