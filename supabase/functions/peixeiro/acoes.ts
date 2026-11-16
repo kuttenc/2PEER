@@ -39,7 +39,13 @@ import {
   type ResultadoEnvio,
 } from "./greenapi.ts";
 import { gerarImagemAviso, previaAvisoEmB64 } from "./aviso.ts";
-import { autenticado as encurtadorLogado, baseEncurtador, encurtar, resolver } from "./encurtador.ts";
+import {
+  autenticado as encurtadorLogado,
+  baseEncurtador,
+  encurtar,
+  linkRecuperacao,
+  resolver,
+} from "./encurtador.ts";
 import {
   DIAS_SESSAO,
   conferida,
@@ -481,7 +487,9 @@ export async function recuperacaoVer(): Promise<Saida> {
   if (!conf) return falha("banco", 500);
   return ok({
     conf: resumoConfig(conf),
-    exemplo: legendaRecuperar(conf, "há 1 mês e 4 dias"),
+    // O {link} do exemplo é de mentira de propósito: criar link de verdade a cada abertura da
+    // aba loteria o encurtador. No envio, quem põe o link real é linkRecuperacao().
+    exemplo: legendaRecuperar(conf, "há 1 mês e 4 dias", `${baseEncurtador()}/rc-usuario-1234`),
     tem_foto: Boolean(conf.recupera_photo_base64),
     foto_kb: Math.round((conf.recupera_photo_base64 || "").length / 1024),
     foto_nome: conf.recupera_photo_name,
@@ -556,7 +564,8 @@ export async function recuperarUm(dados: Registro, ctx: Contexto): Promise<Saida
   }
   const horas = expira ? (expira.getTime() - Date.now()) / 3_600_000 : 0;
   const dias = textoVencido(horas);
-  const resultado = await enviarRecuperacao(conf, telefone, legendaRecuperar(conf, dias));
+  const link = await linkRecuperacao(username, telefone);
+  const resultado = await enviarRecuperacao(conf, telefone, legendaRecuperar(conf, dias, link.url));
   if (!resultado.ok) {
     return falha(cotaEsgotada(resultado) ? "cota" : "enviar", 502, { detalhe: falhaGreenApi(resultado).slice(0, 220) });
   }
@@ -567,14 +576,14 @@ export async function recuperarUm(dados: Registro, ctx: Contexto): Promise<Saida
     event_type: "recuperar_envio",
     status_code: resultado.status_code ?? null,
     request_payload: {
-      username, telefone, dias, fonte_data: fonte, exp_iso: expDate.slice(0, 40),
+      username, telefone, dias, link: link.url, fonte_data: fonte, exp_iso: expDate.slice(0, 40),
       com_foto: Boolean(resultado.com_foto),
     },
     response_payload: resultado.response,
     client_ip: ctx.ip,
   });
   const foto = resultado.com_foto ? "1" : conf.recupera_photo_base64 ? "desligada" : "sem_foto";
-  return ok({ dias, data: fonte, foto, telefone });
+  return ok({ dias, data: fonte, foto, telefone, link: link.url, link_curto: link.curto });
 }
 
 /** Linha sem linha_id (CSV ou caixinha) tem data velha demais para anunciar dias. */
@@ -760,9 +769,10 @@ async function itemRecuperar(
   const expira = parseExpDate(String(item.exp_iso || ""));
   const horas = expira ? (expira.getTime() - Date.now()) / 3_600_000 : 0;
   const dias = textoVencido(horas);
+  const link = await linkRecuperacao(username, telefone);
   let resultado: ResultadoEnvio;
   try {
-    resultado = await enviarRecuperacao(conf, telefone, legendaRecuperar(conf, dias));
+    resultado = await enviarRecuperacao(conf, telefone, legendaRecuperar(conf, dias, link.url));
   } catch (exc) {
     resultado = { ok: false, error: String(exc).slice(0, 160) };
   }
@@ -770,7 +780,7 @@ async function itemRecuperar(
   await gravarEvento({
     event_type: "recuperar_envio",
     status_code: resultado.status_code ?? null,
-    request_payload: { username, telefone, dias, fonte_data: "linha", exp_iso: String(item.exp_iso || "").slice(0, 40), via: "lote" },
+    request_payload: { username, telefone, dias, link: link.url, fonte_data: "linha", exp_iso: String(item.exp_iso || "").slice(0, 40), via: "lote" },
     response_payload: resultado.response,
     client_ip: ctx.ip,
   });

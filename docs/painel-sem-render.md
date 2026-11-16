@@ -64,6 +64,14 @@ são para chamar o banco/Auth/Storage, e o CLI responde `Invalid access token fo
 | `URTADOR_TOKEN` | links curtos na sua conta em vez de visita | vazio |
 | `PAINEL_ORIGENS` | origens permitidas no CORS, separadas por vírgula | `https://kuttenc.github.io` |
 | `PAINEL_ASSETS_URL` | onde ficam o wasm e a fonte da imagem do aviso | endereço do Pages |
+| `PAINEL_LINK_BASE` | para onde o `{link}` da mensagem de recuperação leva o cliente | `https://kuttenc.github.io/2PEER` |
+
+O `{link}` da Recuperação é montado assim: o endereço acima + `/?d=` + o usuário e o telefone
+em base64 (`abc1234|11999998888` vira `YWJjMTIzNHwxMTk5OTk5ODg4OA`), e esse endereço comprido é
+encurtado no Urtador com o final `rc-<usuario>-<base64>`. Mesmo cliente e mesmo telefone reusam
+sempre o mesmo link; trocou o telefone, o link é outro. Se o encurtador estiver fora, a mensagem
+sai com o endereço comprido — nunca sai sem link. Na virada para produção, é este secret que tem
+de apontar para a página real do cliente.
 
 Com o modo teste desligado, **a cópia age de verdade**: o botão da aba Deletar apaga a linha no
 painel MC real, e recuperar/avisar disparam no WhatsApp assim que a instância GreenAPI for

@@ -115,3 +115,35 @@ export async function resolver(slug: string, timeout = 15_000): Promise<Record<s
   }
   return { ok: true, curto: `${c.base}/${pedido}`, alvo: String(dados.url), slug: pedido };
 }
+
+// ---------------------------------------------------------------- link da recuperação
+
+/** Para onde o cliente vai quando clicar no link de recuperação. */
+const PAINEL_BASE = (Deno.env.get("PAINEL_LINK_BASE") || "https://kuttenc.github.io/2PEER").replace(/\/+$/, "");
+
+/** Usuário e telefone viajam em base64 (sem os `+/=` da vida, para não quebrar na URL). */
+export function payloadRecuperacao(usuario: string, telefone: string): string {
+  return btoa(`${usuario}|${telefone}`).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export function alvoRecuperacao(usuario: string, telefone: string): string {
+  return `${PAINEL_BASE}/?d=${payloadRecuperacao(usuario, telefone)}`;
+}
+
+/** O link curto da mensagem. O final do link sai do próprio base64: o mesmo cliente com o
+ *  mesmo telefone reusa sempre o mesmo link (reenviar não loteria a conta) e telefone trocado
+ *  vira outro link, senão o link velho continuaria apontando para o número antigo.
+ *  Se o encurtador falhar, sai o link comprido: a mensagem nunca pode ficar sem destino. */
+export async function linkRecuperacao(
+  usuario: string,
+  telefone: string,
+): Promise<{ url: string; curto: boolean; erro?: string }> {
+  const alvo = alvoRecuperacao(usuario, telefone);
+  const slug = limparSlug(`rc-${usuario}-${payloadRecuperacao(usuario, telefone)}`);
+  const criado = await encurtar(alvo, slug, `recuperacao ${usuario}`);
+  if (criado.ok) return { url: String(criado.curto), curto: true };
+  // "já está em uso" com o mesmo destino é o caso normal de um reenvio.
+  const existente = await resolver(slug);
+  if (existente.ok && existente.alvo === alvo) return { url: String(existente.curto), curto: true };
+  return { url: alvo, curto: false, erro: String(criado.erro || existente.erro || "").slice(0, 160) };
+}

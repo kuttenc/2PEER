@@ -178,7 +178,7 @@
           <input type="number" name="renova_janela_dias" id="cfRenovaJanela" step="1" min="1" max="365" inputmode="decimal">
           <label>Mensagem automática de renovação (use {pix})</label>
           <textarea name="renova_legenda" id="cfRenovaLegenda"></textarea>
-          <label>Mensagem do botão &ldquo;recuperar&rdquo; (use {dias} e {pix})</label>
+          <label>Mensagem do botão &ldquo;recuperar&rdquo; (use {dias}, {pix} e {link})</label>
           <textarea name="recupera_legenda" id="cfRecuperaLegenda"></textarea>
           <p class="muted">{dias} vira &ldquo;há 1 mês e 4 dias&rdquo;, do jeito que aparece na tela Acessos.</p>
         </div>
@@ -254,7 +254,7 @@
         <p class="muted">O botão fica na aba <a href="#acessos">Acessos</a>, nas linhas vencidas.
           Tudo aqui vale para todo clique, sem precisar mexer em mais nada.</p>
         <form id="formRecuperacao">
-          <label for="rcLegenda">Mensagem ({dias} vira &ldquo;há 1 mês e 4 dias&rdquo;, {pix} vira a chave PIX da Configuração)</label>
+          <label for="rcLegenda">Mensagem ({dias} vira &ldquo;há 1 mês e 4 dias&rdquo;, {pix} vira a chave PIX da Configuração, {link} vira o link curto com o usuário e o telefone daquele cliente)</label>
           <textarea id="rcLegenda" name="recupera_legenda" rows="4"></textarea>
           <label for="rcFoto">Foto que vai sempre junto (jpg ou png, até 1,5 MB) &mdash; escolher o arquivo já liga o envio</label>
           <input type="file" id="rcFoto" name="foto" accept="image/*">

@@ -74,13 +74,20 @@ export const AVISO_LEGENDA_PADRAO =
 export const RENOVA_LEGENDA_PADRAO =
   "Olá, Vi que esta sem acesso para renovar só falta efetuar o pix na chave:\n{pix}";
 export const RECUPERA_LEGENDA_PADRAO =
-  "Olá, vi que {dias} que está sem acesso, Vamos ativa-lo agora mesmo, efetue o pix na chave:\n{pix}";
+  "Olá, vi que {dias} que está sem acesso, Vamos ativa-lo agora mesmo, efetue o pix na chave:\n{pix}\n" +
+  "Indique agora mesmo e ganhe desconto dois acessos por um:\n{link}";
 
-/** Troca {dias} e {pix} sem quebrar se o texto tiver outra chave entre chaves. */
-function preencher(modelo: string, conf: Record<string, unknown>, textoDias: string): string {
+/** Troca {dias}, {pix} e {link} sem quebrar se o texto tiver outra chave entre chaves. */
+function preencher(
+  modelo: string,
+  conf: Record<string, unknown>,
+  textoDias: string,
+  extras: Record<string, string> = {},
+): string {
   const dados: Record<string, string> = {
     dias: textoDias,
     pix: String(conf.aviso_pix_key || ""),
+    ...extras,
   };
   let saida = modelo;
   for (const [chave, valor] of Object.entries(dados)) {
@@ -97,8 +104,8 @@ export function legendaRenovacao(conf: Record<string, unknown>, textoDias: strin
   return preencher(String(conf.renova_legenda || RENOVA_LEGENDA_PADRAO), conf, textoDias);
 }
 
-export function legendaRecuperar(conf: Record<string, unknown>, textoDias: string): string {
-  return preencher(String(conf.recupera_legenda || RECUPERA_LEGENDA_PADRAO), conf, textoDias);
+export function legendaRecuperar(conf: Record<string, unknown>, textoDias: string, link = ""): string {
+  return preencher(String(conf.recupera_legenda || RECUPERA_LEGENDA_PADRAO), conf, textoDias, { link });
 }
 
 // ---------------------------------------------------------------- telefone
