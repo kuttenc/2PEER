@@ -689,17 +689,23 @@
   <div class="modal-caixa">
     <div id="mlRevisar">
       <h2 id="mlTitulo">Confirmar o envio para os não recuperados</h2>
-      <p class="muted" style="margin-top:0">A lista é remontada na função, página por página, direto do
+      <p class="muted" style="margin-top:0" id="mlExplica">A lista é remontada na função, página por página, direto do
         painel MC &mdash; não é o que está na tela. Vai a mensagem da aba
         <a href="#recuperacao">Recuperação</a> para todos os vencidos,
         <b>menos</b> os marcados na coluna <b>pular</b>.</p>
+      <label class="rotulo" for="mlFonte">de onde vem a lista</label>
+      <select id="mlFonte" name="mlFonte">
+        <option value="mc">vencidos do painel MC</option>
+        <option value="espelho">vencidos do espelho (aba Clientes)</option>
+      </select>
+      <p class="muted" style="margin:6px 0 0" id="mlFonteNota"></p>
       <div class="numeros">
         <div><span class="rotulo">vão receber</span><b id="mlAlvos">?</b></div>
-        <div><span class="rotulo">vencidos no painel MC</span><b id="mlVencidos">?</b></div>
+        <div><span class="rotulo" id="mlRotVencidos">vencidos no painel MC</span><b id="mlVencidos">?</b></div>
         <div><span class="rotulo">marcados para pular</span><b id="mlPulados">0</b></div>
         <div><span class="rotulo">sem telefone</span><b id="mlSemTelefone">0</b></div>
         <div><span class="rotulo">já receberam nas últimas 3h</span><b id="mlEsperando">0</b></div>
-        <div><span class="rotulo">só no espelho, sem linha no MC</span><b id="mlForaMC">0</b></div>
+        <div><span class="rotulo" id="mlRotFora">só no espelho, sem linha no MC</span><b id="mlForaMC">0</b></div>
       </div>
       <p class="muted" style="margin:6px 0">Foto junto: <b id="mlFoto">?</b></p>
       <p class="muted" style="margin:6px 0" id="mlBusca"></p>

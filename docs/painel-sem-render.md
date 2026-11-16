@@ -361,6 +361,10 @@ WhatsApp* (webhook não instalado), *no servidor*, *entregue ao WhatsApp*, *cheg
   nenhum acesso é criado. Os números da prova (`5511900000011` e vizinhos) são inventados e
   conferidos contra `mc_linhas` antes de entrar no arquivo.
 
+- A lista do espelho no "Não recuperados" foi provada com `tools/_prova_lote.py` (30 provas, com o
+  `PEIXEIRO_MODO_TESTE=1` local e as contas conferidas contra o banco). O comando está na seção
+  "As duas listas do Não recuperados", mais adiante.
+
 ## Quando o "Sim, enviar para todos" não manda nada
 
 Medido em 16/11/2026 com o bearer que já estava no cache (sem logar de novo no MC):
@@ -377,9 +381,52 @@ Medido em 16/11/2026 com o bearer que já estava no cache (sem logar de novo no 
   marcas, `alvos` ficou 0 e a fila nunca nasceu — por isso a aba "Não recuperados" não tinha nada em
   "enviando". O botão **Desmarcar todos** (`#btnDesmarcar`, ao lado do iniciar do lote) limpa a lista
   inteira; sem ele o `lote_contagem` continua contando os mesmos pulados.
-- O que fazer com os 966 é decisão dele, não bug: ou o MC deles deveria ter essas linhas (aí a
+- O que fazer com os 966 era decisão dele, não bug: ou o MC deles deveria ter essas linhas (aí a
   pergunta é para o knewcms — quantas linhas a conta do MC que a função usa tem na tela do painel?), ou o
-  lote precisa de uma fonte nova (varrer o espelho em vez do MC), que hoje não existe.
+  lote precisava de uma fonte nova. Ele escolheu **deixar os 10 marcados e enviar para os 966**, e a
+  fonte do espelho existe desde aqui embaixo.
+
+## As duas listas do "Não recuperados" (`fonte`)
+
+`lote_contagem` de `tipo: recuperar` aceita `fonte`. Sem o campo (ou `fonte: "mc"`) é o caminho de
+sempre: `tokenDoPainel` + `varrerMc` sobre o `/lines`. Com `fonte: "espelho"` a lista sai do banco,
+sem nenhuma chamada ao MC — `contagemDoEspelho` em `acoes.ts` lê `mc_linhas` com
+`exp_date <= now()`, aplica o mesmo `q` da tela (`username ilike`), as mesmas marcas `pular`, o mesmo
+bloqueio de 3 horas de `renovacao_avisos` e o mesmo telefone de `telefonesPorUsuario()` com fallback
+para `mc_linhas.telefone`. Cada item do plano vai com `fonte: "espelho"`, e o
+`recuperar_envio` do log registra `fonte_data: "espelho"` em vez de `"linha"`.
+
+O `lote_fila` devolve a `fonte` do plano congelado, porque retomar de onde parou tem que deixar
+claro de qual lista aquela fila nasceu.
+
+Na tela, o seletor fica no modal (logo abaixo do título), com as opções
+**"vencidos do painel MC"** e **"vencidos do espelho (aba Clientes)"**; trocar recomeça a contagem.
+A escolha fica em `localStorage["peixeiro_lote_fonte"]` — o "Montar a fila do zero" da aba
+Não recuperados usa a mesma, e a nota dele diz qual é. Os rótulos do modal trocam de texto:
+"vencidos no painel MC" ↔ "vencidos no espelho" e "só no espelho, sem linha no MC" ↔
+"desses, já têm linha no MC".
+
+Medido no banco da cópia em 16/11/2026, com `fonte: "espelho"`: **976 vencidos, 10 deles com linha
+no MC, 6 sem telefone, 967 para receber** (com 1 marcado para pular) em 0,6 s — contra os 10 vencidos
+que a varredura do MC achava. Nada disso toca o painel MC: nem login, nem `/lines`.
+
+⚠️ 967 mensagens com pausa sorteada entre 4,5 s e 105 s dá **de 1 a 5 horas com o navegador aberto**.
+O lote para sozinho no item em que o navegador fechou e retoma de lá, mas a janela de 15 minutos da
+conferência vale só para abrir o envio.
+
+Provar sem mandar WhatsApp nenhum:
+
+```
+cd supabase/functions/peixeiro
+PEIXEIRO_MODO_TESTE=1 npx --yes deno run -A --env-file=../../../.env index.ts   # em outra janela
+cd ../.. && python tools/_prova_lote.py
+```
+
+São 30 provas (contagem conferida linha por linha contra o banco, plano congelado, o marcado que não
+entra, filtro, `lote_executar` sem confirmar, três envios simulados, o log, a fila, o parar) e a
+limpeza apaga a fila, os `renovacao_avisos` e os `painel_links` que a bateria criou. Com
+`PEIXEIRO_PROVA_URL=` apontando para a função publicada a bateria para antes do
+`lote_executar` — ela prova a contagem no ar sem abrir envio nenhum.
 
 ## O que os logs do MC guardavam
 

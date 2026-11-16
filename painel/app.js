@@ -6,6 +6,7 @@
   var FUNCAO = (window.PEIXEIRO || {}).funcao || "";
   var CHAVE_SESSAO = "peixeiro_sessao";
   var CHAVE_PULAR = "peixeiro_lote_pular";
+  var CHAVE_FONTE = "peixeiro_lote_fonte";
   var QR_BASE = "https://qr.green-api.com/waInstance";
 
   var MSG_OK = {
@@ -1097,23 +1098,68 @@
     $("mlRevisar").hidden = false;
     $("mlProgresso").hidden = true;
     $("mlAviso").hidden = true;
+    $("mlFonte").value = fonteLote();
+    desenharFonteLote();
+    $("modalLote").hidden = false;
+    contarRecuperar();
+  });
+
+  $("mlFonte").addEventListener("change", function () {
+    guardarFonteLote($("mlFonte").value);
+    desenharFonteLote();
+    contarRecuperar();
+  });
+
+  /** O painel MC tem 14 linhas; os clientes importados por CSV só existem no espelho. A escolha
+   *  fica guardada porque a conferência e a fila do zero precisam sair da mesma lista. */
+  function fonteLote() {
+    try { return localStorage.getItem(CHAVE_FONTE) === "espelho" ? "espelho" : "mc"; } catch (e) { return "mc"; }
+  }
+
+  function guardarFonteLote(valor) {
+    try { localStorage.setItem(CHAVE_FONTE, valor === "espelho" ? "espelho" : "mc"); } catch (e) { /* ignora */ }
+  }
+
+  function desenharFonteLote() {
+    var espelho = fonteLote() === "espelho";
+    var nota = $("mlFonteNota");
+    if (nota) {
+      nota.textContent = espelho
+        ? "A lista sai do banco, da aba Clientes, sem abrir o painel MC: entra todo vencido que tem telefone guardado, inclusive quem nunca teve linha no MC."
+        : "A função abre o painel MC página por página e pega quem está vencido lá, como sempre fez.";
+    }
+    var rótulo = $("frMontarNota");
+    if (rótulo) {
+      rótulo.textContent = espelho
+        ? "refaz a fila com os vencidos do espelho (aba Clientes) e as marcas \u201cpular\u201d \u2014 não envia nada"
+        : "varre o painel MC de novo, com as marcas \u201cpular\u201d \u2014 não envia nada";
+    }
+  }
+
+  function contarRecuperar() {
     $("mlEnviar").disabled = true;
     $("mlAlvos").textContent = "…";
     $("mlVencidos").textContent = "…";
-    $("modalLote").hidden = false;
     recado("");
-    chamar("lote_contagem", { tipo: "recuperar", q: acBusca, pular: Array.from(pular) }, 180).then(function (d) {
+    chamar("lote_contagem", {
+      tipo: "recuperar", q: acBusca, pular: Array.from(pular), fonte: fonteLote(),
+    }, 180).then(function (d) {
       if (!d.ok) { recado(d.erro, d.detalhe); return; }
+      var espelho = d.fonte === "espelho";
+      $("mlRotVencidos").textContent = espelho ? "vencidos no espelho" : "vencidos no painel MC";
+      $("mlRotFora").textContent = espelho ? "desses, já têm linha no MC" : "só no espelho, sem linha no MC";
       $("mlAlvos").textContent = d.alvos;
       $("mlVencidos").textContent = d.vencidos;
       $("mlPulados").textContent = d.pulados;
       $("mlSemTelefone").textContent = d.sem_telefone;
       $("mlEsperando").textContent = d.esperando;
-      $("mlForaMC").textContent = d.so_no_espelho;
+      $("mlForaMC").textContent = espelho ? d.com_linha_mc : d.so_no_espelho;
       $("mlFoto").textContent = d.foto ? "sim, a foto da aba Recuperação" : "não — vai só o texto";
       $("mlBusca").textContent = (d.busca
         ? "Filtro \u201c" + d.busca + "\u201d ativo: só entra na conta quem bate nesse filtro."
-        : "Sem filtro: a varrida pega todas as páginas do painel MC.") +
+        : espelho
+          ? "Sem filtro: todos os vencidos guardados no banco (aba Clientes)."
+          : "Sem filtro: a varrida pega todas as páginas do painel MC.") +
         (d.marcados > d.pulados ? " " + (d.marcados - d.pulados) + " marcado(s) não estavam entre os vencidos." : "");
       var fora = $("mlFora");
       fora.hidden = !d.so_no_espelho;
@@ -1121,7 +1167,7 @@
         ? ("Ficam de fora porque a linha não existe mais no painel MC (só no espelho): " +
           (d.fora_do_mc || []).join(", ") +
           (d.so_no_espelho > (d.fora_do_mc || []).length ? "…" : "") +
-          " — para esses, use o botão recuperar da própria linha.")
+          " — troque para \u201cvencidos do espelho\u201d acima para enviar também para eles.")
         : "";
       var nomes = limpar($("mlNomes"));
       (d.primeiros || []).forEach(function (n) { nomes.appendChild(criar("span", "", n)); });
@@ -1131,7 +1177,7 @@
       else if (d.aviso) avisoLote("A varrida parou antes do fim: " + d.aviso);
       else avisoLote("");
     });
-  });
+  }
 
   $("mlEnviar").addEventListener("click", function () {
     var botao = $("mlEnviar");
@@ -1155,6 +1201,7 @@
   var FR_TOPO = 200;           // lista longa demais travaria o celular no meio do envio
 
   CARREGA.fila = function () {
+    desenharFonteLote();
     frLimparSelecao();
     carregarFila(true);
   };
@@ -1199,6 +1246,7 @@
 
     var partes = [];
     if (!d.vazia) {
+      partes.push(d.fonte === "espelho" ? "lista do espelho (Clientes)" : "lista do painel MC");
       partes.push(d.na_fila + " na fila");
       partes.push((estado.enviados || 0) + " enviados");
       partes.push((estado.falhas || 0) + " com erro");
@@ -1389,12 +1437,12 @@
   $("frMontar").addEventListener("click", function () {
     var botao = $("frMontar");
     botao.disabled = true;
-    botao.textContent = "varrendo o painel MC…";
+    botao.textContent = "refazendo a fila…";
     $("frMontarNota").textContent = "isso só monta a lista: nenhuma mensagem sai";
-    chamar("lote_contagem", { tipo: "recuperar", pular: Array.from(pular) }, 180).then(function (d) {
+    chamar("lote_contagem", { tipo: "recuperar", pular: Array.from(pular), fonte: fonteLote() }, 180).then(function (d) {
       botao.disabled = false;
       botao.textContent = "Montar a fila do zero";
-      if (!d.ok) { recado(d.erro, d.detalhe); $("frMontarNota").textContent = "varre o painel MC de novo, com as marcas “pular” — não envia nada"; return; }
+      if (!d.ok) { recado(d.erro, d.detalhe); desenharFonteLote(); return; }
       recado("fila_montada", d.alvos + " na fila, " + d.pulados + " pulados, " + d.sem_telefone + " sem telefone.");
       frSoErro = false;
       carregarFila(false);

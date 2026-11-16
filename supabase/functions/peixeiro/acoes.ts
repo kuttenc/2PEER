@@ -656,14 +656,17 @@ async function recuperarContagem(dados: Registro, ctx: Contexto): Promise<Saida>
   const pular = new Set(lista(dados.pular));
   const conf = await obterConfig();
   if (!conf) return falha("banco", 500);
-  const info = await tokenDoPainel(ctx.ip);
-  if (!info.ok) return falha("mc_login", 502);
-
   const telefones = await telefonesPorUsuario();
   const recentes = new Set(
     (await consultar(`select username from public.renovacao_avisos where updated_at > now() - interval '3 hours'`))
       .rows.map((r: Record<string, unknown>) => String(r.username)),
   );
+  // Quem nunca teve linha no painel MC (importado por CSV) só existe no espelho da aba Clientes.
+  if (txt(dados.fonte) === "espelho") return contagemDoEspelho(busca, pular, telefones, recentes, conf);
+
+  const info = await tokenDoPainel(ctx.ip);
+  if (!info.ok) return falha("mc_login", 502);
+
   const vencidasNoEspelho = new Set(
     (await consultar(`select username from public.mc_linhas where exp_date is not null and exp_date <= now()`))
       .rows.map((r: Record<string, unknown>) => String(r.username)),
@@ -683,16 +686,67 @@ async function recuperarContagem(dados: Registro, ctx: Contexto): Promise<Saida>
   await gravarPlano("recuperar", alvos, varrida.aviso);
 
   return ok({
+    fonte: "mc",
     vencidos: varrida.escolhidas.length,
     marcados: pular.size,
     so_no_espelho: foraDoMc.length,
     fora_do_mc: foraDoMc.slice(0, 8),
+    com_linha_mc: varrida.escolhidas.length,
     alvos: alvos.length,
     sem_telefone: semTelefone,
     pulados,
     esperando,
     busca,
     aviso: varrida.aviso,
+    foto: Boolean(conf.recupera_send_photo && conf.recupera_photo_base64),
+    primeiros: alvos.slice(0, 8).map((a) => a.username),
+  });
+}
+
+/** A lista vem do espelho que a aba Clientes mantém no banco, sem consultar o painel MC:
+ *  é por onde os clientes importados por CSV (que nunca tiveram linha no MC) recebem. */
+async function contagemDoEspelho(
+  busca: string,
+  pular: Set<string>,
+  telefones: Record<string, string>,
+  recentes: Set<string>,
+  conf: Conf,
+): Promise<Saida> {
+  const r = await consultar(
+    `select username, telefone, exp_date, linha_id from public.mc_linhas
+      where exp_date is not null and exp_date <= now()
+        and ($1 = '' or username ilike '%' || $1 || '%')
+      order by username`,
+    [busca],
+  );
+  const alvos: Item[] = [];
+  let semTelefone = 0, pulados = 0, esperando = 0, semLinha = 0;
+  for (const linha of r.rows as Record<string, unknown>[]) {
+    const username = String(linha.username || "");
+    if (!String(linha.linha_id || "")) semLinha++;
+    if (pular.has(username)) pulados++;
+    else {
+      const telefone = telefones[username] || String(linha.telefone || "");
+      if (!telefone) semTelefone++;
+      else if (recentes.has(username)) esperando++;
+      else alvos.push({ username, telefone, exp_iso: String(linha.exp_date || ""), busca, fonte: "espelho" });
+    }
+  }
+  await gravarPlano("recuperar", alvos, "");
+
+  return ok({
+    fonte: "espelho",
+    vencidos: r.rows.length,
+    marcados: pular.size,
+    so_no_espelho: 0,
+    fora_do_mc: [],
+    com_linha_mc: r.rows.length - semLinha,
+    alvos: alvos.length,
+    sem_telefone: semTelefone,
+    pulados,
+    esperando,
+    busca,
+    aviso: "",
     foto: Boolean(conf.recupera_send_photo && conf.recupera_photo_base64),
     primeiros: alvos.slice(0, 8).map((a) => a.username),
   });
@@ -847,7 +901,7 @@ async function itemRecuperar(
   await gravarEvento({
     event_type: "recuperar_envio",
     status_code: resultado.status_code ?? null,
-    request_payload: { username, telefone, dias, link: link.url, fonte_data: "linha", exp_iso: String(item.exp_iso || "").slice(0, 40), via: "lote" },
+    request_payload: { username, telefone, dias, link: link.url, fonte_data: item.fonte ? "espelho" : "linha", exp_iso: String(item.exp_iso || "").slice(0, 40), via: "lote" },
     response_payload: resultado.response,
     client_ip: ctx.ip,
   });
@@ -936,6 +990,7 @@ export async function loteFila(dados: Registro): Promise<Saida> {
     vazia: false,
     itens,
     estado,
+    fonte: plano.length && plano[0].fonte === "espelho" ? "espelho" : "mc",
     na_fila: naFila,
     fora,
     total: plano.length,
