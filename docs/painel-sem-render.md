@@ -94,19 +94,25 @@ A aba **Links** (`#links`) tem três blocos: o padrão, a lista de links com um 
 cliente, e o encurtador avulso de sempre. As ações novas são `links_padrao_salvar` e
 `links_destino_salvar` (com login) e `links_destino` (sem login, é o clique do cliente).
 
-Cuidado com o que o encurtador faz no clique — ele é o produto do Fabio (`kuttenc/urtador`, função
-`kutt-short-links` no projeto `ggufcvrwctieacvbbwim`) e tem regra própria:
+## Cuidado com o que o Urtador faz
+
+Os parágrafos abaixo são do produto do Fabio — o repo `kuttenc/urtador`, função `kutt-short-links` no
+projeto `ggufcvrwctieacvbbwim` — e valem tanto para a cópia quanto para a produção.
 
 - `https://kuttenc.github.io/urtador/<slug>` não é arquivo nenhum: o Pages devolve o **404** do
   Urtador, que carrega `assets/redirect.js`. Aquela tela **"Toque em Abrir destino"** é esse 404.
 - O `redirect.js` chama `start-link-access-window` **assim que a página abre** (antes do toque) e só
   chama `resolve` quando ele aperta o botão. `resolve` é o que faz `location.assign(destino)`.
-- A janela é **15 minutos por link por IP do visitante**, contados do primeiro acesso, e **não renova**
-  (`kutt_link_access_windows`, migration `202610190001_kutt_link_access_windows.sql` do repo do
-  Urtador). Depois disso a API responde `{"accessExpired": true, "redirectUrl": ".../urtador/"}` e o
-  cliente cai na home do Urtador em vez de abrir o acesso. Isso vale para link da conta **e** de
-  visita: o `URTADOR_TOKEN` não escapa da janela, ele só muda em nome de quem o link aparece no admin.
-- IP desconhecido (`clientIp() === "unknown"`) não ganha janela nenhuma.
+- A janela era **15 minutos por link por IP do visitante**, contados do primeiro acesso. **Ela não existe
+  mais**: em 16/11/2026, por ordem dele (*"pode mexer, não quero que o link expire nunca"*), a função
+  `kutt-short-links` do repo `kuttenc/urtador` (commit `452016e`) parou de ler o prazo e nenhum clique
+  devolve `accessExpired`. As linhas de `kutt_link_access_windows` continuam sendo escritas (primeiro e
+  último acesso), e os `expires_at` novos vão para 100 anos na frente. Prova depois do deploy: os slugs
+  `rc-11zc083-...` e `rc-4849b6s-...`, que estavam mortos, responderam `{"accessExpired": false,
+  "expiresAt": null}` e o `resolve` devolveu o destino. Voltar atrás = reimplantar o commit anterior da
+  função pela Action `Deploy Urtador backend`.
+- `URTADOR_TOKEN` (secret existe na cópia; valor não conferido daqui) só muda **em nome de quem** o link
+  nasce no admin do Urtador — nunca decide se o link abre.
 - O Urtador só aceita **10 criações por minuto** por sessão de visita e por IP (`guest-create-ip`,
   `guest-create-session`). Medido daqui em 16/11/2026: a 4ª chamada seguida já devolve "Muitas
   tentativas" (as sondas daquela semana já tinham gasto o resto do minuto). Como a função chama o
@@ -115,9 +121,14 @@ Cuidado com o que o encurtador faz no clique — ele é o produto do Fabio (`kut
   curto, a régua do item 5 da aba Configuração precisa de `recupera_pausa_min` em **7 segundos** ou
   mais. Reenvio para o mesmo cliente não conta: o final já existe e o painel monta o endereço sem
   chamar o encurtador.
-- Se ele quiser link de recuperação que abre amanhã também, o ajuste é no Urtador (renovar
-  `expires_at` a cada acesso, ou isentar os links `rc-`), não no painel — e mexer ali mexe no
-  encurtador monetizado que ele usa em outras coisas.
+
+**Publicar mudança no Urtador.** A Action `Deploy Urtador backend` (`kuttenc/urtador`) é só manual:
+`gh workflow run deploy-kutt-backend.yml --ref main`, com os secrets `SUPABASE_ACCESS_TOKEN` e
+`SUPABASE_DB_PASSWORD` do repo. A CLI 3.x mudou as flags em relação à que o arquivo usava em outubro:
+agora é `supabase db push --remote <ref> --yes` e `supabase functions deploy kutt-short-links
+--remote=<ref> --yes` (o `--remote` do functions precisa do `=`, e sem `--yes` a Action recusa porque
+não tem terminal). A versão da CLI está fixada em 3.2.0 porque `latest` quebra essas flags sem aviso e
+ainda estoura o rate limit do GitHub.
 
 **O que mudou em 16/11/2026 (link comprido no reenvio).** Antes, no reenvio para o mesmo cliente o
 `create` respondia "final já está em uso", o painel ia chamar `resolve` só para descobrir o endereço,
