@@ -66,6 +66,30 @@ def safe_to_brasilia(iso_date: str) -> str:
         return iso_date or ""
 
 
+HORAS_TELEFONE_LINK = 4
+
+
+def telefone_do_link() -> tuple:
+    """Devolve (número mostrável, dígitos) quando o cliente chegou pelo link de recuperação.
+
+    O número vem do próprio endereço (anexado no clique, lido do banco), é o que está no nosso
+    cadastro daquele link, então a tela preenche e tranca o campo: trocar o WhatsApp ali jogaria
+    o acesso para outra pessoa. Fora do link, volta vazio e o cliente digita normalmente.
+    """
+    bruto = request.args.get("telefone") or request.args.get("tel") or ""
+    digitos = "".join(c for c in bruto if c.isdigit())
+    if len(digitos) < 10 or len(digitos) > 13:
+        return "", ""
+    local = digitos[2:] if digitos.startswith("55") and len(digitos) in (12, 13) else digitos
+    if len(local) == 11:
+        mostra = "(%s) %s-%s" % (local[:2], local[2:7], local[7:])
+    elif len(local) == 10:
+        mostra = "(%s) %s-%s" % (local[:2], local[2:6], local[6:])
+    else:
+        mostra = digitos
+    return mostra, digitos
+
+
 def analytics_cors_response(payload=None, status=200):
     response = app.response_class(
         response=json.dumps(payload or {}, ensure_ascii=False),
@@ -235,6 +259,7 @@ def index():
     limit_info = safe_check_ip_limits(client_ip)
     recent_media = safe_recent_media(request, client_ip)
     request_media = safe_request_media(request, client_ip)
+    mostra_link = telefone_do_link()
     return render_template(
         "index.html",
         result=None,
@@ -246,8 +271,10 @@ def index():
         request_user_id=request_media.get("user_id", ""),
         error_msg="",
         info_msg="",
-        form_phone="",
+        form_phone=mostra_link[0],
         form_telegram_id="",
+        telefone_fixo=mostra_link[0],
+        telefone_digitos=mostra_link[1],
     )
 
 
@@ -480,6 +507,10 @@ def gerar():
     request_media = safe_request_media(request, client_ip)
     telefone = (request.form.get("telefone") or "").strip()
     telegram_id = (request.form.get("telegram_id") or "").strip()
+    # Chegou pelo link de recuperação: o número do cadastro manda, não o que foi postado.
+    mostra_link = telefone_do_link()
+    if mostra_link[0]:
+        telefone = mostra_link[0]
 
     if not telefone:
         return render_template(
@@ -494,6 +525,8 @@ def gerar():
             error_msg="Para liberar seu teste, informe um WhatsApp valido.",
             info_msg="",
             form_phone=telefone,
+            telefone_fixo=mostra_link[0],
+            telefone_digitos=mostra_link[1],
             form_telegram_id=telegram_id,
         )
 
@@ -532,6 +565,8 @@ def gerar():
             error_msg="",
             info_msg="Seu teste atual ainda esta ativo. Reapresentamos o mesmo acesso para voce continuar.",
             form_phone=telefone,
+            telefone_fixo=mostra_link[0],
+            telefone_digitos=mostra_link[1],
             form_telegram_id=telegram_id,
         )
 
@@ -550,6 +585,8 @@ def gerar():
             error_msg="Seu teste ja foi gerado recentemente. Assim que liberar novamente, voce consegue gerar de novo.",
             info_msg="",
             form_phone=telefone,
+            telefone_fixo=mostra_link[0],
+            telefone_digitos=mostra_link[1],
             form_telegram_id=telegram_id,
         )
 
@@ -597,6 +634,8 @@ def gerar():
         info_msg=info_msg,
         form_phone=telefone,
         form_telegram_id=telegram_id,
+        telefone_fixo=mostra_link[0],
+        telefone_digitos=mostra_link[1],
     )
 
 

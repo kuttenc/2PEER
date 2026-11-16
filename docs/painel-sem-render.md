@@ -196,6 +196,33 @@ aviso vai aparecer de vez em quando — é por isso, não é senha errada.
   apagar nem para a agenda das 6h. Com 900 clientes na lista, a conta é de horas com o painel
   aberto (4,5–105 s ≈ 13 h 40 no meio-termo) — por isso a régua existe.
 
+## O telefone que viaja com o link de recuperação
+
+Quem chega pelo link curto (`.../urtador/rc-<usuario>-<payload>`) já foi identificado: o número
+está dentro do próprio link. A tela de acesso não pede para digitar de novo — ela vem preenchida,
+trancada e o número continua salvo no aparelho por 4 horas.
+
+- `links_destino` (a ação sem sessão que a página `r/` chama no clique) devolve agora
+  `{slug, telefone, destino}`. O `destino` já sai com `?telefone=<dígitos>` colado: `destinoComTelefone`
+  usa `URL` + `searchParams`, então **preserva** o que o destino já tinha (`?p=1&telefone=...#fim`)
+  em vez de trocar a query inteira. Sem telefone, o endereço sai exatamente como estava gravado.
+- De onde sai o número (`telefoneNoClique`): primeiro a coluna `telefone` de `painel_links` (linha
+  criada no envio do recuperar); se não houver — link antigo, ou reenvio que não gravou — decodifica
+  o payload base64 do próprio slug (`usuario|telefone`), aceitando só `a-z0-9_-` de 4 a 96 e exigindo
+  o `|`. Um slug qualquer não inventa telefone nenhum.
+- No site (`app.py` → `telefone_do_link()`): lê `?telefone` ou `?tel`, aceita só 10 a 13 dígitos,
+  tira o `55` da frente e formata `(DD) 9xxxx-xxxx`. O `index()` mostra no campo, o `gerar()` **obedece
+  ao link, não ao formulário**: com número no link, o POST que vier trocado é ignorado e vale o do link
+  (é por isso que o campo nasce `readonly` e o `action` carrega `?telefone=` junto).
+- `templates/index.html` guarda os dígitos em `localStorage["peixeiro_telefone_link"]` com o prazo de
+  4 horas (`HORAS = 4`). Abrir o site depois, sem link, recupera o número e tranca o campo do mesmo
+  jeito; passou o prazo, apaga e a tela volta a pedir.
+- Prova: `python tools/_prova_link.py` (16 provas — metade na função local, metade chamando o `app.py`
+  com o gerador de acesso monkeypatchado, então **nenhum WhatsApp sai** e nenhuma linha real é criada).
+
+Quando a produção ainda estiver no Render, o mesmo `app.py`/`templates/index.html` servem lá: a mudança
+é de arquivo, não de plataforma.
+
 ## A aba "Não recuperados" (a fila por dentro)
 
 O mesmo lote das abas Acessos e Clientes, visto linha por linha. Nada de novo é enviado por

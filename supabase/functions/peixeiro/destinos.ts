@@ -2,6 +2,7 @@
 // abre hoje o endereço que você editar na aba Links, porque a página de redirecionamento lê
 // isto aqui no momento do clique.
 import { consultar, consultar1 } from "./db.ts";
+import { painelBase } from "./encurtador.ts";
 
 export type LinkItem = {
   slug: string;
@@ -72,4 +73,36 @@ export async function destinoNoClique(slug: string): Promise<string> {
   const linha = await consultar1(`select destino from public.painel_links where slug = $1`, [slug]);
   const proprio = String(linha?.destino || "").trim();
   return proprio || (await destinoPadrao());
+}
+
+/** O destino já com o número do cliente no endereço. Quem escreve o destino na aba Links pode
+ *  ter posto query ou âncora, então o par vai antes da âncora e sem duplicar o que já tinha. */
+export function destinoComTelefone(destino: string, digitos: string): string {
+  if (!digitos || digitos.length < 10) return destino;
+  try {
+    const u = new URL(destino, painelBase());
+    u.searchParams.set("telefone", digitos);
+    return u.href;
+  } catch {
+    return destino;
+  }
+}
+
+/** O WhatsApp daquele link, em dígitos, para ir junto no endereço: o cliente que veio pelo link
+ *  do WhatsApp já chega com o número dele no site e não precisa (nem pode) digitar outro.
+ *  Primeiro o que foi gravado no envio; se o link é mais velho que a tabela, o número ainda
+ *  está dentro do base64 que ele mesmo carrega. */
+export async function telefoneNoClique(slug: string, bruto = ""): Promise<string> {
+  const linha = await consultar1(`select telefone from public.painel_links where slug = $1`, [slug]);
+  const gravado = String(linha?.telefone || "").replace(/\D/g, "");
+  if (gravado.length >= 10) return gravado;
+  const payload = String(bruto || "").trim();
+  if (!/^[a-z0-9_-]{4,96}$/i.test(payload)) return "";
+  try {
+    const decodificado = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+    if (decodificado.indexOf("|") < 0) return "";
+    return (decodificado.split("|")[1] || "").replace(/\D/g, "");
+  } catch {
+    return "";
+  }
 }

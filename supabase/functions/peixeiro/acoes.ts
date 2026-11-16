@@ -51,12 +51,14 @@ import {
   slugRecuperacao,
 } from "./encurtador.ts";
 import {
+  destinoComTelefone,
   destinoNoClique,
   destinoPadrao,
   listarLinks,
   registrarLink,
   salvarDestino,
   salvarPadrao,
+  telefoneNoClique,
 } from "./destinos.ts";
 import {
   ajustarChat, apagarRegra, exportarTreino, instalarWebhook, ligarRegra, listarRegras, mensagensDe,
@@ -1052,12 +1054,16 @@ export async function linksDestinoSalvar(dados: Registro): Promise<Saida> {
 }
 
 /** A página r/ do Pages chama isto no clique do cliente. Sem login e sem chave: o único dado
- *  que entra é o final do link, e o que sai é só o endereço para onde ele já mandava. */
+ *  que entra é o final do link, e o que sai é só o endereço para onde ele já mandava.
+ *  O telefone do próprio link vai no endereço de saída: quem chegou pelo WhatsApp do cliente
+ *  já chega no site com o número dele preenchido, e o site tranca o campo. */
 export async function linksDestino(dados: Registro): Promise<Saida> {
   const bruto = txt(dados.slug) || txt(dados.d);
   const slug = txt(dados.slug) ? limparSlug(bruto) : slugDoPayload(bruto);
   if (!slug) return falha("sem_slug", 400);
-  return ok({ slug, destino: (await destinoNoClique(slug)) || `${painelBase()}/painel/` });
+  const destino = (await destinoNoClique(slug)) || `${painelBase()}/painel/`;
+  const telefone = await telefoneNoClique(slug, bruto);
+  return ok({ slug, telefone, destino: destinoComTelefone(destino, telefone) });
 }
 
 export async function linksEncurtar(dados: Registro): Promise<Saida> {

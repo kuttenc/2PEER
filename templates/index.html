@@ -1140,15 +1140,62 @@
         <div class="badge">Suporte no WhatsApp</div>
       </div>
 
-      <form method="post" action="/" class="grid">
+      <form method="post" action="{{ ('/?telefone=' + telefone_digitos) if telefone_digitos else '/' }}" class="grid" id="formAcesso">
         <div class="row double">
-          <input type="text" name="telefone" value="{{ form_phone }}" placeholder="Seu WhatsApp com DDD (obrigatorio)" required>
+          <input type="text" name="telefone" id="campoTelefone" value="{{ form_phone }}" placeholder="Seu WhatsApp com DDD (obrigatorio)" required{% if telefone_fixo %} readonly{% endif %}>
           <button class="btn btn-main" type="submit">Gerar acesso 4 horas</button>
         </div>
         <div class="row">
           <input type="text" name="telegram_id" value="{{ form_telegram_id }}" placeholder="ID do Telegram (opcional para liberacao apos pagamento)">
         </div>
+        <p class="sub" id="avisoTelefone" hidden>Este &eacute; o n&uacute;mero que chegou no seu WhatsApp. Ele j&aacute; vem preenchido e n&atilde;o pode ser trocado aqui.</p>
       </form>
+      <script>
+        // O WhatsApp que vem no endere&ccedil;o do link de recupera&ccedil;&atilde;o fica guardado no aparelho
+        // por 4 horas. Quem fecha o navegador e volta pelo mesmo link &mdash; ou por qualquer
+        // atalho &mdash; continua com o campo preenchido e travado no n&uacute;mero do cadastro.
+        (function () {
+          var campo = document.getElementById("campoTelefone");
+          var form = document.getElementById("formAcesso");
+          var aviso = document.getElementById("avisoTelefone");
+          if (!campo) return;
+          var CHAVE = "peixeiro_telefone_link", HORAS = 4;
+
+          function digitos(bruto) { return String(bruto || "").replace(/\D/g, ""); }
+          function forma(d) {
+            if (d.length >= 11 && d.indexOf("55") === 0) d = d.slice(2);
+            if (d.length === 11) return "(" + d.slice(0, 2) + ") " + d.slice(2, 7) + "-" + d.slice(7);
+            if (d.length === 10) return "(" + d.slice(0, 2) + ") " + d.slice(2, 6) + "-" + d.slice(6);
+            return d;
+          }
+          function guarda(d) {
+            try { localStorage.setItem(CHAVE, JSON.stringify({ t: d, e: Date.now() + HORAS * 3600 * 1000 })); } catch (erro) {}
+          }
+          function guardado() {
+            try {
+              var g = JSON.parse(localStorage.getItem(CHAVE) || "null");
+              return g && Number(g.e) > Date.now() ? digitos(g.t) : "";
+            } catch (erro) { return ""; }
+          }
+          function trancar(d) {
+            campo.value = forma(d);
+            campo.readOnly = true;
+            campo.style.opacity = ".85";
+            if (aviso) aviso.hidden = false;
+            if (form) form.action = "/?telefone=" + encodeURIComponent(d);
+          }
+
+          var doUrl = digitos(new URLSearchParams(location.search).get("telefone") ||
+                              new URLSearchParams(location.search).get("tel"));
+          if (doUrl.length >= 10) {
+            guarda(doUrl);
+            trancar(doUrl);
+            return;
+          }
+          var doApp = guardado();
+          if (doApp.length >= 10 && !campo.readOnly) trancar(doApp);
+        })();
+      </script>
 
       {% if result %}
         <div class="result {{ '' if result.ok else 'bad' }}">
