@@ -78,6 +78,13 @@ painel MC real, e recuperar/avisar disparam no WhatsApp assim que a instância G
 colocada na aba Configuração (sem ela, o envio morre em `sem configuracao`). É a mesma conta e
 os mesmos acessos da produção, só que o banco de clientes/telefones é o da cópia.
 
+**Desde 16/11/2026 a instância GreenAPI real está GRAVADA no banco da cópia** (`greenapi_config`:
+`api_url`, `media_url`, `id_instance`, `api_token`), junto da foto de recuperação (o cartão azul
+gerado pela própria função, 59 KB). Ou seja: clicar em recuperar na cópia manda WhatsApp de
+verdade para o telefone que estiver gravado na linha, e os avisos automáticos só não saem porque
+`aviso_ativo` e `renova_ativo` foram deixados **desligados** na cópia. Antes de mexer nesses dois
+interruptores, religue a trava acima. O token em si nunca entra neste repositório nem em issue.
+
 Para religar a trava enquanto testar:
 
 ```bash
