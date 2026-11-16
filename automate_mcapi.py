@@ -1655,7 +1655,7 @@ def executar_aviso_vencimentos(token: str = "", forcar: bool = False, client_ip:
             pass
 
 
-def load_config():
+def load_config(exige_mc: bool = True):
     load_dotenv()
 
 
@@ -1671,7 +1671,7 @@ def load_config():
     supabase_db_user = os.getenv("SUPABASE_DB_USER", "")
     supabase_db_sslmode = os.getenv("SUPABASE_DB_SSLMODE", "require")
 
-    if not all([mc_username, mc_password]):
+    if exige_mc and not all([mc_username, mc_password]):
         raise RuntimeError("Variaveis MC_USERNAME/MC_PASSWORD faltando no .env ou no Render.")
 
     project_ref = os.getenv("SUPABASE_PROJECT_REF")
@@ -1732,7 +1732,8 @@ def load_mc_config():
 
 
 def open_db_from_env():
-    cfg = load_config()
+    # So o banco: a copia de testes abre o painel sem as credenciais do painel MC.
+    cfg = load_config(exige_mc=False)
     conn = connect_db(
         cfg["supabase_db_password"],
         cfg["project_ref"],
