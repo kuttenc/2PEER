@@ -59,7 +59,7 @@ import {
   salvarPadrao,
 } from "./destinos.ts";
 import {
-  ajustarChat, apagarRegra, exportarTreino, instalarWebhook, listarRegras, mensagensDe,
+  ajustarChat, apagarRegra, exportarTreino, instalarWebhook, ligarRegra, listarRegras, mensagensDe,
   novaRegra, receberWebhook, resumoChat, salvarRegra, telefonesConversados, tokenChat,
   entregasPorUsuario,
 } from "./chat.ts";
@@ -1151,6 +1151,26 @@ export async function chatLigar(dados: Registro, ctx: Contexto): Promise<Saida> 
   const gravado = await ajustarChat(campos);
   if (!gravado.ok) return falha("banco", 500);
   return ok(await resumoChat(ctx.url));
+}
+
+/** A chave de cada chat, aplicada na hora. Ele usa isso para desligar uma resposta e continuar
+ *  editando as outras com o robô ligado — por isso não passa por chatSalvar, que exige a regra
+ *  inteira preenchida. */
+export async function chatAtivar(dados: Registro): Promise<Saida> {
+  const id = Number(txt(dados.id) || 0);
+  if (!id) return falha("sem_regra");
+  const ativo = booleano(dados.ativo);
+  if (!(await ligarRegra(id, ativo))) return falha("sem_regra");
+  return ok({ id, ativo, regras: await listarRegras() });
+}
+
+/** O refresco da tela enquanto o robô roda: só banco, sem bater no GreenAPI a cada 6 segundos. */
+export async function chatFluxo(dados: Registro, ctx: Contexto): Promise<Saida> {
+  const resumo = await resumoChat(ctx.url);
+  const conversas = await telefonesConversados(Number(resumo.dias || 90));
+  const telefone = normalizarWhatsapp(txt(dados.telefone));
+  const aberta = telefone.length >= 10 ? await mensagensDe(telefone) : [];
+  return ok({ ...resumo, conversas, conversa: { telefone, mensagens: aberta } });
 }
 
 /** Aponta o webhook da instância para esta função: é o que faz o robô receber e o painel

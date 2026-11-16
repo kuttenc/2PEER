@@ -1940,8 +1940,20 @@
   // ------------------------------------------------------------------ CHAT (robô do WhatsApp)
 
   var CHAT = { ativo: false, dias: 90, desconhecido: false, regras: [] };
+  // Quantas gravações de chat estão no ar: o refresco da tela espera, para não mostrar o banco
+  // no meio de um Salvar e desfazer o que ele acabou de escrever.
+  var CHAT_GRAVANDO = 0;
 
   CARREGA.chat = function () { carregarChat(); };
+
+  function desenharPillRobo() {
+    var pill = $("chPill");
+    pill.textContent = CHAT.ativo ? "ligado" : "desligado";
+    pill.className = "pill" + (CHAT.ativo ? " on" : "");
+    var botao = $("chLigar");
+    botao.textContent = CHAT.ativo ? "Desligar o robô" : "Ligar o robô";
+    botao.className = CHAT.ativo ? "verm" : "verde";
+  }
 
   function carregarChat() {
     $("chRegrasEstado").textContent = "carregando…";
@@ -1953,12 +1965,7 @@
       CHAT.desconhecido = Boolean(d.desconhecido);
       CHAT.regras = d.regras || [];
 
-      var pill = $("chPill");
-      pill.textContent = CHAT.ativo ? "ligado" : "desligado";
-      pill.className = "pill" + (CHAT.ativo ? " on" : "");
-      var botao = $("chLigar");
-      botao.textContent = CHAT.ativo ? "Desligar o robô" : "Ligar o robô";
-      botao.className = CHAT.ativo ? "verm" : "verde";
+      desenharPillRobo();
 
       var inst = d.instancia || {};
       $("chNumero").textContent = (inst.numero ? telefoneBr(inst.numero) : "(a instância não respondeu)") +
@@ -1993,61 +2000,112 @@
     return n;
   }
 
+  /** Um card por chat, desenhado sozinho. Salvar ou apagar troca só o card daquele id: assim o
+   *  que ele está digitando em outro chat não some quando a tela se refaz. */
+  function desenharRegra(r) {
+    var bloco = criar("div", "card");
+    bloco.style.marginBottom = "10px";
+    // O card novo cai no meio da lista (a ordem dele é a mesma da regra 1), então o foco
+    // depois de "criar outro chat" precisa procurar pelo id, não pelo último filho.
+    bloco.setAttribute("data-chat", String(r.id));
+    bloco.appendChild(criar("p", "rotulo", textoRegra(r)));
+
+    bloco.appendChild(criar("label", null, "Palavras que o cliente escreve (separe por vírgula)"));
+    bloco.appendChild(campo("text", null, r.gatilho, "gatilho"));
+
+    bloco.appendChild(criar("label", null,
+      "O que responder (para o vencimento use {{vence}}; {{expira}} é só a data, {{expirou}} é quanto faz)"));
+    bloco.appendChild(campo("textarea", null, r.resposta, "resposta"));
+
+    var rodape = criar("div", "linha");
+    var ordem = campo("number", "maq", r.prioridade, "prioridade");
+    ordem.style.width = "70px";
+    ordem.min = "1";
+    ordem.max = "999";
+    rodape.appendChild(criar("span", "muted", "ordem"));
+    rodape.appendChild(ordem);
+
+    var marca = document.createElement("input");
+    marca.type = "checkbox";
+    marca.checked = Boolean(r.ativo);
+    marca.setAttribute("data-ativo", "1");
+    // A chave vale sozinha, na hora: ele desliga uma resposta e continua editando as outras
+    // com o robô ligado, sem precisar de "Salvar este chat" nem de desligar o bot inteiro.
+    marca.addEventListener("change", function () { chavearRegra(bloco, r.id, marca); });
+    var cb = criar("label", "cb");
+    cb.appendChild(marca);
+    cb.appendChild(criar("span", null, "respondendo"));
+    rodape.appendChild(cb);
+
+    var salvar = criar("button", "prim", "Salvar este chat");
+    salvar.type = "button";
+    salvar.addEventListener("click", function () { salvarRegra(bloco, r.id, salvar); });
+    rodape.appendChild(salvar);
+
+    var apagar = criar("button", "verm", "Apagar");
+    apagar.type = "button";
+    apagar.addEventListener("click", function () { apagarRegra(r.id, apagar); });
+    rodape.appendChild(apagar);
+
+    bloco.appendChild(rodape);
+    return bloco;
+  }
+
+  function regraNaTela(id) {
+    return $("chRegras").querySelector('.card[data-chat="' + id + '"]');
+  }
+
+  function trocarRegra(r) {
+    var velho = regraNaTela(r.id);
+    var novo = desenharRegra(r);
+    if (velho) velho.parentNode.replaceChild(novo, velho);
+    else $("chRegras").appendChild(novo);
+    $("chRegrasVazio").hidden = ($("chRegras").children.length || 0) > 0;
+    return novo;
+  }
+
   function desenharRegras(regras) {
     var alvo = limpar($("chRegras"));
     $("chRegrasVazio").hidden = regras.length > 0;
-    regras.forEach(function (r) {
-      var bloco = criar("div", "card");
-      bloco.style.marginBottom = "10px";
-      // O card novo cai no meio da lista (a ordem dele é a mesma da regra 1), então o foco
-      // depois de "criar outro chat" precisa procurar pelo id, não pelo último filho.
-      bloco.setAttribute("data-chat", String(r.id));
-      bloco.appendChild(criar("p", "rotulo", "chat " + r.id + " · respondeu " + Number(r.contagem || 0) +
-        " vezes" + (r.ativo ? "" : " · parado") + " · atualizado " + r.atualizado_em));
-
-      bloco.appendChild(criar("label", null, "Palavras que o cliente escreve (separe por vírgula)"));
-      bloco.appendChild(campo("text", null, r.gatilho, "gatilho"));
-
-      bloco.appendChild(criar("label", null, "O que responder (use {{nome}}, {{expira}}, {{dias}}, {{pix}}…)"));
-      bloco.appendChild(campo("textarea", null, r.resposta, "resposta"));
-
-      var rodape = criar("div", "linha");
-      var ordem = campo("number", "maq", r.prioridade, "prioridade");
-      ordem.style.width = "70px";
-      ordem.min = "1";
-      ordem.max = "999";
-      rodape.appendChild(criar("span", "muted", "ordem"));
-      rodape.appendChild(ordem);
-
-      var marca = document.createElement("input");
-      marca.type = "checkbox";
-      marca.checked = Boolean(r.ativo);
-      marca.setAttribute("data-ativo", "1");
-      var cb = criar("label", "cb");
-      cb.appendChild(marca);
-      cb.appendChild(criar("span", null, "respondendo"));
-      rodape.appendChild(cb);
-
-      var salvar = criar("button", "prim", "Salvar este chat");
-      salvar.type = "button";
-      salvar.addEventListener("click", function () { salvarRegra(bloco, r.id, salvar); });
-      rodape.appendChild(salvar);
-
-      var apagar = criar("button", "verm", "Apagar");
-      apagar.type = "button";
-      apagar.addEventListener("click", function () { apagarRegra(r.id, apagar); });
-      rodape.appendChild(apagar);
-
-      bloco.appendChild(rodape);
-      alvo.appendChild(bloco);
-    });
+    regras.forEach(function (r) { alvo.appendChild(desenharRegra(r)); });
   }
 
   function estadoRegras(texto) { $("chRegrasEstado").textContent = texto || ""; }
 
+  /** Só a chave ativo, gravada sem tocar no que ele está escrevendo nos outros campos. */
+  function chavearRegra(bloco, id, marca) {
+    var iaResponder = marca.checked;
+    var rotulo = bloco.querySelector("p");
+    marca.disabled = true;
+    CHAT_GRAVANDO += 1;
+    chamar("chat_ativar", { id: id, ativo: iaResponder }, 20).then(function (d) {
+      CHAT_GRAVANDO -= 1;
+      marca.disabled = false;
+      if (!d.ok) { marca.checked = !iaResponder; recado(d.erro, d.detalhe); return; }
+      CHAT.regras = d.regras || CHAT.regras;
+      var r = regraPorId(id);
+      rotulo.textContent = textoRegra(r || { id: id, contagem: 0, ativo: iaResponder });
+      estadoRegras(iaResponder
+        ? "Este chat voltou a responder. As palavras dele valem de novo."
+        : "Este chat está parado. Os outros continuam respondendo normalmente.");
+    });
+  }
+
+  function regraPorId(id) {
+    var achada = null;
+    (CHAT.regras || []).forEach(function (r) { if (Number(r.id) === Number(id)) achada = r; });
+    return achada;
+  }
+
+  function textoRegra(r) {
+    return "chat " + r.id + " · respondeu " + Number(r.contagem || 0) + " vezes" +
+      (r.ativo ? "" : " · parado") + " · atualizado " + (r.atualizado_em || "");
+  }
+
   function salvarRegra(bloco, id, botao) {
     botao.disabled = true;
     estadoRegras("gravando…");
+    CHAT_GRAVANDO += 1;
     chamar("chat_salvar", {
       id: id,
       gatilho: bloco.querySelector("[data-gatilho]").value,
@@ -2055,11 +2113,13 @@
       prioridade: bloco.querySelector("[data-prioridade]").value,
       ativo: bloco.querySelector("[data-ativo]").checked,
     }, 30).then(function (d) {
+      CHAT_GRAVANDO -= 1;
       botao.disabled = false;
       estadoRegras("");
       if (!d.ok) { recado(d.erro, d.detalhe); return; }
       CHAT.regras = d.regras || [];
-      desenharRegras(CHAT.regras);
+      var salva = regraPorId(id);
+      if (salva) trocarRegra(salva);
       estadoRegras(MSG_OK.chat_gravado);
     });
   }
@@ -2067,11 +2127,15 @@
   function apagarRegra(id, botao) {
     if (!window.confirm("Apagar o chat " + id + "? As conversas já guardadas continuam no banco.")) return;
     botao.disabled = true;
+    CHAT_GRAVANDO += 1;
     chamar("chat_apagar", { id: id }, 30).then(function (d) {
+      CHAT_GRAVANDO -= 1;
       botao.disabled = false;
       if (!d.ok) { recado(d.erro, d.detalhe); return; }
       CHAT.regras = d.regras || [];
-      desenharRegras(CHAT.regras);
+      var velho = regraNaTela(id);
+      if (velho) velho.parentNode.removeChild(velho);
+      $("chRegrasVazio").hidden = CHAT.regras.length > 0;
       estadoRegras(MSG_OK.chat_apagado);
     });
   }
@@ -2080,14 +2144,16 @@
     var botao = $("chNovo");
     botao.disabled = true;
     estadoRegras("criando…");
+    CHAT_GRAVANDO += 1;
     chamar("chat_novo", {}, 30).then(function (d) {
+      CHAT_GRAVANDO -= 1;
       botao.disabled = false;
       estadoRegras("");
       if (!d.ok) { recado(d.erro, d.detalhe); return; }
       CHAT.regras = d.regras || [];
-      desenharRegras(CHAT.regras);
-      var novo = $("chRegras").querySelector('.card[data-chat="' + d.id + '"]');
-      var gatilho = novo && novo.querySelector("[data-gatilho]");
+      var criado = regraPorId(d.id);
+      var card = criado ? trocarRegra(criado) : null;
+      var gatilho = card && card.querySelector("[data-gatilho]");
       if (gatilho) {
         gatilho.focus();
         if (gatilho.scrollIntoView) gatilho.scrollIntoView({ block: "center" });
@@ -2160,26 +2226,83 @@
   }
 
   function abrirConversa(telefone, sufixo) {
+    CHAT_ABERTA = telefone;
     $("chJanela").hidden = false;
     $("chJanelaTitulo").textContent = "Conversa de " + telefoneBr(telefone) + (sufixo || "");
     var alvo = limpar($("chMensagens"));
     alvo.appendChild(criar("div", "item", "carregando…"));
     chamar("chat_conversas", { telefone: telefone }, 30).then(function (d) {
-      limpar(alvo);
-      if (!d.ok) { alvo.appendChild(criar("div", "item", mensagemDetalhada(d))); return; }
-      var mensagens = d.mensagens || [];
-      if (!mensagens.length) { alvo.appendChild(criar("div", "item", "nada nesta conversa")); return; }
-      mensagens.forEach(function (m) {
-        var item = criar("div", "item");
-        item.appendChild(criar("b", "rotulo", m.direcao === "saida" ? "robô · " : "cliente · "));
-        item.appendChild(criar("span", null, m.texto));
-        item.appendChild(criar("span", "muted", m.criado_em));
-        alvo.appendChild(item);
-      });
+      if (CHAT_ABERTA !== telefone) return;
+      if (!d.ok) { limpar(alvo); alvo.appendChild(criar("div", "item", mensagemDetalhada(d))); return; }
+      desenharConversa(telefone, d.mensagens || []);
     });
   }
 
-  $("chFecharJanela").addEventListener("click", function () { $("chJanela").hidden = true; });
+  function desenharConversa(telefone, mensagens) {
+    if (CHAT_ABERTA !== telefone) return;
+    var alvo = limpar($("chMensagens"));
+    if (!mensagens.length) { alvo.appendChild(criar("div", "item", "nada nesta conversa")); return; }
+    mensagens.forEach(function (m) {
+      var item = criar("div", "item");
+      item.appendChild(criar("b", "rotulo", m.direcao === "saida" ? "robô · " : "cliente · "));
+      item.appendChild(criar("span", null, m.texto));
+      item.appendChild(criar("span", "muted", m.criado_em));
+      alvo.appendChild(item);
+    });
+  }
+
+  $("chFecharJanela").addEventListener("click", function () {
+    CHAT_ABERTA = "";
+    $("chJanela").hidden = true;
+  });
+
+  // ------------------------------------------------------ a tela viva, com o robô ligado
+  //
+  // Ele não precisa desligar o bot para mexer: esta é a parte que continua se refazendo
+  // sozinha enquanto a aba está aberta. O refresco só toca nos rótulos, nas contagens e na
+  // conversa aberta — nunca nas caixas de texto, para não desfazer o que ele está escrevendo.
+
+  var CHAT_ABERTA = "";
+
+  function atualizarChatVivo(d) {
+    CHAT.regras = d.regras || CHAT.regras;
+
+    var ligado = Boolean(d.ativo);
+    if (ligado !== CHAT.ativo && !$("chLigar").disabled) {
+      CHAT.ativo = ligado;
+      desenharPillRobo();
+    }
+
+    $("chConversas").textContent = Number(d.mensagens || 0) + " mensagens (" +
+      Number(d.entradas || 0) + " dos clientes)";
+    $("chTreino").textContent = Number(d.treino || 0);
+    $("chSemResposta").textContent = Number(d.sem_resposta || 0);
+
+    (CHAT.regras || []).forEach(function (r) {
+      var bloco = $("chRegras").querySelector('.card[data-chat="' + r.id + '"]');
+      if (!bloco) return;
+      var marca = bloco.querySelector("[data-ativo]");
+      if (marca && marca.disabled) return;   // a chave dele está no ar: não puxar o rótulo de volta
+      var rotulo = bloco.querySelector("p");
+      if (rotulo) rotulo.textContent = textoRegra(r);
+    });
+
+    desenharTelefones(d.conversas || []);
+
+    var aberta = d.conversa || {};
+    if (aberta.telefone && ! $("chJanela").hidden) desenharConversa(aberta.telefone, aberta.mensagens || []);
+  }
+
+  var CHAT_BUSCANDO = false;
+
+  setInterval(function () {
+    if (TELA_ATUAL !== "chat" || !token() || CHAT_GRAVANDO || CHAT_BUSCANDO) return;
+    CHAT_BUSCANDO = true;
+    chamar("chat_fluxo", { telefone: CHAT_ABERTA }, 25).then(function (d) {
+      CHAT_BUSCANDO = false;
+      if (d.ok && TELA_ATUAL === "chat") atualizarChatVivo(d);
+    });
+  }, 6000);
 
   $("chExportar").addEventListener("click", function () {
     var botao = $("chExportar");

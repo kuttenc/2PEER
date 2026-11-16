@@ -371,22 +371,35 @@ create table if not exists public.chat_treino (
 alter table public.chat_treino enable row level security;
 create index if not exists idx_chat_treino_criado on public.chat_treino (criado_em desc);
 
-insert into public.chat_regras (gatilho, resposta, prioridade)
-  select v.gatilho, v.resposta, v.prioridade
+-- As quatro respostas de fábrica vêm ESCRITAS e DESLIGADAS: ele liga uma por uma na aba Chat,
+-- depois de conferir o texto. Robô ligado + regra ligada = responde; assim nada sai sozinho
+-- para um cliente antes de ele revisar a frase.
+insert into public.chat_regras (gatilho, resposta, prioridade, ativo)
+  select v.gatilho, v.resposta, v.prioridade, false
     from (values
       ('vence, vencimento, expira, vencia, data de vencimento',
-       'Oi {{nome}}! Seu acesso {{usuario}} vence em {{expira}} ({{dias}}). ' || E'\n' ||
+       'Oi {{nome}}! Seu acesso {{usuario}} {{vence}} ({{dias}}). ' || E'\n' ||
        'Se já pagou o PIX, me manda o comprovante aqui que eu renovo na hora.', 10),
       ('pix, chave, paga, pagamento, boleto, comprovante',
        'A chave PIX é {{pix}}.' || E'\n' ||
        'Depois de pagar me manda o comprovante, {{nome}}, que a renovação é imediata.', 20),
       ('renovar, renova, quero renovar, renovar acesso, continuar',
-       'Claro, {{nome}}! Seu acesso {{usuario}} vence em {{expira}} ({{dias}}).' || E'\n' ||
+       'Claro, {{nome}}! Seu acesso {{usuario}} {{vence}} ({{dias}}).' || E'\n' ||
        'Manda o comprovante do PIX que eu renovo aqui mesmo.', 30),
       ('obrigado, valeu, vlw, obrigado pela ajuda',
        'Por nada, {{nome}}! Qualquer coisa é só chamar por aqui.', 90)
     ) as v(gatilho, resposta, prioridade)
   where not exists (select 1 from public.chat_regras);
+
+-- Conserto de uma frase que saiu errada: "vence em {{expira}}" para um cliente que JÁ venceu
+-- diz uma data que ficou para trás. {{vence}} troca o verbo sozinho. A regra que carregava a
+-- frase antiga é desligada de novo — ele liga quando reler. Idempotente: depois do replace o
+-- like não casa mais.
+update public.chat_regras
+   set resposta = replace(resposta, 'vence em {{expira}}', '{{vence}}'),
+       ativo = false,
+       atualizado_em = now()
+ where resposta like '%vence em {{expira}}%';
 
 -- A prova de entrega. O "200 + idMessage" do GreenAPI só significa que ele aceitou o pedido:
 -- se a mensagem chegou (ou se o WhatsApp recusou o número) só aparece no webhook de status.

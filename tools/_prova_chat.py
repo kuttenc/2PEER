@@ -138,6 +138,13 @@ def executar(cli, sql, params=()):
     return cur.rowcount
 
 
+def ultima_saida(cli, telefone):
+    """A última coisa que o robô respondeu para aquele telefone (a chave da saída é do envio)."""
+    linhas = consulta(cli, "select texto from public.chat_mensagens where direcao = 'saida'"
+                           " and telefone = %s order by id desc limit 1", [telefone])
+    return linhas[0][0] if linhas else ""
+
+
 def provar():
     cli = banco()
     limpar_cli(cli)
@@ -167,6 +174,13 @@ def provar():
     checar("leu a instância no GreenAPI", ver.get("instancia", {}).get("ok") is True, ver.get("instancia"))
     checar("avisa que o webhook ainda não está armado", ver.get("webhook_ok") is False,
            (ver.get("webhook_ok"), ver.get("telefone_diferente")))
+
+    # As regras de fábrica vêm desligadas agora, então a bateria liga as que ela mesma usa e
+    # devolve cada chave para o estado que estava antes. Depois do chat_ver de propósito: é a
+    # primeira conexão com o banco, e é nela que o ESQUEMA conserta a frase antiga.
+    MARCA["ativas"] = consulta(cli, "select id, ativo from public.chat_regras order by id")
+    executar(cli, "update public.chat_regras set ativo = true"
+                  " where gatilho like 'vence,%' or gatilho like 'pix,%' or gatilho like 'renovar,%'")
 
     recusado = webhook("chave-errada", mensagem(STUB + "-1", FORA, "pix"))
     checar("webhook com a chave errada dá 401", recusado[0] == 401, recusado[1])
@@ -252,6 +266,60 @@ def provar():
     checar("a mensagem do cliente foi ligada ao usuário dele",
            bool(conversa_cliente) and bool(conversa_cliente[0][0]), conversa_cliente)
 
+    # ---------------------------------------- {{expira}} x {{expirou}} x {{vence}}
+    _, regra_vars = chamar("chat_novo", {
+        "gatilho": "stub vars",
+        "resposta": "data {{expira}} | expirou {{expirou}} | {{vence}} | {{dias}} | {{status}}",
+        "prioridade": "1"}, token=sessao)
+    id_vars = regra_vars.get("id")
+    checar("o chat novo do botão já nasce respondendo",
+           bool(id_vars) and [r for r in (regra_vars.get("regras") or []) if r["id"] == id_vars][0]["ativo"] is True,
+           id_vars)
+
+    no_prazo = consulta(cli, "select telefone from public.mc_linhas where telefone <> ''"
+                             " and exp_date > now() + interval '2 days' order by exp_date desc limit 1")[0][0]
+    vencido = consulta(cli, "select telefone from public.mc_linhas where telefone <> ''"
+                            " and exp_date < now() - interval '2 days' order by exp_date desc limit 1")[0][0]
+    webhook(chave, mensagem(STUB + "-vars-futuro", no_prazo, "stub vars"))
+    texto_futuro = ultima_saida(cli, no_prazo)
+    webhook(chave, mensagem(STUB + "-vars-passado", vencido, "stub vars"))
+    texto_vencido = ultima_saida(cli, vencido)
+
+    checar("as variáveis do vencimento todas se trocam, sobra ou não sobra tempo",
+           "{{" not in texto_futuro and "{{" not in texto_vencido,
+           (texto_futuro.replace("\n", " | "), texto_vencido.replace("\n", " | ")))
+    checar("para quem está no prazo a frase diz VENCE EM e {{expirou}} avisa que não venceu",
+           "vence em" in texto_futuro and "venceu em" not in texto_futuro
+           and "ainda não venceu" in texto_futuro, texto_futuro.replace("\n", " | "))
+    checar("para quem já venceu a frase diz VENCEU EM e {{expirou}} diz há quanto tempo",
+           "venceu em" in texto_vencido and "há " in texto_vencido
+           and "ainda não venceu" not in texto_vencido, texto_vencido.replace("\n", " | "))
+
+    data_futuro = consulta(cli, "select to_char(exp_date at time zone 'UTC' - interval '3 hours',"
+                                " 'DD/MM/YYYY HH24:MI') from public.mc_linhas where telefone = %s", [no_prazo])[0][0]
+    data_vencido = consulta(cli, "select to_char(exp_date at time zone 'UTC' - interval '3 hours',"
+                                 " 'DD/MM/YYYY HH24:MI') from public.mc_linhas where telefone = %s", [vencido])[0][0]
+    checar("{{expira}} é a data do vencimento em Brasília, do jeito que o painel mostra",
+           data_futuro in texto_futuro and data_vencido in texto_vencido, (data_futuro, data_vencido))
+
+    velha = consulta(cli, "select count(*) from public.chat_regras"
+                          " where resposta like '%vence em {{expira}}%'")[0][0]
+    frase_certa = consulta(cli, "select count(*) from public.chat_regras"
+                               " where gatilho like 'vence,%' and resposta like '%{{vence}}%'")[0][0]
+    checar("a regra de fábrica que dizia 'vence em {{expira}}' foi corrigida",
+           velha == 0 and frase_certa == 1, (velha, frase_certa))
+
+    esquema = (pathlib.Path(__file__).resolve().parents[1]
+               / "supabase/functions/peixeiro/db.ts").read_text(encoding="utf-8")
+    semente = esquema[esquema.index("insert into public.chat_regras"):]
+    checar("num banco novo as quatro conversas de fábrica nascem desligadas",
+           "select v.gatilho, v.resposta, v.prioridade, false" in semente[:400],
+           semente.splitlines()[1].strip()[:60])
+
+    _, desliga_vars = chamar("chat_ativar", {"id": id_vars, "ativo": False}, token=sessao)
+    checar("desligada a regra de teste, ela some do ar",
+           [r for r in (desliga_vars.get("regras") or []) if r["id"] == id_vars][0]["ativo"] is False, id_vars)
+
     sem_regra = webhook(chave, mensagem(STUB + "-vazio", FORA, "asdkjh qwe zxc"))
     checar("mensagem que nenhuma regra entendeu cai no treino",
            sem_regra[1].get("sem_regra") is True, sem_regra[1])
@@ -290,6 +358,43 @@ def provar():
     teste_casamento = webhook(chave, mensagem(STUB + "-desligada", FORA, "stub chatbot"))
     checar("regra desligada não responde",
            teste_casamento[1].get("sem_regra") is True, teste_casamento[1])
+
+    # --------------------------------- a chave de cada chat, com o robô ligado o tempo todo
+    _, so_ela = chamar("chat_ativar", {"id": id_novo, "ativo": True}, token=sessao)
+    chaveira = [r for r in (so_ela.get("regras") or []) if r["id"] == id_novo]
+    checar("a chave liga o chat sem regravar o texto",
+           bool(chaveira) and chaveira[0]["ativo"] is True and chaveira[0]["resposta"] == "resposta nova",
+           chaveira)
+    robos_ligado = consulta(cli, "select chat_ativo from public.greenapi_config where id = 1")[0][0]
+    checar("o robô nunca foi preciso desligar para mexer na chave", bool(robos_ligado), robos_ligado)
+    acendeu = webhook(chave, mensagem(STUB + "-chave-on", FORA, "stub chatbot"))
+    checar("ligada a chave, a resposta sai na hora",
+           acendeu[1].get("respondido") is True and acendeu[1].get("regra") == id_novo, acendeu[1])
+
+    chamar("chat_ativar", {"id": id_novo, "ativo": False}, token=sessao)
+    apagada_chave = webhook(chave, mensagem(STUB + "-chave-off", FORA, "stub chatbot"))
+    checar("desligada a chave, nada daquela regra responde", apagada_chave[1].get("sem_regra") is True,
+           apagada_chave[1])
+    guardada_chave = consulta(cli, "select count(*) from public.chat_mensagens where chave = %s",
+                              [STUB + "-chave-off"])[0][0]
+    checar("mesmo com a chave desligada a conversa continua sendo guardada",
+           guardada_chave == 1, guardada_chave)
+
+    fantasma_chave = chamar("chat_ativar", {"id": 99999999, "ativo": True}, token=sessao)
+    checar("chat_ativar em regra que não existe dá aviso",
+           fantasma_chave[0] == 400 and fantasma_chave[1].get("erro") == "sem_regra", fantasma_chave[1])
+
+    _, vivo = chamar("chat_fluxo", {"telefone": FORA}, token=sessao)
+    checar("o refresco da tela devolve o banco sem bater no GreenAPI",
+           "instancia" not in vivo and "webhook_ok" not in vivo and "conversas" in vivo
+           and "regras" in vivo, sorted(vivo.keys())[:8])
+    aberta = (vivo.get("conversa") or {}).get("mensagens") or []
+    checar("o refresco traz a conversa que está aberta na tela",
+           (vivo.get("conversa") or {}).get("telefone") == FORA
+           and any(m["direcao"] == "entrada" for m in aberta),
+           [m["direcao"] for m in aberta][:4])
+    sem_sessao_fluxo = chamar("chat_fluxo")
+    checar("chat_fluxo sem sessão é recusado", sem_sessao_fluxo[0] == 401, sem_sessao_fluxo[1])
 
     _, apagada = chamar("chat_apagar", {"id": id_novo}, token=sessao)
     checar("apagar a regra", not [r for r in (apagada.get("regras") or []) if r["id"] == id_novo],
@@ -335,11 +440,30 @@ def provar():
     checar("a junta fila + entrega devolve o status do cliente",
            uniao == [("stubchat01", "DELIVERY_ACK", "")], uniao)
 
+    # A fila do lote mora em painel_lote e é do trabalho dele: a bateria congela uma fila própria
+    # só para provar a junta, e devolve a que estava lá antes.
+    antes = consulta(cli, "select tipo, plano, estado, aviso, atualizado_em from public.painel_lote"
+                          " where chave = 'recuperar_todos'")
+    executar(cli, "delete from public.painel_lote where chave = 'recuperar_todos'")
+    executar(cli, "insert into public.renovacao_avisos (username, exp_date, telefone, status_code, id_message, response)"
+                  " values ('stubchat01', '2026-11-10', %s, 200, %s, '{}'::jsonb)", (FORA, STUB_STATUS))
+    executar(cli, "insert into public.painel_lote (chave, tipo, plano, estado, aviso)"
+                  " values ('recuperar_todos', 'recuperar', %s::jsonb, %s::jsonb, 'stub da prova')",
+             [json.dumps([{"username": "stubchat01", "telefone": FORA, "exp_date": "2026-11-10T00:00:00+00:00"}]),
+              json.dumps({"rodando": False, "enviados": 1, "falhas": 0, "erros": [], "indice": 1, "total": 1,
+                          "seguidas": 0, "enviando": None,
+                          "resultados": {"0": {"ok": True, "erro": ""}}})])
     _, fila = chamar("lote_fila", {"tipo": "recuperar"}, token=sessao)
     itens = fila.get("itens") or []
     checar("a fila devolve o campo entrega para cada linha",
-           bool(fila.get("itens", True)) and all("entrega" in item for item in itens),
+           bool(itens) and all("entrega" in item for item in itens)
+           and itens[0]["situacao"] == "enviado" and itens[0]["entrega"] == "DELIVERY_ACK",
            [(i.get("situacao"), i.get("entrega")) for i in itens[:2]])
+    executar(cli, "delete from public.painel_lote where chave = 'recuperar_todos'")
+    if antes:
+        executar(cli, "insert into public.painel_lote (chave, tipo, plano, estado, aviso, atualizado_em)"
+                      " values ('recuperar_todos', %s, %s::jsonb, %s::jsonb, %s, %s)",
+                 [antes[0][0], json.dumps(antes[0][1]), json.dumps(antes[0][2]), antes[0][3], antes[0][4]])
 
     chamar("chat_ligar", {"desconhecido": False}, token=sessao)
     cli.close()
@@ -359,15 +483,21 @@ def limpar_cli(cli=None):
     executar(cli, "delete from public.chat_treino where telefone in ('', %s, %s)"
                   " or entrada in ('me manda a chave pix', 'quando vence meu acesso?')", [FORA, NOSSO])
     executar(cli, "delete from public.whatsapp_status where id_message = %s or id_message like 'simulada-%%'", [STUB_STATUS])
-    executar(cli, "delete from public.chat_regras where gatilho = 'stub chatbot'")
+    executar(cli, "delete from public.renovacao_avisos where username = 'stubchat01'")
+    executar(cli, "delete from public.painel_lote where chave = 'recuperar_todos' and aviso = 'stub da prova'")
+    executar(cli, "delete from public.chat_regras where gatilho in ('stub chatbot', 'stub vars')")
+    if MARCA.get("ativas"):
+        for id_regra, estava_ligada in MARCA["ativas"]:
+            executar(cli, "update public.chat_regras set ativo = %s where id = %s", [estava_ligada, id_regra])
     executar(cli, "update public.greenapi_config set chat_ativo = false, chat_desconhecido = false,"
                   " chat_dias = 90 where id = 1")
     sobras = consulta(cli, "select (select count(*) from public.chat_mensagens),"
                            " (select count(*) from public.chat_treino),"
                            " (select count(*) from public.whatsapp_status),"
                            " (select count(*) from public.chat_regras),"
+                           " (select count(*) from public.chat_regras where ativo),"
                            " (select chat_ativo or chat_desconhecido from public.greenapi_config where id = 1)")
-    print("\n   sobras (mensagens, treino, status, regras, robô ligado):", sobras[0])
+    print("\n   sobras (mensagens, treino, status, regras, com a chave ligada, robô ligado):", sobras[0])
     if próprio:
         cli.close()
 

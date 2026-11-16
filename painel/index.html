@@ -556,8 +556,15 @@
           e a de menor n&uacute;mero ganha quando duas casam.</p>
         <p class="muted">Campos que viram dado do cliente na hora:
           <code>{{nome}}</code> <code>{{usuario}}</code> <code>{{telefone}}</code>
-          <code>{{expira}}</code> <code>{{dias}}</code> <code>{{status}}</code>
+          <code>{{vence}}</code> <code>{{expira}}</code> <code>{{expirou}}</code>
+          <code>{{dias}}</code> <code>{{status}}</code>
           <code>{{pix}}</code> <code>{{data}}</code> <code>{{hora}}</code>.</p>
+        <p class="muted"><b>{{vence}}</b> &eacute; o que usar na frase: sai "vence em 15/11/2026
+          18:00" para quem est&aacute; no prazo e "venceu em 10/11/2026 18:00" para quem j&aacute;
+          perdeu o acesso. <b>{{expira}}</b> &eacute; s&oacute; a data gravada (vale para os dois),
+          e <b>{{expirou}}</b> &eacute; quanto tempo faz ("h&aacute; 2 dias", ou "ainda n&atilde;o
+          venceu"). N&atilde;o escreva "vence em {{expira}}" &mdash; para o vencido a frase fica
+          mentindo.</p>
         <div id="chRegras"></div>
         <p class="muted" id="chRegrasVazio" hidden>Nenhum chat criado ainda. Toque em
           <b>Criar outro chat</b> para come&ccedil;ar.</p>

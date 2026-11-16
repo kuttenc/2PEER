@@ -227,20 +227,41 @@ A aba `#chat` é o único lugar que fala com o webhook do GreenAPI. Três tabela
 pelo `ESQUEMA` do `db.ts` na primeira conexão:
 
 - `chat_regras` — gatilho (palavras separadas por vírgula), resposta, `prioridade` (menor ganha),
-  `ativo`, `contagem`. Vieram quatro regras de fábrica (vence / pix / renovar / obrigado); o botão
-  "Criar outro chat" (`chat_novo`) cria uma em branco com ordem 10.
+  `ativo`, `contagem`. Vieram quatro regras de fábrica (vence / pix / renovar / obrigado), e elas
+  nascem **desligadas**: nada responde sozinho até ele ligar a chave daquele card na tela. O botão
+  "Criar outro chat" (`chat_novo`) cria uma em branco com ordem 10, já ligada.
 - `chat_mensagens` — a conversa, com `expira_em = criado_em + chat_dias` (90). Cada mensagem nova
   que chega apaga o que venceu, então a tabela não cresce sozinha. `chave` é o id do GreenAPI: a
   mesma mensagem entregue duas vezes não vira duas respostas.
 - `chat_treino` — o par pergunta/resposta, sem prazo. É o arquivo que treina uma IA depois; o botão
   "Baixar o CSV de treino" (`chat_treino` action) devolve `Pergunta;Resposta;Regra;Cliente;Cadastrado;Quando`.
 
-Como a resposta é escolhida: só quando `chat_ativo` está ligado, o texto do cliente (sem acento,
-minúsculo) é comparado com cada gatilho; a regra que casar com a menor `prioridade` responde. As
-variáveis `{{nome}} {{usuario}} {{telefone}} {{expira}} {{dias}} {{status}} {{pix}} {{data}} {{hora}}`
-são preenchidas na hora com o espelho do MC daquele telefone. Quem não está na base de clientes só
-recebe resposta com a caixa "responder também para quem não está na base" marcada — mas a conversa
-e o par de treino são guardados do mesmo jeito.
+Como a resposta é escolhida: só quando `chat_ativo` está ligado **e** a chave daquele card está
+ligada, o texto do cliente (sem acento, minúsculo) é comparado com cada gatilho; a regra que casar
+com a menor `prioridade` responde. As variáveis `{{nome}} {{usuario}} {{telefone}} {{vence}}
+{{expira}} {{expirou}} {{dias}} {{status}} {{pix}} {{data}} {{hora}}` são preenchidas na hora com o
+espelho do MC daquele telefone. Quem não está na base de clientes só recebe resposta com a caixa
+"responder também para quem não está na base" marcada — mas a conversa e o par de treino são
+guardados do mesmo jeito.
+
+Os três campos do vencimento não são a mesma coisa, e é isso que a frase precisa respeitar:
+
+| campo | o que sai | para quem está no prazo | para quem já venceu |
+|---|---|---|---|
+| `{{expira}}` | só a data gravada | `12/12/2026 23:00` | `12/11/2026 23:00` |
+| `{{expirou}}` | quanto tempo faz | `ainda não venceu (em 26 dias)` | `há 3 dias` |
+| `{{vence}}` | a frase inteira, com o verbo certo | `vence em 12/12/2026 23:00` | `venceu em 12/11/2026 23:00` |
+
+Escrever "vence em {{expira}}" mint para quem já perdeu o acesso, e foi o erro que as regras de
+fábrica carregavam; o `ESQUEMA` troca o texto delas por `{{vence}}` na primeira conexão e desliga
+essas regras de novo. Use `{{vence}}` nas respostas.
+
+Cada card da tela tem uma chave ("este chat responde / está parado") que grava sozinha, pelo
+`chat_ativar`, sem tocar no texto dos outros cards e sem desligar o robô — assim dá para editar um
+chat e continuar interagindo com os outros. A conversa continua sendo guardada mesmo com a chave
+desligada; o que para é a resposta. A tela se refresca sozinha a cada 6 segundos pelo `chat_fluxo`,
+que devolve resumo + lista de telefones + a conversa aberta, e **não** chama o GreenAPI (só o
+`chat_ver` lê a instância, para não bater na API a cada 6 segundos).
 
 O webhook: `chat_ver` devolve `webhook` = `<endereço da função>?action=chat_webhook&token=<chat_token>`.
 A chave vai na URL porque o corpo é a mensagem do cliente, e `chat_webhook` está em `SEM_SESSAO`.
@@ -281,10 +302,11 @@ WhatsApp* (webhook não instalado), *no servidor*, *entregue ao WhatsApp*, *cheg
   ela é substituída pela varredura dos clientes de verdade (o travamento novo só impede isso
   enquanto o lote está no ar).
 
-- O chat foi provado com `tools/_prova_chat.py`: 44 provas batendo no webhook com o payload no
+- O chat foi provado com `tools/_prova_chat.py`: 61 provas batendo no webhook com o payload no
   formato real do GreenAPI (mensagem de cliente, status de entrega, duplicado, grupo, mídia sem
-  texto, botão respondido), mais ligar/desligar o robô, criar/editar/apagar regra, retenção e o
-  CSV. Rode com a função local no ar (`deno run --allow-all --env-file=.env index.ts` com
+  texto, botão respondido), mais ligar/desligar o robô, a chave de cada card, o refresco da tela,
+  criar/editar/apagar regra, as três variáveis do vencimento, retenção e o CSV. Rode com a função
+  local no ar (`deno run --allow-all --env-file=.env index.ts` com
   `PEIXEIRO_MODO_TESTE=1`): `python tools/_prova_chat.py` e, se precisar só limpar,
   `python tools/_prova_chat.py limpar`. Ela imprime tudo com os números mascarados e devolve o
   banco para `(0 mensagens, 0 treino, 0 status, 4 regras, robô desligado)`.

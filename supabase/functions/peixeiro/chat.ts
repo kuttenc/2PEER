@@ -175,6 +175,16 @@ export async function salvarRegra(
   return (r.rowCount || 0) > 0;
 }
 
+/** A chave de um chat só, sem regravar o texto: assim dá para desligar uma resposta enquanto o
+ *  restante continua respondendo e enquanto ele ainda está escrevendo nos outros campos. */
+export async function ligarRegra(id: number, ativo: boolean): Promise<boolean> {
+  const r = await consultar(
+    "update public.chat_regras set ativo = $2, atualizado_em = now() where id = $1",
+    [id, ativo],
+  );
+  return (r.rowCount || 0) > 0;
+}
+
 export async function apagarRegra(id: number): Promise<boolean> {
   const r = await consultar(`delete from public.chat_regras where id = $1`, [id]);
   return (r.rowCount || 0) > 0;
@@ -279,14 +289,29 @@ export async function clientePorTelefone(digitos: string): Promise<Cliente | nul
   };
 }
 
+/** As três maneiras de falar do vencimento, porque "{{expira}}" sozinho já enganou:
+ *  `expira` é a DATA (vale para quem está no prazo e para quem venceu — é sempre o dia gravado),
+ *  `expirou` é o TEMPO QUE PASSOU desde aquela data, e `vence` é a FRASE INTEIRA, que troca o
+ *  verbo sozinha ("vence em ..."/"venceu em ..."). Quem escreve uma resposta deve usar `vence`;
+ *  é a única que nunca fica mentindo para um cliente que já perdeu o acesso. */
 export function variaveis(cliente: Cliente | null, conf: Conf, telefone: string): Record<string, string> {
   const agora = new Date();
   const horas = cliente?.expira ? (cliente.expira.getTime() - agora.getTime()) / 3_600_000 : null;
+  const data = cliente?.expira ? formatarBrasilia(cliente.expira) : "não está no nosso sistema";
+  const venceu = horas !== null && horas <= 0;
   return {
     nome: cliente?.nota || cliente?.usuario || "amigo(a)",
     usuario: cliente?.usuario || formatarTelefone(telefone),
     telefone: formatarTelefone(telefone),
-    expira: cliente?.expira ? formatarBrasilia(cliente.expira) : "não está no nosso sistema",
+    expira: data,
+    expirou: horas === null
+      ? "não está no nosso sistema"
+      : venceu
+      ? textoVencido(horas)
+      : "ainda não venceu (" + textoVencido(horas) + ")",
+    vence: horas === null
+      ? "não está no nosso sistema"
+      : `${venceu ? "venceu" : "vence"} em ${data}`,
     dias: horas === null ? "sem data de vencimento" : textoVencido(horas),
     status: cliente ? (cliente.status === 1 ? "ativo" : "parado") : "sem cadastro",
     pix: String(conf.aviso_pix_key || "").trim() || "(chave ainda não cadastrada)",

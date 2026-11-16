@@ -75,6 +75,8 @@ const ACAO: Record<string, Handler> = {
   chat_salvar: acoes.chatSalvar,
   chat_apagar: acoes.chatApagar,
   chat_ligar: acoes.chatLigar,
+  chat_ativar: acoes.chatAtivar,
+  chat_fluxo: acoes.chatFluxo,
   chat_instalar: acoes.chatInstalar,
   chat_conversas: acoes.chatConversas,
   chat_treino_exportar: acoes.chatTreino,
