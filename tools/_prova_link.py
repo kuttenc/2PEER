@@ -20,6 +20,7 @@ então nada sai do computador e nenhum WhatsApp é tocado.
 """
 import base64
 import json
+import os
 import pathlib
 import re
 import sys
@@ -134,7 +135,9 @@ def provar_clique():
 
 
 def provar_site():
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+    # PEIXEIRO_SITE_DIR aponta para o outro site (o do Render) — a mesma prova vale para os dois.
+    sys.path.insert(0, str(os.environ.get("PEIXEIRO_SITE_DIR") or
+                           pathlib.Path(__file__).resolve().parents[1]))
     import app
 
     # Nada de rede nem de banco: o site é provado pelo desenho da página, não pelo envio.
@@ -186,8 +189,12 @@ def provar_site():
 
 
 if __name__ == "__main__":
-    provar_clique()
-    provar_site()
+    # `site` roda só a metade do Flask (serve para provar o site do Render, que não tem função local).
+    if len(sys.argv) > 1 and sys.argv[1] == "site":
+        provar_site()
+    else:
+        provar_clique()
+        provar_site()
     falhas = [f[1] for f in RESULTADOS if not f[0]]
     print("\n%d/%d provas passaram" % (len(RESULTADOS) - len(falhas), len(RESULTADOS)))
     if falhas:

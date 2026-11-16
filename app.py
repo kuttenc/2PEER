@@ -66,9 +66,6 @@ def safe_to_brasilia(iso_date: str) -> str:
         return iso_date or ""
 
 
-HORAS_TELEFONE_LINK = 4
-
-
 def telefone_do_link() -> tuple:
     """Devolve (número mostrável, dígitos) quando o cliente chegou pelo link de recuperação.
 
