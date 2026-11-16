@@ -220,8 +220,16 @@ trancada e o número continua salvo no aparelho por 4 horas.
 - Prova: `python tools/_prova_link.py` (16 provas — metade na função local, metade chamando o `app.py`
   com o gerador de acesso monkeypatchado, então **nenhum WhatsApp sai** e nenhuma linha real é criada).
 
-Quando a produção ainda estiver no Render, o mesmo `app.py`/`templates/index.html` servem lá: a mudança
-é de arquivo, não de plataforma.
+Quando a produção ainda estiver no Render, é o site de lá que o cliente abre: o endereço alvo dos
+links é `https://wplay-teste-4h.onrender.com/`, que vem do repo `fabiodkk/wplay-teste-4h` (cópia
+local em `../repo`). A metade Python já está portada lá (commit local `4ddf087`, os mesmos
+`telefone_do_link()` + bloco do formulário); publicar é `git push origin main` naquele repo, e o
+Render refaz o build sozinho. Enquanto esse push não acontecer, nada quebra: o cliente só chega na
+tela de sempre, com o campo vazio pedindo o número. A prova roda nos dois sites:
+
+```bash
+PEIXEIRO_SITE_DIR=../repo python tools/_prova_link.py site
+```
 
 ## A aba "Não recuperados" (a fila por dentro)
 
@@ -298,6 +306,15 @@ aba Configuração. ⚠️ Esse botão muda o tráfego real da instância: enqua
 da cópia, toda mensagem do WhatsApp cai no banco de teste. Na produção, só depois de publicar a
 função de produção.
 
+**Renovou a conta do GreenAPI? O webhook vai junto para o lixo.** A instância nova (`id_instance`
+diferente, medida em 16/11/2026: `710722764101` → `710722804253`) nasce **sem `webhookUrl` nenhum**:
+as credenciais novas funcionam (`getStateInstance` responde `authorized`, o `sendFileByUpload` devolve
+200 com `idMessage` `3EB0…`), mas `whatsapp_status` e `chat_mensagens` ficam com **0 linhas**, então o
+painel perde a prova de entrega e continua escrevendo "enviado" para mensagens que o WhatsApp jogou
+fora depois de aceitar. É o motivo pelo qual duas mensagens de 20:45/20:46 aparecem enviadas e o
+cliente não recebeu: sem webhook não há como saber, e `getMessageState` responde 404 nessa instância.
+Depois de trocar credencial, o passo é abrir a aba Chat e apertar "Instalar na instância agora".
+
 O mesmo endereço recebe o **status de entrega** (`type: messageStatus`, `eventType: 8`), que vai para
 `whatsapp_status` (`id_message`, `status`, telefone, `arrivato`). É a única prova de que a mensagem
 chegou no aparelho: o `POST` do GreenAPI responde 200 com `idMessage` quando **aceitou**, e o
@@ -337,6 +354,12 @@ WhatsApp* (webhook não instalado), *no servidor*, *entregue ao WhatsApp*, *cheg
   `PEIXEIRO_MODO_TESTE=1`): `python tools/_prova_chat.py` e, se precisar só limpar,
   `python tools/_prova_chat.py limpar`. Ela imprime tudo com os números mascarados e devolve o
   banco para `(0 mensagens, 0 treino, 0 status, 4 regras, robô desligado)`.
+
+- O telefone que viaja no link foi provado com `tools/_prova_link.py` (16 provas): 7 no
+  `links_destino` da função local, com linhas `stub-link-*` que somem no fim, e 9 no Flask do
+  próprio `app.py`, com `generate_access_once` trocado por um carimbo — nenhum WhatsApp sai e
+  nenhum acesso é criado. Os números da prova (`5511900000011` e vizinhos) são inventados e
+  conferidos contra `mc_linhas` antes de entrar no arquivo.
 
 ## Quando for para a produção
 
