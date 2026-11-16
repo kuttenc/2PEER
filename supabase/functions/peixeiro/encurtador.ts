@@ -118,32 +118,56 @@ export async function resolver(slug: string, timeout = 15_000): Promise<Record<s
 
 // ---------------------------------------------------------------- link da recuperação
 
-/** Para onde o cliente vai quando clicar no link de recuperação. */
+/** Raiz do Pages deste mesmo repositório: é onde mora a página de redirecionamento. */
 const PAINEL_BASE = (Deno.env.get("PAINEL_LINK_BASE") || "https://kuttenc.github.io/2PEER").replace(/\/+$/, "");
+
+export function painelBase(): string {
+  return PAINEL_BASE;
+}
 
 /** Usuário e telefone viajam em base64 (sem os `+/=` da vida, para não quebrar na URL). */
 export function payloadRecuperacao(usuario: string, telefone: string): string {
   return btoa(`${usuario}|${telefone}`).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-export function alvoRecuperacao(usuario: string, telefone: string): string {
-  return `${PAINEL_BASE}/?d=${payloadRecuperacao(usuario, telefone)}`;
+/** O final do link do cliente. Sendo derivado do par usuário+telefone, o mesmo cliente reusa
+ *  sempre o mesmo link (reenviar não loteria a conta) e telefone novo vira link novo. */
+export function slugRecuperacao(usuario: string, telefone: string): string {
+  return limparSlug(`rc-${usuario}-${payloadRecuperacao(usuario, telefone)}`);
 }
 
-/** O link curto da mensagem. O final do link sai do próprio base64: o mesmo cliente com o
- *  mesmo telefone reusa sempre o mesmo link (reenviar não loteria a conta) e telefone trocado
- *  vira outro link, senão o link velho continuaria apontando para o número antigo.
- *  Se o encurtador falhar, sai o link comprido: a mensagem nunca pode ficar sem destino. */
-export async function linkRecuperacao(
-  usuario: string,
-  telefone: string,
-): Promise<{ url: string; curto: boolean; erro?: string }> {
-  const alvo = alvoRecuperacao(usuario, telefone);
-  const slug = limparSlug(`rc-${usuario}-${payloadRecuperacao(usuario, telefone)}`);
+/** Link criado antes de existir a página de redirecionamento só traz o base64 no endereço; o
+ *  usuário está lá dentro, então dá de reconstruir o mesmo final e o link velho passa a seguir
+ *  o destino editado na aba Links como qualquer outro. */
+export function slugDoPayload(payload: string): string {
+  const limpo = String(payload || "").trim();
+  if (!/^[a-z0-9_-]{4,64}$/i.test(limpo)) return "";
+  let usuario = "";
+  try {
+    usuario = atob(limpo.replace(/-/g, "+").replace(/_/g, "/")).split("|")[0] || "";
+  } catch {
+    return "";
+  }
+  return usuario ? limparSlug(`rc-${usuario}-${limpo}`) : "";
+}
+
+/** A página de redirecionamento do Pages, única coisa que entra no encurtador: é ela que lê o
+ *  destino no banco na hora do clique, e por isso o endereço pode mudar depois do envio. */
+export function urlRedirecionamento(slug: string): string {
+  return `${PAINEL_BASE}/r/?l=${encodeURIComponent(slug)}`;
+}
+
+export type LinkCurto = { url: string; slug: string; curto: boolean; erro?: string };
+
+/** O link que vai na mensagem. Se o encurtador falhar, sai o endereço da própria página de
+ *  redirecionamento: a mensagem nunca pode ficar sem para onde o cliente ir. */
+export async function linkRecuperacao(usuario: string, telefone: string): Promise<LinkCurto> {
+  const slug = slugRecuperacao(usuario, telefone);
+  const alvo = urlRedirecionamento(slug);
   const criado = await encurtar(alvo, slug, `recuperacao ${usuario}`);
-  if (criado.ok) return { url: String(criado.curto), curto: true };
-  // "já está em uso" com o mesmo destino é o caso normal de um reenvio.
+  if (criado.ok) return { url: String(criado.curto), slug, curto: true };
+  // "já está em uso" é o caso normal de um reenvio para o mesmo cliente.
   const existente = await resolver(slug);
-  if (existente.ok && existente.alvo === alvo) return { url: String(existente.curto), curto: true };
-  return { url: alvo, curto: false, erro: String(criado.erro || existente.erro || "").slice(0, 160) };
+  if (existente.ok) return { url: String(existente.curto), slug, curto: true };
+  return { url: alvo, slug, curto: false, erro: String(criado.erro || existente.erro || "").slice(0, 160) };
 }

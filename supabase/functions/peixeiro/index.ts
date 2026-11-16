@@ -6,7 +6,9 @@ import { usuarioAutenticado } from "./sessao.ts";
 import { modoTeste } from "./mcapi.ts";
 import type { Handler, Registro } from "./acoes.ts";
 
-const SEM_SESSAO = new Set(["ping", "entrar", "aviso_cron"]);
+// O clique de um cliente na página r/ é anônimo por natureza: ele não tem, e não pode ter,
+// sessão do painel — e só pede o endereço para onde o link dele já mandava.
+const SEM_SESSAO = new Set(["ping", "entrar", "aviso_cron", "links_destino"]);
 
 /** O contrato público do painel: cada rota do Flask vira uma action com nome de rota.
  *  Escrita à mão de propósito — assim dá para conferir, linha por linha, que nenhuma
@@ -59,6 +61,9 @@ const ACAO: Record<string, Handler> = {
   links_ver: acoes.linksVer,
   links_encurtar: acoes.linksEncurtar,
   links_resolver: acoes.linksResolver,
+  links_padrao_salvar: acoes.linksPadraoSalvar,
+  links_destino_salvar: acoes.linksDestinoSalvar,
+  links_destino: acoes.linksDestino,
 };
 
 function origensPermitidas(): string[] {

@@ -2,7 +2,6 @@
 <html lang="pt-br">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="refresh" content="0; url=painel/">
 <link rel="canonical" href="painel/">
 <title>C&oacute;pia de testes do painel do O Peixeiro</title>
 <style>
@@ -16,6 +15,13 @@
   <p>Abrindo o painel...</p>
   <p><a href="painel/">Abrir o painel</a></p>
 </div>
-<script>location.replace("painel/" + location.search + location.hash);</script>
+<script>
+// Links antigos trazem só o base64 do cliente (?d=); a página r/ é quem sabe para onde ele vai
+// hoje, então ela também recebe os que já foram enviados antes desta página existir.
+(function () {
+  var d = new URLSearchParams(location.search).get("d");
+  location.replace(d ? "r/?d=" + encodeURIComponent(d) : "painel/" + location.search + location.hash);
+})();
+</script>
 </body>
 </html>

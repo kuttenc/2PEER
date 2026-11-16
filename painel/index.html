@@ -391,7 +391,33 @@
     <!-- ---------------------------------------------------------- LINKS -->
     <section data-pagina="links" hidden>
       <div class="card">
-        <h2>Encurtar um link</h2>
+        <h2>Para onde os links levam o cliente</h2>
+        <p class="muted" style="margin-top:0">O que cai no WhatsApp é só o link curto. O endereço que abre
+          é lido na hora do clique, então <b>mudou aqui, mudou também para quem recebeu o link ontem</b>
+          &mdash; sem reenviar nada.</p>
+        <label for="lkPadrao">Endere&ccedil;o padr&atilde;o (todo link sem endere&ccedil;o pr&oacute;prio abre aqui)</label>
+        <input type="url" id="lkPadrao" autocomplete="off" autocapitalize="off" spellcheck="false"
+               placeholder="https://kuttenc.github.io/2PEER/painel/">
+        <div class="linha" style="margin-top:12px">
+          <button type="button" class="prim" id="lkPadraoBotao">Salvar o padr&atilde;o</button>
+          <span class="muted" id="lkPadraoEstado"></span>
+        </div>
+        <p class="erro" id="lkPadraoErro" hidden></p>
+      </div>
+
+      <div class="card">
+        <h2>Links de recupera&ccedil;&atilde;o</h2>
+        <p class="muted" style="margin-top:0">Um por cliente, criados sozinhos quando voc&ecirc; clica em
+          <b>recuperar</b>. O final <code>rc-...</code> n&atilde;o muda &mdash; ele j&aacute; est&aacute; no
+          WhatsApp do cliente. O que muda &eacute; s&oacute; o endere&ccedil;o que ele abre.</p>
+        <div id="lkLista"></div>
+        <p class="muted" id="lkVazio" hidden>Nenhum link enviado ainda por aqui. Eles aparecem nesta
+          lista na primeira vez que voc&ecirc; usar o bot&atilde;o <b>recuperar</b>.</p>
+        <p class="erro" id="lkListaErro" hidden></p>
+      </div>
+
+      <div class="card">
+        <h2>Encurtar um link avulso</h2>
         <p class="muted" style="margin-top:0">Sai pelo seu serviço de links (<code id="lkBase"></code>), então o clique
           aparece lá no relatório. <span id="lkLogado"></span></p>
         <label for="lkUrl">endereço comprido</label>
@@ -419,17 +445,10 @@
             <a href="#" id="lkAbrir" target="_blank" rel="noopener">abrir</a>
           </div>
         </div>
-      </div>
-
-      <div class="card">
-        <h2>Usar no código</h2>
-        <p class="muted" style="margin-top:0">Toda ação do painel está atrás do login, então o navegador nunca vê
-          chave nenhuma. Lá na função:</p>
-        <pre class="exemplo">import { encurtar } from "./encurtador.ts";
-await encurtar("https://...", "pix", "renovacao");
-// { ok: true, curto: "https://.../pix", alvo: "https://...", visita: false }</pre>
-        <p class="muted">Se o encurtador estiver fora, volta <code>ok=false</code> e nada quebra:
-          quem chama usa o endereço comprido.</p>
+        <p class="muted" style="margin-bottom:0">Link avulso n&atilde;o passa por esta p&aacute;gina de
+          links: ele aponta direto para o endere&ccedil;o que voc&ecirc; digitou, e depois de criado n&atilde;o
+          d&aacute; para alterar &mdash; para poder mudar de id&eacute;ia, use o <b>recuperar</b> ou apague
+          e encurte de novo.</p>
       </div>
     </section>
 

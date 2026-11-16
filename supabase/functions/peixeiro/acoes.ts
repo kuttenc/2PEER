@@ -44,8 +44,20 @@ import {
   baseEncurtador,
   encurtar,
   linkRecuperacao,
+  limparSlug,
+  painelBase,
   resolver,
+  slugDoPayload,
+  slugRecuperacao,
 } from "./encurtador.ts";
+import {
+  destinoNoClique,
+  destinoPadrao,
+  listarLinks,
+  registrarLink,
+  salvarDestino,
+  salvarPadrao,
+} from "./destinos.ts";
 import {
   DIAS_SESSAO,
   conferida,
@@ -489,7 +501,8 @@ export async function recuperacaoVer(): Promise<Saida> {
     conf: resumoConfig(conf),
     // O {link} do exemplo é de mentira de propósito: criar link de verdade a cada abertura da
     // aba loteria o encurtador. No envio, quem põe o link real é linkRecuperacao().
-    exemplo: legendaRecuperar(conf, "há 1 mês e 4 dias", `${baseEncurtador()}/rc-usuario-1234`),
+    exemplo: legendaRecuperar(conf, "há 1 mês e 4 dias",
+      `${baseEncurtador()}/${slugRecuperacao("usuario", "11999998888")}`),
     tem_foto: Boolean(conf.recupera_photo_base64),
     foto_kb: Math.round((conf.recupera_photo_base64 || "").length / 1024),
     foto_nome: conf.recupera_photo_name,
@@ -565,6 +578,7 @@ export async function recuperarUm(dados: Registro, ctx: Contexto): Promise<Saida
   const horas = expira ? (expira.getTime() - Date.now()) / 3_600_000 : 0;
   const dias = textoVencido(horas);
   const link = await linkRecuperacao(username, telefone);
+  await registrarLink(link.slug, username, telefone);
   const resultado = await enviarRecuperacao(conf, telefone, legendaRecuperar(conf, dias, link.url));
   if (!resultado.ok) {
     return falha(cotaEsgotada(resultado) ? "cota" : "enviar", 502, { detalhe: falhaGreenApi(resultado).slice(0, 220) });
@@ -770,6 +784,7 @@ async function itemRecuperar(
   const horas = expira ? (expira.getTime() - Date.now()) / 3_600_000 : 0;
   const dias = textoVencido(horas);
   const link = await linkRecuperacao(username, telefone);
+  await registrarLink(link.slug, username, telefone);
   let resultado: ResultadoEnvio;
   try {
     resultado = await enviarRecuperacao(conf, telefone, legendaRecuperar(conf, dias, link.url));
@@ -876,7 +891,41 @@ export async function apagarLinhaFazer(dados: Registro, ctx: Contexto): Promise<
 // ------------------------------------------------------------------ links
 
 export async function linksVer(): Promise<Saida> {
-  return ok({ base: baseEncurtador(), logado: encurtadorLogado() });
+  return ok({
+    base: baseEncurtador(),
+    logado: encurtadorLogado(),
+    padrao: await destinoPadrao(),
+    itens: await listarLinks(),
+  });
+}
+
+const URL_BOM = /^https?:\/\/[^\s<>"']+$/i;
+
+/** O endereço que abre quando o link não tem destino próprio. Vazio = volta para o painel. */
+export async function linksPadraoSalvar(dados: Registro): Promise<Saida> {
+  const destino = txt(dados.destino).trim();
+  if (destino && !URL_BOM.test(destino)) return falha("url");
+  if (!(await salvarPadrao(destino))) return falha("banco", 500);
+  return ok({ destino });
+}
+
+/** Destino individual, para quando um cliente precisa cair em outra página. */
+export async function linksDestinoSalvar(dados: Registro): Promise<Saida> {
+  const slug = limparSlug(txt(dados.slug));
+  const destino = txt(dados.destino).trim();
+  if (!slug) return falha("sem_slug");
+  if (destino && !URL_BOM.test(destino)) return falha("url");
+  if (!(await salvarDestino(slug, destino))) return falha("banco", 500);
+  return ok({ slug, destino });
+}
+
+/** A página r/ do Pages chama isto no clique do cliente. Sem login e sem chave: o único dado
+ *  que entra é o final do link, e o que sai é só o endereço para onde ele já mandava. */
+export async function linksDestino(dados: Registro): Promise<Saida> {
+  const bruto = txt(dados.slug) || txt(dados.d);
+  const slug = txt(dados.slug) ? limparSlug(bruto) : slugDoPayload(bruto);
+  if (!slug) return falha("sem_slug", 400);
+  return ok({ slug, destino: (await destinoNoClique(slug)) || `${painelBase()}/painel/` });
 }
 
 export async function linksEncurtar(dados: Registro): Promise<Saida> {

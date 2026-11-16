@@ -233,7 +233,8 @@ alter table public.greenapi_config
     'Olá, vi que {dias} que está sem acesso, Vamos ativa-lo agora mesmo, efetue o pix na chave: ' || E'\n' || '{pix}',
   add column if not exists recupera_photo_base64 text not null default '',
   add column if not exists recupera_photo_name text not null default '',
-  add column if not exists recupera_send_photo boolean not null default false;
+  add column if not exists recupera_send_photo boolean not null default false,
+  add column if not exists recupera_destino text not null default '';
 
 create table if not exists public.vencimento_avisos (
   username text not null,
@@ -298,6 +299,21 @@ create table if not exists public.painel_lote (
   atualizado_em timestamptz not null default now()
 );
 alter table public.painel_lote add column if not exists aviso text not null default '';
+
+-- Para onde um clique em um link de recuperação leva o cliente. Mora aqui, e não no
+-- encurtador, justamente para dar de trocar depois: o que o cliente tem no WhatsApp é só o
+-- final do link; o endereço é lido na hora do clique, então um link já enviado passa a abrir
+-- o endereço novo. Linha com destino vazio segue o padrão (recupera_destino da config).
+create table if not exists public.painel_links (
+  slug text primary key,
+  destino text not null default '',
+  usuario text not null default '',
+  telefone text not null default '',
+  criado_em timestamptz not null default now(),
+  atualizado_em timestamptz not null default now()
+);
+alter table public.painel_links enable row level security;
+create index if not exists idx_painel_links_atualizado on public.painel_links (atualizado_em desc);
 `;
 
 /** Mesma semente do ensure_schema: um banco zerado ganha a linha 1 e a senha do painel. */

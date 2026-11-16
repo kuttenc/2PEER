@@ -26,6 +26,8 @@
     recupera_foto_removida: "Foto da recuperação removida. O recuperar volta a mandar só texto.",
     recupera_foto_ligado: "Envio da foto LIGADO. Todo clique em recuperar agora sai com essa imagem junto.",
     recupera_foto_desligado: "Envio da foto desligado. O recuperar manda só o texto, mas a foto continua guardada.",
+    link_padrao: "Endereço padrão salvo. Todo link de recuperação sem endereço próprio abre nele agora.",
+    link_destino: "Endereço salvo para este link. Quem clicar já cai no novo, mesmo em mensagem antiga.",
     lote_terminado: "Lote terminado.",
   };
 
@@ -67,6 +69,8 @@
     acao_inexistente: "Esta versão do painel não conhece essa ação.",
     interna: "A função respondeu errado. Abra de novo ou veja os logs dela.",
     sem_resposta: "A função não respondeu. Confira a conexão e tente de novo.",
+    url: "Escreva o endereço inteiro, começando por https:// (ou deixe vazio para seguir o padrão).",
+    sem_slug: "Este link não está na lista. Use recuperar para ele aparecer aqui.",
   };
 
   // ------------------------------------------------------------------ utilidades
@@ -82,6 +86,17 @@
     if (classe) n.className = classe;
     if (conteudo !== undefined && conteudo !== null) n.textContent = conteudo;
     return n;
+  }
+
+  function copiarTexto(valor) {
+    if (!valor) return;
+    if (navigator.clipboard) { navigator.clipboard.writeText(valor); return; }
+    var campo = document.createElement("textarea");
+    campo.value = valor;
+    document.body.appendChild(campo);
+    campo.select();
+    document.execCommand("copy");
+    document.body.removeChild(campo);
   }
 
   function pilula(ativo, ligado, desligado) {
@@ -1417,14 +1432,129 @@
   // ------------------------------------------------------------------ LINKS
 
   CARREGA.links = function () {
+    $("lkPadraoErro").hidden = true;
+    $("lkListaErro").hidden = true;
+    $("lkPadraoEstado").textContent = "";
     chamar("links_ver", {}, 30).then(function (d) {
       if (!d.ok) { recado(d.erro, d.detalhe); return; }
       $("lkBase").textContent = d.base;
       $("lkLogado").textContent = d.logado
         ? "Como você: limite de 30 por minuto."
         : "Como visita: limite de 10 por minuto por IP. Para o link ficar na sua conta, configure URTADOR_TOKEN.";
+      $("lkPadrao").value = texto(d.padrao);
+      desenharLinks(d);
     });
   };
+
+  function desenharLinks(d) {
+    var caixa = limpar($("lkLista"));
+    var itens = d.itens || [];
+    $("lkVazio").hidden = itens.length > 0;
+    itens.forEach(function (l) { caixa.appendChild(blocoLink(d, l)); });
+  }
+
+  /** Um bloco por cliente: o final do link é o que já está no WhatsApp e não muda; o que se
+   *  edita aqui é só o endereço que ele abre, e isso valeria até para mensagem de ontem. */
+  function blocoLink(d, l) {
+    var curto = d.base + "/" + l.slug;
+    var bloco = criar("div", "card");
+    bloco.style.margin = "12px 0 0";
+    bloco.style.padding = "12px";
+
+    var topo = criar("div", "linha");
+    topo.style.justifyContent = "space-between";
+    topo.appendChild(criar("b", "", l.usuario || "(sem nome)"));
+    topo.appendChild(criar("span", "muted", telefoneBr(l.telefone) || "sem telefone"));
+    bloco.appendChild(topo);
+
+    var final = criar("p", "muted", "no WhatsApp do cliente: " + curto);
+    final.style.overflowWrap = "anywhere";
+    final.style.margin = "4px 0 6px";
+    bloco.appendChild(final);
+
+    var campo = document.createElement("input");
+    campo.type = "url";
+    campo.autocomplete = "off";
+    campo.autocapitalize = "off";
+    campo.spellcheck = false;
+    campo.placeholder = "segue o padrão";
+    campo.value = texto(l.destino);
+    campo.style.flex = "1";
+    campo.style.minWidth = "0";
+
+    var linha = criar("div", "linha");
+    linha.style.marginTop = "2px";
+    linha.appendChild(campo);
+    var salvar = criar("button", "verde", "salvar");
+    salvar.type = "button";
+    linha.appendChild(salvar);
+    bloco.appendChild(linha);
+
+    var estado = criar("span", "muted", (l.destino ? "endereço próprio" : "seguindo o padrão") +
+      (l.atualizado_em ? " · " + l.atualizado_em : ""));
+    var rodape = criar("div", "linha");
+    rodape.style.marginTop = "8px";
+    rodape.appendChild(estado);
+    var padrao = criar("button", "segundo", "usar o padrão");
+    padrao.type = "button";
+    rodape.appendChild(padrao);
+    var copiar = criar("button", "segundo", "copiar link");
+    copiar.type = "button";
+    rodape.appendChild(copiar);
+    var abrir = criar("a", "", "abrir");
+    abrir.href = curto;
+    abrir.target = "_blank";
+    abrir.rel = "noopener";
+    rodape.appendChild(abrir);
+    bloco.appendChild(rodape);
+
+    var erro = criar("p", "erro");
+    erro.hidden = true;
+    bloco.appendChild(erro);
+
+    function gravar(valor, botao) {
+      botao.disabled = true;
+      chamar("links_destino_salvar", { slug: l.slug, destino: valor }, 40).then(function (r) {
+        botao.disabled = false;
+        if (!r.ok) {
+          erro.textContent = mensagemDetalhada(r);
+          erro.hidden = false;
+          return;
+        }
+        erro.hidden = true;
+        l.destino = texto(r.destino);
+        campo.value = l.destino;
+        estado.textContent = (l.destino ? "endereço próprio" : "seguindo o padrão") + " · salvo agora";
+        recado("link_destino");
+      });
+    }
+
+    salvar.addEventListener("click", function () { gravar(campo.value.trim(), salvar); });
+    padrao.addEventListener("click", function () { gravar("", padrao); });
+    copiar.addEventListener("click", function () { copiarTexto(curto); });
+    return bloco;
+  }
+
+  $("lkPadraoBotao").addEventListener("click", function () {
+    var botao = $("lkPadraoBotao"), caixa = $("lkPadraoErro");
+    var valor = $("lkPadrao").value.trim();
+    botao.disabled = true;
+    botao.textContent = "salvando…";
+    chamar("links_padrao_salvar", { destino: valor }, 40).then(function (d) {
+      botao.disabled = false;
+      botao.textContent = "Salvar o padrão";
+      if (!d.ok) {
+        caixa.textContent = mensagemDetalhada(d);
+        caixa.hidden = false;
+        return;
+      }
+      caixa.hidden = true;
+      $("lkPadraoEstado").textContent = d.destino
+        ? "abre em: " + d.destino
+        : "abre no painel deste endereço";
+      recado("link_padrao");
+    });
+  });
 
   var ultimoLink = "";
 
@@ -1454,16 +1584,7 @@
       });
   });
 
-  $("lkCopiar").addEventListener("click", function () {
-    if (!ultimoLink) return;
-    if (navigator.clipboard) { navigator.clipboard.writeText(ultimoLink); return; }
-    var campo = document.createElement("textarea");
-    campo.value = ultimoLink;
-    document.body.appendChild(campo);
-    campo.select();
-    document.execCommand("copy");
-    document.body.removeChild(campo);
-  });
+  $("lkCopiar").addEventListener("click", function () { copiarTexto(ultimoLink); });
 
   // ------------------------------------------------------------------ SENHA
 

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Abrindo o seu acesso</title>
+<meta name="robots" content="noindex">
+<style>
+  body { margin:0; min-height:100vh; display:grid; place-items:center; background:#0b1220;
+         color:#e8eefc; font:16px/1.6 system-ui,Segoe UI,Roboto,sans-serif; text-align:center;
+         padding:24px; box-sizing:border-box }
+  p { margin:6px 0 }
+  a { color:#5cc8ff; font-weight:600 }
+  .fim { color:#93a4c4; font-size:14px }
+  .botao { display:inline-block; margin-top:10px; padding:10px 18px; border-radius:10px;
+           background:#1463ff; color:#fff; text-decoration:none; font-weight:600 }
+</style>
+</head>
+<body>
+<div>
+  <p id="frase">Abrindo o seu acesso&hellip;</p>
+  <p id="ajuda" hidden></p>
+</div>
+<script src="../painel/config.js"></script>
+<script>
+// Quem clica num link de recuperação vem aqui: o endereço para onde o cliente vai é lido no
+// banco neste instante, então o que ele mudou na aba Links vale até para mensagem já enviada.
+(function () {
+  var funcao = (window.PEIXEIRO || {}).funcao || "";
+  var q = new URLSearchParams(location.search);
+  var pedido = { action: "links_destino" };
+  if (q.get("l")) pedido.slug = q.get("l");
+  else if (q.get("d")) pedido.d = q.get("d");
+  else { parar("Esse link não trouxe o seu acesso. Abra o link que chegou no WhatsApp de novo."); return; }
+  if (!funcao) { parar("A página de links não está configurada neste endereço."); return; }
+
+  var entregue = false;
+
+  function parar(texto) {
+    if (entregue) return;
+    entregue = true;
+    document.getElementById("frase").textContent = texto;
+    var ajuda = document.getElementById("ajuda");
+    ajuda.hidden = false;
+    ajuda.innerHTML = '<a class="botao" href="">Tentar de novo</a><p class="fim">Se continuar, ' +
+      'mande um "preciso do meu acesso" no WhatsApp que chegou junto do link.</p>';
+    ajuda.querySelector("a").href = location.href;
+  }
+
+  function seguir(destino) {
+    if (entregue) return;
+    var url;
+    try { url = new URL(destino, location.href); } catch { parar("O endereço do seu acesso veio torto."); return; }
+    // Rede contra laço: destino apontando para esta mesma página nunca seria aberto.
+    var aqui = location.pathname.replace(/\/+$/, "");
+    if (url.host === location.host && url.pathname.replace(/\/+$/, "") === aqui) {
+      parar("O destino deste link está rodando em círculo. Ajuste na aba Links do painel.");
+      return;
+    }
+    entregue = true;
+    document.getElementById("frase").textContent = "Abrindo\u2026";
+    location.replace(url.href);
+  }
+
+  fetch(funcao, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(pedido),
+    signal: "AbortSignal" in window && "timeout" in AbortSignal ? AbortSignal.timeout(12_000) : undefined,
+  })
+    .then(function (r) { return r.json().catch(function () { return {}; }); })
+    .then(function (d) {
+      if (d && d.ok && d.destino) seguir(String(d.destino));
+      else if (d && d.erro === "sem_slug") parar("Este link não foi cadastrado nos links do painel.");
+      else parar("O servidor de links não respondeu agora.");
+    })
+    .catch(function () { parar("O servidor de links não respondeu agora."); });
+})();
+</script>
+</body>
+</html>
