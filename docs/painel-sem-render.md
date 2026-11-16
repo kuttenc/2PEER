@@ -75,6 +75,15 @@ do repositório.
 O token da agenda (`aviso_cron`) não é secret: ele mora na coluna `aviso_token` de
 `greenapi_config` e é criado sozinho na primeira abertura do painel.
 
+### Uma conta do MC, dois lugares logando nela
+
+O painel MC segura **um** bearer por conta. Enquanto a cópia e o serviço do Render (ou a agenda
+das 6h) usam o mesmo `MC_USERNAME`, quem logar por último derruba o token do outro. O sintoma
+é o aviso "O site não conseguiu logar no painel MC." no primeiro clique e tudo funcionando no
+seguinte: a função agora joga fora o bearer morto sozinha quando o MC responde 401/403 e loga
+de novo na chamada seguinte. Não é preciso fazer nada, mas se os dois rodarem juntos esse
+aviso vai aparecer de vez em quando — é por isso, não é senha errada.
+
 ## Sessão, senha e travas
 
 - A senha do painel continua `pbkdf2_sha256$200000$...` na mesma linha `greenapi_config`, e a
