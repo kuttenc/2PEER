@@ -82,6 +82,27 @@ export async function infosInstancia(conf: Conf): Promise<Record<string, unknown
   };
 }
 
+/** Aponta o webhook da instância para a nossa função. Os dois canais: o de entrada (o robô de
+ *  conversa) e o de saída (a prova de entrega — é o único jeito de saber se a mensagem chegou). */
+export async function setWebhookUrl(
+  conf: Conf,
+  url: string,
+): Promise<{ ok: boolean; status_code?: number; response?: Record<string, unknown>; error?: string }> {
+  if (!(base(conf) && conf.id_instance && conf.api_token && url)) return { ok: false, error: "sem configuracao" };
+  try {
+    const resp = await fetch(`${base(conf)}/waInstance${conf.id_instance}/setWebhookUrl/${conf.api_token}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ incomingWebhook: true, outgoingWebhook: true, webhookUrl: url }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const corpo = await jsonOuTexto(resp);
+    return { ok: resp.status < 400, status_code: resp.status, response: corpo };
+  } catch (exc) {
+    return { ok: false, error: String(exc).slice(0, 160) };
+  }
+}
+
 function semConfig(conf: Conf, chat: string): ResultadoEnvio | null {
   if (!(base(conf) && conf.id_instance && conf.api_token && chat)) return { ok: false, skipped: true };
   if (chat.length < 10) return { ok: false, skipped: true, error: "telefone_invalido" };
@@ -134,7 +155,14 @@ export async function enviarTexto(conf: Conf, phone: string, message: string): P
   const bloqueado = semConfig(conf, chat);
   if (bloqueado) return bloqueado;
   if (modoTeste()) {
-    return { ok: true, simulado: true, status_code: 200, response: { chatId: `${chat}@c.us`, simulado: true } };
+    // O mesmo desenho da resposta de verdade, para o resto do código (guarda da conversa,
+    // prova de entrega) ser provado no modo teste sem precisar de um envio real.
+    return {
+      ok: true,
+      simulado: true,
+      status_code: 200,
+      response: { chatId: `${chat}@c.us`, idMessage: `simulada-${Date.now()}`, simulado: true },
+    };
   }
   if (!message) return { ok: false, skipped: true, error: "mensagem vazia" };
   // sem parseMode: nas instâncias novas o campo é rejeitado na validação (400)

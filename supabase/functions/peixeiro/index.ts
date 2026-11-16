@@ -7,8 +7,9 @@ import { modoTeste } from "./mcapi.ts";
 import type { Handler, Registro } from "./acoes.ts";
 
 // O clique de um cliente na página r/ é anônimo por natureza: ele não tem, e não pode ter,
-// sessão do painel — e só pede o endereço para onde o link dele já mandava.
-const SEM_SESSAO = new Set(["ping", "entrar", "aviso_cron", "links_destino"]);
+// sessão do painel — e só pede o endereço para onde o link dele já mandava. O webhook do
+// GreenAPI é a mesma coisa: quem bate aqui é o servidor dele, e a chave vai na URL.
+const SEM_SESSAO = new Set(["ping", "entrar", "aviso_cron", "links_destino", "chat_webhook"]);
 
 /** O contrato público do painel: cada rota do Flask vira uma action com nome de rota.
  *  Escrita à mão de propósito — assim dá para conferir, linha por linha, que nenhuma
@@ -67,6 +68,16 @@ const ACAO: Record<string, Handler> = {
   links_padrao_salvar: acoes.linksPadraoSalvar,
   links_destino_salvar: acoes.linksDestinoSalvar,
   links_destino: acoes.linksDestino,
+
+  chat_webhook: acoes.chatWebhook,
+  chat_ver: acoes.chatVer,
+  chat_novo: acoes.chatNovo,
+  chat_salvar: acoes.chatSalvar,
+  chat_apagar: acoes.chatApagar,
+  chat_ligar: acoes.chatLigar,
+  chat_instalar: acoes.chatInstalar,
+  chat_conversas: acoes.chatConversas,
+  chat_treino_exportar: acoes.chatTreino,
 };
 
 function origensPermitidas(): string[] {
@@ -105,6 +116,13 @@ function ipDaRequisicao(req: Request): string {
   return (direta.split(",")[0] || "").trim() || "0.0.0.0";
 }
 
+/** A URL da função em si — é o endereço que o webhook do GreenAPI precisa receber, e o
+ *  navegador não tem como saber o caminho depois do proxy do Supabase. */
+function enderecoProprio(url: URL): string {
+  const direto = (Deno.env.get("PAINEL_FUNCAO_URL") || "").trim();
+  return direto || `${url.origin}${url.pathname}`;
+}
+
 async function corpoDaRequisicao(req: Request, url: URL): Promise<Registro> {
   if (req.method === "GET") return Object.fromEntries(url.searchParams.entries());
   try {
@@ -136,7 +154,11 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const saida = await executada(dados, { ip: ipDaRequisicao(req) });
+    const saida = await executada(dados, {
+      ip: ipDaRequisicao(req),
+      url: enderecoProprio(url),
+      query: Object.fromEntries(url.searchParams.entries()),
+    });
     return json(saida.dados, saida.status, origin);
   } catch (exc) {
     const detalhe = String(exc instanceof Error ? exc.message : exc).slice(0, 220);

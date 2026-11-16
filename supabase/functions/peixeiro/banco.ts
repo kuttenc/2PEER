@@ -37,13 +37,18 @@ export type Conf = {
   /** Pausa sorteada entre as mensagens do lote "Não recuperados", em segundos. */
   recupera_pausa_min: number;
   recupera_pausa_max: number;
+  chat_ativo: boolean;
+  chat_token: string;
+  chat_dias: number;
+  chat_desconhecido: boolean;
 };
 
 const COLUNAS_CONF = `api_url, media_url, id_instance, api_token, instance_name, owner_phone, qr_url,
   photo_base64, photo_name, caption, send_photo, aviso_ativo, aviso_dias, aviso_pix_key, aviso_pix_mascara,
   aviso_titulo, aviso_rodape, aviso_legenda, aviso_token, painel_token, renova_ativo, renova_dias,
   renova_janela_dias, renova_legenda, recupera_legenda, updated_at, recupera_photo_base64,
-  recupera_photo_name, recupera_send_photo, recupera_pausa_min, recupera_pausa_max`;
+  recupera_photo_name, recupera_send_photo, recupera_pausa_min, recupera_pausa_max,
+  chat_ativo, chat_token, chat_dias, chat_desconhecido`;
 
 export async function obterConfig(): Promise<Conf | null> {
   const linha = await consultar1(`select ${COLUNAS_CONF} from public.greenapi_config where id = 1`);
@@ -80,6 +85,10 @@ export async function obterConfig(): Promise<Conf | null> {
     recupera_send_photo: Boolean(linha.recupera_send_photo),
     recupera_pausa_min: Number(linha.recupera_pausa_min ?? 4.5),
     recupera_pausa_max: Number(linha.recupera_pausa_max ?? 105),
+    chat_ativo: Boolean(linha.chat_ativo),
+    chat_token: String(linha.chat_token || ""),
+    chat_dias: Number(linha.chat_dias ?? 90),
+    chat_desconhecido: Boolean(linha.chat_desconhecido),
   };
 }
 

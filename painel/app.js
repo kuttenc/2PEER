@@ -32,6 +32,15 @@
     fila_tirar: "Tirados da fila: nada foi apagado no painel MC e nada do que já saiu mudou.",
     fila_retomou: "O envio voltou do ponto em que parou.",
     fila_montada: "Fila nova montada com a varredura do painel MC. Nada foi enviado.",
+    chat_gravado: "Chat gravado. A próxima mensagem com essas palavras sai com essa resposta.",
+    chat_novo: "Chat novo criado. Preencha as palavras, a resposta e toque em Salvar este chat.",
+    chat_apagado: "Chat apagado. As conversas que ele já respondeu continuam guardadas.",
+    chat_ligado: "Robô ligado. Toda mensagem que chegar recebe a resposta que casar.",
+    chat_desligado: "Robô desligado. As mensagens continuam guardadas, mas nada é respondido sozinho.",
+    chat_dias: "Retenção salva. O que for mais velho que isso sai do banco na próxima mensagem.",
+    chat_ajuste: "Ajuste salvo.",
+    chat_instalado: "Webhook instalado: o GreenAPI agora manda para cá o que chega e o que foi entregue.",
+    chat_exportado: "Arquivo de treino baixado.",
   };
 
   var MSG_ERRO = {
@@ -78,6 +87,11 @@
     sem_resposta: "A função não respondeu. Confira a conexão e tente de novo.",
     url: "Escreva o endereço inteiro, começando por https:// (ou deixe vazio para seguir o padrão).",
     sem_slug: "Este link não está na lista. Use recuperar para ele aparecer aqui.",
+    chat_gatilho: "Faltou escrever as palavras que o cliente manda.",
+    chat_resposta: "Faltou escrever o que responder.",
+    sem_regra: "Este chat não existe mais. Abra a aba de novo.",
+    nada_gravar: "Não havia nada para mudar.",
+    webhook: "A instância recusou o webhook. Confira a chave na Configuração e tente de novo.",
   };
 
   // ------------------------------------------------------------------ utilidades
@@ -149,7 +163,7 @@
     if (!d) return "";
     if (d.length >= 12 && d.substring(0, 2) === "55") d = d.substring(2);
     if (d.length < 7) return d;
-    var meio = d.length === 9 ? 5 : 4;
+    var meio = d.length === 11 ? 5 : 4;
     return "(" + d.substring(0, 2) + ") " + d.substring(2, meio + 2) + "-" + d.substring(meio + 2);
   }
 
@@ -236,7 +250,7 @@
 
   // ------------------------------------------------------------------ rotas
 
-  var TELAS = ["inicio", "config", "avisos", "acessos", "fila", "recuperacao", "clientes", "deletar", "links", "senha", "apagar"];
+  var TELAS = ["inicio", "config", "avisos", "acessos", "fila", "recuperacao", "clientes", "deletar", "links", "chat", "senha", "apagar"];
   var CARREGA = {};
   var TELA_ATUAL = "inicio";
 
@@ -1153,6 +1167,23 @@
     return criar("span", "muted", "na fila");
   }
 
+  /** O GreenAPI responde "aceitei" na hora; a única prova de que chegou ao aparelho do
+   *  cliente é o status que chega pelo webhook. Sem ele, "enviado" quer dizer "saiu daqui". */
+  function frEntrega(item) {
+    if (item.situacao !== "enviado") return "";
+    var bruto = String(item.entrega || "");
+    if (!bruto) return "sem confirmação do WhatsApp";
+    var espaco = bruto.indexOf(" ");
+    var codigo = espaco < 0 ? bruto : bruto.slice(0, espaco);
+    var resto = espaco < 0 ? "" : bruto.slice(espaco);
+    if (codigo === "PENDING") return "no servidor do WhatsApp" + resto;
+    if (codigo === "SERVER_ACK") return "entregue ao WhatsApp" + resto;
+    if (codigo === "DELIVERY_ACK") return "chegou no celular" + resto;
+    if (codigo === "READ") return "lida pelo cliente" + resto;
+    if (codigo === "FAILED") return "o WhatsApp recusou" + resto;
+    return bruto;
+  }
+
   function frEscolhido(item) {
     return frSelecionando && item.situacao === "fila";
   }
@@ -1213,6 +1244,10 @@
       linha.appendChild(frPill(item.situacao));
       linha.appendChild(criar("span", "muted",
         (item.telefone || "sem telefone") + (item.vencido ? " · " + item.vencido : "")));
+      var entrega = frEntrega(item);
+      if (entrega) {
+        linha.appendChild(criar("span", "muted" + (entrega.indexOf("recusou") >= 0 ? " verm" : ""), entrega));
+      }
       if (item.erro) linha.appendChild(criar("span", "muted verm", item.erro));
       caixa.appendChild(linha);
     });
@@ -1901,6 +1936,267 @@
   });
 
   $("lkCopiar").addEventListener("click", function () { copiarTexto(ultimoLink); });
+
+  // ------------------------------------------------------------------ CHAT (robô do WhatsApp)
+
+  var CHAT = { ativo: false, dias: 90, desconhecido: false, regras: [] };
+
+  CARREGA.chat = function () { carregarChat(); };
+
+  function carregarChat() {
+    $("chRegrasEstado").textContent = "carregando…";
+    chamar("chat_ver", {}, 45).then(function (d) {
+      $("chRegrasEstado").textContent = "";
+      if (!d.ok) { recado(d.erro, d.detalhe); return; }
+      CHAT.ativo = Boolean(d.ativo);
+      CHAT.dias = Number(d.dias || 90);
+      CHAT.desconhecido = Boolean(d.desconhecido);
+      CHAT.regras = d.regras || [];
+
+      var pill = $("chPill");
+      pill.textContent = CHAT.ativo ? "ligado" : "desligado";
+      pill.className = "pill" + (CHAT.ativo ? " on" : "");
+      var botao = $("chLigar");
+      botao.textContent = CHAT.ativo ? "Desligar o robô" : "Ligar o robô";
+      botao.className = CHAT.ativo ? "verm" : "verde";
+
+      var inst = d.instancia || {};
+      $("chNumero").textContent = (inst.numero ? telefoneBr(inst.numero) : "(a instância não respondeu)") +
+        (d.telefone_diferente ? " — na Configuração está outro número" : "");
+      var hook = $("chWebhook");
+      hook.textContent = d.webhook_ok ? "sim" : "não";
+      hook.className = "pill" + (d.webhook_ok ? " on" : "");
+      $("chWebhookDetalhe").textContent = d.webhook_ok ? "" :
+        (inst.error ? texto(inst.error).slice(0, 90)
+                   : "hoje o GreenAPI manda para " + (inst.webhook_url || "nada"));
+      $("chUrl").value = d.webhook || "";
+      $("chDesconhecido").checked = CHAT.desconhecido;
+      $("chDias").value = CHAT.dias;
+      $("chRetencao").textContent = CHAT.dias;
+      $("chConversas").textContent = Number(d.mensagens || 0) + " mensagens (" +
+        Number(d.entradas || 0) + " dos clientes)";
+      $("chTreino").textContent = Number(d.treino || 0);
+      $("chSemResposta").textContent = Number(d.sem_resposta || 0);
+      desenharRegras(CHAT.regras);
+      desenharTelefones(d.conversas || []);
+    });
+  }
+
+  function campo(tipo, classe, valor, atributo) {
+    var n = document.createElement(tipo === "textarea" ? "textarea" : "input");
+    if (tipo === "textarea") n.rows = 3; else n.type = tipo;
+    n.value = valor === undefined || valor === null ? "" : String(valor);
+    if (classe) n.className = classe;
+    if (atributo) n.setAttribute("data-" + atributo, "1");
+    n.setAttribute("autocapitalize", "sentences");
+    n.setAttribute("spellcheck", "false");
+    return n;
+  }
+
+  function desenharRegras(regras) {
+    var alvo = limpar($("chRegras"));
+    $("chRegrasVazio").hidden = regras.length > 0;
+    regras.forEach(function (r) {
+      var bloco = criar("div", "card");
+      bloco.style.marginBottom = "10px";
+      // O card novo cai no meio da lista (a ordem dele é a mesma da regra 1), então o foco
+      // depois de "criar outro chat" precisa procurar pelo id, não pelo último filho.
+      bloco.setAttribute("data-chat", String(r.id));
+      bloco.appendChild(criar("p", "rotulo", "chat " + r.id + " · respondeu " + Number(r.contagem || 0) +
+        " vezes" + (r.ativo ? "" : " · parado") + " · atualizado " + r.atualizado_em));
+
+      bloco.appendChild(criar("label", null, "Palavras que o cliente escreve (separe por vírgula)"));
+      bloco.appendChild(campo("text", null, r.gatilho, "gatilho"));
+
+      bloco.appendChild(criar("label", null, "O que responder (use {{nome}}, {{expira}}, {{dias}}, {{pix}}…)"));
+      bloco.appendChild(campo("textarea", null, r.resposta, "resposta"));
+
+      var rodape = criar("div", "linha");
+      var ordem = campo("number", "maq", r.prioridade, "prioridade");
+      ordem.style.width = "70px";
+      ordem.min = "1";
+      ordem.max = "999";
+      rodape.appendChild(criar("span", "muted", "ordem"));
+      rodape.appendChild(ordem);
+
+      var marca = document.createElement("input");
+      marca.type = "checkbox";
+      marca.checked = Boolean(r.ativo);
+      marca.setAttribute("data-ativo", "1");
+      var cb = criar("label", "cb");
+      cb.appendChild(marca);
+      cb.appendChild(criar("span", null, "respondendo"));
+      rodape.appendChild(cb);
+
+      var salvar = criar("button", "prim", "Salvar este chat");
+      salvar.type = "button";
+      salvar.addEventListener("click", function () { salvarRegra(bloco, r.id, salvar); });
+      rodape.appendChild(salvar);
+
+      var apagar = criar("button", "verm", "Apagar");
+      apagar.type = "button";
+      apagar.addEventListener("click", function () { apagarRegra(r.id, apagar); });
+      rodape.appendChild(apagar);
+
+      bloco.appendChild(rodape);
+      alvo.appendChild(bloco);
+    });
+  }
+
+  function estadoRegras(texto) { $("chRegrasEstado").textContent = texto || ""; }
+
+  function salvarRegra(bloco, id, botao) {
+    botao.disabled = true;
+    estadoRegras("gravando…");
+    chamar("chat_salvar", {
+      id: id,
+      gatilho: bloco.querySelector("[data-gatilho]").value,
+      resposta: bloco.querySelector("[data-resposta]").value,
+      prioridade: bloco.querySelector("[data-prioridade]").value,
+      ativo: bloco.querySelector("[data-ativo]").checked,
+    }, 30).then(function (d) {
+      botao.disabled = false;
+      estadoRegras("");
+      if (!d.ok) { recado(d.erro, d.detalhe); return; }
+      CHAT.regras = d.regras || [];
+      desenharRegras(CHAT.regras);
+      estadoRegras(MSG_OK.chat_gravado);
+    });
+  }
+
+  function apagarRegra(id, botao) {
+    if (!window.confirm("Apagar o chat " + id + "? As conversas já guardadas continuam no banco.")) return;
+    botao.disabled = true;
+    chamar("chat_apagar", { id: id }, 30).then(function (d) {
+      botao.disabled = false;
+      if (!d.ok) { recado(d.erro, d.detalhe); return; }
+      CHAT.regras = d.regras || [];
+      desenharRegras(CHAT.regras);
+      estadoRegras(MSG_OK.chat_apagado);
+    });
+  }
+
+  $("chNovo").addEventListener("click", function () {
+    var botao = $("chNovo");
+    botao.disabled = true;
+    estadoRegras("criando…");
+    chamar("chat_novo", {}, 30).then(function (d) {
+      botao.disabled = false;
+      estadoRegras("");
+      if (!d.ok) { recado(d.erro, d.detalhe); return; }
+      CHAT.regras = d.regras || [];
+      desenharRegras(CHAT.regras);
+      var novo = $("chRegras").querySelector('.card[data-chat="' + d.id + '"]');
+      var gatilho = novo && novo.querySelector("[data-gatilho]");
+      if (gatilho) {
+        gatilho.focus();
+        if (gatilho.scrollIntoView) gatilho.scrollIntoView({ block: "center" });
+      }
+      estadoRegras(MSG_OK.chat_novo);
+    });
+  });
+
+  $("chLigar").addEventListener("click", function () {
+    var botao = $("chLigar");
+    botao.disabled = true;
+    chamar("chat_ligar", { ativo: !CHAT.ativo }, 30).then(function (d) {
+      botao.disabled = false;
+      if (!d.ok) { recado(d.erro, d.detalhe); return; }
+      recado(CHAT.ativo ? "chat_desligado" : "chat_ligado");
+      carregarChat();
+    });
+  });
+
+  $("chDesconhecido").addEventListener("change", function (evento) {
+    chamar("chat_ligar", { desconhecido: evento.target.checked }, 30).then(function (d) {
+      if (!d.ok) { evento.target.checked = !CHAT.desconhecido; recado(d.erro, d.detalhe); return; }
+      CHAT.desconhecido = evento.target.checked;
+      recado("chat_ajuste");
+    });
+  });
+
+  $("chDiasSalvar").addEventListener("click", function () {
+    var botao = $("chDiasSalvar");
+    botao.disabled = true;
+    chamar("chat_ligar", { dias: $("chDias").value }, 30).then(function (d) {
+      botao.disabled = false;
+      if (!d.ok) { recado(d.erro, d.detalhe); return; }
+      CHAT.dias = Number($("chDias").value || CHAT.dias);
+      $("chRetencao").textContent = CHAT.dias;
+      recado("chat_dias", "(" + CHAT.dias + " dias)");
+    });
+  });
+
+  $("chCopiarUrl").addEventListener("click", function () { copiarTexto($("chUrl").value); });
+
+  $("chInstalar").addEventListener("click", function () {
+    var botao = $("chInstalar");
+    botao.disabled = true;
+    botao.textContent = "instalando…";
+    chamar("chat_instalar", {}, 45).then(function (d) {
+      botao.disabled = false;
+      botao.textContent = "Instalar na instância agora";
+      if (!d.ok) { recado(d.error || d.erro || "webhook", texto(d.status_code || "")); return; }
+      recado("chat_instalado");
+      carregarChat();
+    });
+  });
+
+  function desenharTelefones(conversas) {
+    var alvo = limpar($("chTelefones"));
+    $("chTelefonesVazio").hidden = conversas.length > 0;
+    conversas.forEach(function (c) {
+      var item = criar("div", "item");
+      var link = criar("a", null, telefoneBr(c.telefone) + (c.usuario ? " · " + c.usuario : ""));
+      link.href = "#chat";
+      item.appendChild(link);
+      item.appendChild(criar("span", "muted", Number(c.quantidade || 0) + " mensagens · " + c.ultima));
+      link.addEventListener("click", function (evento) {
+        evento.preventDefault();
+        abrirConversa(c.telefone, (c.usuario ? " · " + c.usuario : ""));
+      });
+      alvo.appendChild(item);
+    });
+  }
+
+  function abrirConversa(telefone, sufixo) {
+    $("chJanela").hidden = false;
+    $("chJanelaTitulo").textContent = "Conversa de " + telefoneBr(telefone) + (sufixo || "");
+    var alvo = limpar($("chMensagens"));
+    alvo.appendChild(criar("div", "item", "carregando…"));
+    chamar("chat_conversas", { telefone: telefone }, 30).then(function (d) {
+      limpar(alvo);
+      if (!d.ok) { alvo.appendChild(criar("div", "item", mensagemDetalhada(d))); return; }
+      var mensagens = d.mensagens || [];
+      if (!mensagens.length) { alvo.appendChild(criar("div", "item", "nada nesta conversa")); return; }
+      mensagens.forEach(function (m) {
+        var item = criar("div", "item");
+        item.appendChild(criar("b", "rotulo", m.direcao === "saida" ? "robô · " : "cliente · "));
+        item.appendChild(criar("span", null, m.texto));
+        item.appendChild(criar("span", "muted", m.criado_em));
+        alvo.appendChild(item);
+      });
+    });
+  }
+
+  $("chFecharJanela").addEventListener("click", function () { $("chJanela").hidden = true; });
+
+  $("chExportar").addEventListener("click", function () {
+    var botao = $("chExportar");
+    botao.disabled = true;
+    chamar("chat_treino_exportar", {}, 60).then(function (d) {
+      botao.disabled = false;
+      if (!d.ok) { recado(d.erro, d.detalhe); return; }
+      var blob = new Blob([d.csv], { type: "text/csv;charset=utf-8" });
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = d.nome || "treino-ia.csv";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      recado("chat_exportado", "(" + Number(d.n || 0) + " pares)");
+    });
+  });
 
   // ------------------------------------------------------------------ SENHA
 

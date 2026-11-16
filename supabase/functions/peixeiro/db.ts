@@ -316,6 +316,91 @@ create table if not exists public.painel_links (
 );
 alter table public.painel_links enable row level security;
 create index if not exists idx_painel_links_atualizado on public.painel_links (atualizado_em desc);
+
+-- -------------------------------------------------------------------- o robô de conversa
+-- Uma regra é um "chat": as palavras que o cliente escreve (gatilho, separado por vírgula)
+-- e o que o robô responde. Os {{...}} da resposta são trocados pelos dados do cliente na hora.
+create table if not exists public.chat_regras (
+  id bigserial primary key,
+  gatilho text not null default '',
+  resposta text not null default '',
+  ativo boolean not null default true,
+  prioridade integer not null default 10,
+  contagem bigint not null default 0,
+  criado_em timestamptz not null default now(),
+  atualizado_em timestamptz not null default now()
+);
+alter table public.chat_regras enable row level security;
+
+alter table public.greenapi_config
+  add column if not exists chat_ativo boolean not null default false,
+  add column if not exists chat_token text not null default '',
+  add column if not exists chat_dias numeric not null default 90,
+  add column if not exists chat_desconhecido boolean not null default false;
+
+-- A conversa em si. expira_em é sempre criado_em + os dias da configuração (90 por padrão):
+-- o chat_webhook apaga o que venceu a cada mensagem, então a tabela não cresce sozinha.
+-- chave é o id do GreenAPI: a mesma mensagem entregue duas vezes não vira duas respostas.
+create table if not exists public.chat_mensagens (
+  id bigserial primary key,
+  chave text unique,
+  telefone text not null default '',
+  usuario text,
+  direcao text not null default 'entrada',
+  texto text not null default '',
+  regra_id bigint,
+  criado_em timestamptz not null default now(),
+  expira_em timestamptz not null default now() + interval '90 days'
+);
+alter table public.chat_mensagens enable row level security;
+create index if not exists idx_chat_mensagens_telefone on public.chat_mensagens (telefone, criado_em desc);
+create index if not exists idx_chat_mensagens_expira on public.chat_mensagens (expira_em);
+
+-- O par pergunta → resposta, guardado sem prazo. É a base de treino da IA que vem depois:
+-- resposta nula é justamente o que o cliente perguntou e nenhuma regra soube responder.
+create table if not exists public.chat_treino (
+  id bigserial primary key,
+  entrada text not null default '',
+  resposta text,
+  telefone text,
+  usuario text,
+  regra_id bigint,
+  cadastrado boolean not null default false,
+  criado_em timestamptz not null default now()
+);
+alter table public.chat_treino enable row level security;
+create index if not exists idx_chat_treino_criado on public.chat_treino (criado_em desc);
+
+insert into public.chat_regras (gatilho, resposta, prioridade)
+  select v.gatilho, v.resposta, v.prioridade
+    from (values
+      ('vence, vencimento, expira, vencia, data de vencimento',
+       'Oi {{nome}}! Seu acesso {{usuario}} vence em {{expira}} ({{dias}}). ' || E'\n' ||
+       'Se já pagou o PIX, me manda o comprovante aqui que eu renovo na hora.', 10),
+      ('pix, chave, paga, pagamento, boleto, comprovante',
+       'A chave PIX é {{pix}}.' || E'\n' ||
+       'Depois de pagar me manda o comprovante, {{nome}}, que a renovação é imediata.', 20),
+      ('renovar, renova, quero renovar, renovar acesso, continuar',
+       'Claro, {{nome}}! Seu acesso {{usuario}} vence em {{expira}} ({{dias}}).' || E'\n' ||
+       'Manda o comprovante do PIX que eu renovo aqui mesmo.', 30),
+      ('obrigado, valeu, vlw, obrigado pela ajuda',
+       'Por nada, {{nome}}! Qualquer coisa é só chamar por aqui.', 90)
+    ) as v(gatilho, resposta, prioridade)
+  where not exists (select 1 from public.chat_regras);
+
+-- A prova de entrega. O "200 + idMessage" do GreenAPI só significa que ele aceitou o pedido:
+-- se a mensagem chegou (ou se o WhatsApp recusou o número) só aparece no webhook de status.
+-- Sem o webhook instalado o painel continua dizendo "enviado" sem saber se chegou.
+create table if not exists public.whatsapp_status (
+  id_message text primary key,
+  telefone text not null default '',
+  status text not null default '',
+  detalhe text not null default '',
+  criado_em timestamptz not null default now(),
+  atualizado_em timestamptz not null default now()
+);
+alter table public.whatsapp_status enable row level security;
+create index if not exists idx_whatsapp_status_telefone on public.whatsapp_status (telefone, atualizado_em desc);
 `;
 
 /** Mesma semente do ensure_schema: um banco zerado ganha a linha 1 e a senha do painel. */

@@ -59,6 +59,11 @@ import {
   salvarPadrao,
 } from "./destinos.ts";
 import {
+  ajustarChat, apagarRegra, exportarTreino, instalarWebhook, listarRegras, mensagensDe,
+  novaRegra, receberWebhook, resumoChat, salvarRegra, telefonesConversados, tokenChat,
+  entregasPorUsuario,
+} from "./chat.ts";
+import {
   DIAS_SESSAO,
   conferida,
   esquecerHash,
@@ -92,6 +97,7 @@ import {
   formatarTelefone,
   legendaAviso,
   legendaRecuperar,
+  normalizarWhatsapp,
   parseExpDate,
   semAcento,
   textoDiasRestantes,
@@ -99,7 +105,7 @@ import {
 } from "./texto.ts";
 
 export type Registro = Record<string, unknown>;
-export type Contexto = { ip: string };
+export type Contexto = { ip: string; url: string; query: Record<string, string> };
 export type Saida = { status: number; dados: Registro };
 export type Handler = (dados: Registro, ctx: Contexto) => Saida | Promise<Saida>;
 
@@ -256,8 +262,27 @@ export async function configSalvar(dados: Registro): Promise<Saida> {
   if (!resultado.ok) return falha("gravado", 500);
   const resposta: Registro = { campos: resultado.campos, send_photo: campos.send_photo };
   if (resultado.ajuste) resposta.ajuste = String(resultado.ajuste).slice(0, 180);
+  const numero = await sincronizarDono();
+  if (numero) resposta.numero_instancia = numero;
   if (avisos.length) resposta.aviso = avisos[avisos.length - 1];
   return ok(resposta);
+}
+
+/** Quem manda no WhatsApp é a instância, não o que foi digitado. Depois de gravar a chave,
+ *  perguntar o número real para ela e consertar o telefone/nome da instância quando estiverem
+ *  fora — é assim que o painel para de mostrar um número que não é o que respondeu ao cliente. */
+async function sincronizarDono(): Promise<string> {
+  const conf = await obterConfig();
+  if (!(conf?.api_url && conf?.id_instance && conf?.api_token)) return "";
+  const infos = await infosInstancia(conf);
+  const numero = String(infos.numero || "");
+  if (!infos.ok || !numero) return "";
+  const campos: Registro = {};
+  if (normalizarWhatsapp(conf.owner_phone) !== numero) campos.owner_phone = numero;
+  const nome = `Instance ${conf.id_instance}`;
+  if (/^Instance \d+$/.test(conf.instance_name) && conf.instance_name !== nome) campos.instance_name = nome;
+  if (Object.keys(campos).length) await salvarConfig(campos);
+  return numero;
 }
 
 // ------------------------------------------------------------------ avisos de vencimento
@@ -886,6 +911,7 @@ export async function loteFila(dados: Registro): Promise<Saida> {
   }
   const { plano, estado } = vista;
   const resultados = estado.resultados || {};
+  const entregas = await entregasPorUsuario(plano.map((item) => txt(item.username) || txt(item.usuario)));
   let naFila = 0, fora = 0;
   const itens = plano.map((item, i) => {
     const marca = resultados[String(i)];
@@ -893,13 +919,15 @@ export async function loteFila(dados: Registro): Promise<Saida> {
     const enviando = Boolean(estado.rodando) && estado.enviando === i;
     if (saiu) fora += 1;
     else if (!marca) naFila += 1;
+    const nome = txt(item.username) || txt(item.usuario);
     return {
       i,
-      usuario: txt(item.username) || txt(item.usuario),
+      usuario: nome,
       telefone: formatarTelefone(txt(item.telefone)),
       vencido: textoDoItem(item) || txt(item.intervalo),
       situacao: marca ? (marca.ok ? "enviado" : "falhou") : saiu ? "fora" : enviando ? "enviando" : "fila",
       erro: marca && !marca.ok ? marca.erro : "",
+      entrega: entregas[nome] || "",
     };
   });
   return ok({
@@ -1040,4 +1068,105 @@ export async function linksEncurtar(dados: Registro): Promise<Saida> {
 export async function linksResolver(dados: Registro): Promise<Saida> {
   const resultado = await resolver(txt(dados.slug));
   return { status: resultado.ok ? 200 : 400, dados: { ...resultado } };
+}
+
+// ------------------------------------------------------------------ chat (o robô do WhatsApp)
+
+/** O webhook do GreenAPI entra aqui sem sessão. A chave vai na URL, e não no corpo, porque o
+ *  corpo é a mensagem do cliente — não há onde encaixar o nosso token ali. */
+export async function chatWebhook(dados: Registro, ctx: Contexto): Promise<Saida> {
+  const saida = await receberWebhook(dados, ctx.query.token || txt(dados.token));
+  return { status: saida.status, dados: saida.dados };
+}
+
+export async function chatVer(dados: Registro, ctx: Contexto): Promise<Saida> {
+  const resumo = await resumoChat(ctx.url);
+  const conf = await obterConfig();
+  const conversas = await telefonesConversados(Number(resumo.dias || 90));
+  const armada = Boolean(conf?.api_url && conf?.id_instance && conf?.api_token);
+  const infos = armada ? await infosInstancia(conf as Conf) : { ok: false, error: "sem configuracao" };
+  const numero = String(infos.numero || "");
+  const webhook = String(resumo.webhook || "");
+  return ok({
+    ...resumo,
+    conversas,
+    instancia: {
+      ok: Boolean(infos.ok),
+      numero,
+      webhook_url: String(infos.webhook_url || ""),
+      incoming_webhook: String(infos.incoming_webhook || ""),
+      error: String(infos.error || ""),
+    },
+    webhook_ok: Boolean(infos.ok && String(infos.webhook_url || "") === webhook),
+    telefone_diferente: Boolean(numero && conf && normalizarWhatsapp(conf.owner_phone) !== numero),
+  });
+}
+
+/** Grava uma regra. O "criar outro chat" faz primeiro o chat_novo, que devolve o id vazio na
+ *  lista para ele preencher gatilho e resposta. */
+export async function chatSalvar(dados: Registro): Promise<Saida> {
+  const id = Number(txt(dados.id) || 0);
+  const gatilho = txt(dados.gatilho);
+  const resposta = txt(dados.resposta);
+  const brutoPrioridade = txt(dados.prioridade) || "10";
+  const prioridade = Number(brutoPrioridade.replace(",", "."));
+  if (!id) return falha("sem_regra");
+  if (!gatilho) return falha("chat_gatilho");
+  if (!resposta) return falha("chat_resposta");
+  if (!Number.isFinite(prioridade)) return falha("numero");
+  const ativo = "ativo" in dados ? booleano(dados.ativo) : true;
+  if (!(await salvarRegra(id, { gatilho, resposta, prioridade, ativo }))) return falha("banco", 500);
+  return ok({ regras: await listarRegras() });
+}
+
+export async function chatNovo(dados: Registro): Promise<Saida> {
+  const prioridade = Number((txt(dados.prioridade) || "10").replace(",", "."));
+  const criado = await novaRegra({
+    gatilho: txt(dados.gatilho),
+    resposta: txt(dados.resposta),
+    prioridade: Number.isFinite(prioridade) ? prioridade : 10,
+  });
+  if (!criado.ok) return falha("banco", 500);
+  return ok({ id: criado.id, regras: await listarRegras() });
+}
+
+export async function chatApagar(dados: Registro): Promise<Saida> {
+  const id = Number(txt(dados.id) || 0);
+  if (!id) return falha("sem_regra");
+  if (!(await apagarRegra(id))) return falha("sem_regra");
+  return ok({ regras: await listarRegras() });
+}
+
+/** Liga/desliga o robô, muda a retenção das conversas e decide se responde quem não é cliente. */
+export async function chatLigar(dados: Registro, ctx: Contexto): Promise<Saida> {
+  const campos: { ativo?: boolean; dias?: number; desconhecido?: boolean } = {};
+  if ("ativo" in dados) campos.ativo = booleano(dados.ativo);
+  if ("desconhecido" in dados) campos.desconhecido = booleano(dados.desconhecido);
+  if (txt(dados.dias)) {
+    const dias = Number(txt(dados.dias).replace(",", "."));
+    if (!Number.isFinite(dias)) return falha("numero");
+    campos.dias = dias;
+  }
+  if (!Object.keys(campos).length) return falha("nada_gravar");
+  const gravado = await ajustarChat(campos);
+  if (!gravado.ok) return falha("banco", 500);
+  return ok(await resumoChat(ctx.url));
+}
+
+/** Aponta o webhook da instância para esta função: é o que faz o robô receber e o painel
+ *  passar a ter prova de entrega em vez de confiar no "aceito" do GreenAPI. */
+export async function chatInstalar(dados: Registro, ctx: Contexto): Promise<Saida> {
+  const resultado = await instalarWebhook(ctx.url);
+  return { status: resultado.ok ? 200 : 502, dados: { ...resultado } };
+}
+
+export async function chatConversas(dados: Registro): Promise<Saida> {
+  const telefone = normalizarWhatsapp(txt(dados.telefone));
+  if (telefone.length < 10) return falha("telefone_invalido");
+  return ok({ telefone, mensagens: await mensagensDe(telefone) });
+}
+
+export async function chatTreino(): Promise<Saida> {
+  const arquivo = await exportarTreino();
+  return ok({ csv: arquivo.csv, nome: arquivo.nome, n: arquivo.n });
 }

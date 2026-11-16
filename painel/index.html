@@ -37,6 +37,7 @@
       <a href="#clientes" data-tela="clientes">Clientes</a>
       <a href="#deletar" data-tela="deletar">Deletar</a>
       <a href="#links" data-tela="links">Links</a>
+      <a href="#chat" data-tela="chat">Chat</a>
       <a href="#senha" data-tela="senha">Senha</a>
       <a href="#sair" data-tela="sair">Sair</a>
     </nav>
@@ -509,6 +510,90 @@
           links: ele aponta direto para o endere&ccedil;o que voc&ecirc; digitou, e depois de criado n&atilde;o
           d&aacute; para alterar &mdash; para poder mudar de id&eacute;ia, use o <b>recuperar</b> ou apague
           e encurte de novo.</p>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- CHAT -->
+    <section data-pagina="chat" hidden>
+      <div class="card">
+        <h2>Rob&ocirc; do WhatsApp</h2>
+        <p class="muted" style="margin-top:0">Toda mensagem que chega no seu WhatsApp passa por aqui.
+          Ligado, o painel responde sozinho a regra que casar com o que o cliente escreveu;
+          desligado, s&oacute; guarda a conversa.</p>
+        <table>
+          <tr><th>Rob&ocirc;</th><td><span class="pill" id="chPill">…</span>
+            <button type="button" class="verde" id="chLigar">Ligar o rob&ocirc;</button></td></tr>
+          <tr><th>N&uacute;mero que fala</th><td id="chNumero"></td></tr>
+          <tr><th>Webhook instalado</th><td><span class="pill" id="chWebhook">…</span>
+            <span class="muted" id="chWebhookDetalhe"></span></td></tr>
+          <tr><th>Conversas guardadas</th><td id="chConversas"></td></tr>
+        </table>
+
+        <label for="chUrl">Endere&ccedil;o do webhook (&eacute; o que vai no campo <code>webhookUrl</code> do GreenAPI)</label>
+        <input type="text" id="chUrl" readonly autocapitalize="off" autocorrect="off" spellcheck="false">
+        <div class="linha" style="margin-top:10px">
+          <button type="button" id="chCopiarUrl">Copiar o endere&ccedil;o</button>
+          <button type="button" class="verde" id="chInstalar">Instalar na inst&acirc;ncia agora</button>
+        </div>
+        <p class="muted">O mesmo endere&ccedil;o recebe o <b>status de entrega</b>. Sem isso o painel
+          sabe que o GreenAPI <i>aceitou</i> a mensagem &mdash; n&atilde;o que ela chegou no celular do cliente.</p>
+
+        <label class="cb"><input type="checkbox" id="chDesconhecido"> responder tamb&eacute;m para quem
+          <b>n&atilde;o</b> est&aacute; na base de clientes</label>
+        <div class="linha">
+          <div style="flex:1;min-width:150px">
+            <label for="chDias">Guardar a conversa por (dias)</label>
+            <input type="number" id="chDias" min="1" max="365" step="1">
+          </div>
+          <button type="button" id="chDiasSalvar" style="margin-top:22px">Salvar</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Respostas autom&aacute;ticas</h2>
+        <p class="muted" style="margin-top:0">Em cada chat: as palavras que o cliente escreve
+          (separadas por v&iacute;rgula) e o que responder. O que estiver na frase do cliente vale,
+          e a de menor n&uacute;mero ganha quando duas casam.</p>
+        <p class="muted">Campos que viram dado do cliente na hora:
+          <code>{{nome}}</code> <code>{{usuario}}</code> <code>{{telefone}}</code>
+          <code>{{expira}}</code> <code>{{dias}}</code> <code>{{status}}</code>
+          <code>{{pix}}</code> <code>{{data}}</code> <code>{{hora}}</code>.</p>
+        <div id="chRegras"></div>
+        <p class="muted" id="chRegrasVazio" hidden>Nenhum chat criado ainda. Toque em
+          <b>Criar outro chat</b> para come&ccedil;ar.</p>
+        <div class="linha" style="margin-top:12px">
+          <button type="button" class="verde" id="chNovo">Criar outro chat</button>
+          <span class="muted" id="chRegrasEstado"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Conversas dos &uacute;ltimos <span id="chRetencao">90</span> dias</h2>
+        <p class="muted" style="margin-top:0">Um bloco por telefone. Toca em um cliente para ver a
+          conversa inteira; o que vencer sai do banco sozinho, sem acumular.</p>
+        <div class="lista" id="chTelefones"></div>
+        <p class="muted" id="chTelefonesVazio" hidden>Nenhuma conversa recebida ainda. Enquanto o
+          webhook n&atilde;o estiver instalado, nada chega aqui.</p>
+        <div id="chJanela" hidden>
+          <p class="rotulo" id="chJanelaTitulo"></p>
+          <div class="lista" id="chMensagens"></div>
+          <button type="button" id="chFecharJanela">Fechar a conversa</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Dados para a intelig&ecirc;ncia artificial</h2>
+        <p class="muted" style="margin-top:0">Cada pergunta que o rob&ocirc; respondeu &mdash; e cada
+          pergunta que ele <b>n&atilde;o</b> soube responder &mdash; fica guardada sem prazo, em par
+          pergunta/resposta. &Eacute; esse arquivo que treina a IA depois.</p>
+        <div class="numeros">
+          <div><span class="rotulo">pares guardados</span><b id="chTreino">?</b></div>
+          <div><span class="rotulo">sem resposta</span><b id="chSemResposta">?</b></div>
+        </div>
+        <div class="linha">
+          <button type="button" id="chExportar">Baixar o CSV de treino</button>
+          <span class="muted">o que venceu s&atilde;o as conversas; o arquivo de treino fica todo.</span>
+        </div>
       </div>
     </section>
 

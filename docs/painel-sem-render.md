@@ -221,6 +221,43 @@ ela: quem começa o envio continua sendo o "Não recuperados → Revisar e envia
   `lote_rodando` antes de varrer o MC, para o envio não ser jogado para outra lista no meio.
 - Acabou tudo? `lote_retomar` responde `fila_no_fim` em vez de mandar de novo.
 
+## A aba "Chat" (o robô do WhatsApp + a prova de entrega)
+
+A aba `#chat` é o único lugar que fala com o webhook do GreenAPI. Três tabelas novas, criadas
+pelo `ESQUEMA` do `db.ts` na primeira conexão:
+
+- `chat_regras` — gatilho (palavras separadas por vírgula), resposta, `prioridade` (menor ganha),
+  `ativo`, `contagem`. Vieram quatro regras de fábrica (vence / pix / renovar / obrigado); o botão
+  "Criar outro chat" (`chat_novo`) cria uma em branco com ordem 10.
+- `chat_mensagens` — a conversa, com `expira_em = criado_em + chat_dias` (90). Cada mensagem nova
+  que chega apaga o que venceu, então a tabela não cresce sozinha. `chave` é o id do GreenAPI: a
+  mesma mensagem entregue duas vezes não vira duas respostas.
+- `chat_treino` — o par pergunta/resposta, sem prazo. É o arquivo que treina uma IA depois; o botão
+  "Baixar o CSV de treino" (`chat_treino` action) devolve `Pergunta;Resposta;Regra;Cliente;Cadastrado;Quando`.
+
+Como a resposta é escolhida: só quando `chat_ativo` está ligado, o texto do cliente (sem acento,
+minúsculo) é comparado com cada gatilho; a regra que casar com a menor `prioridade` responde. As
+variáveis `{{nome}} {{usuario}} {{telefone}} {{expira}} {{dias}} {{status}} {{pix}} {{data}} {{hora}}`
+são preenchidas na hora com o espelho do MC daquele telefone. Quem não está na base de clientes só
+recebe resposta com a caixa "responder também para quem não está na base" marcada — mas a conversa
+e o par de treino são guardados do mesmo jeito.
+
+O webhook: `chat_ver` devolve `webhook` = `<endereço da função>?action=chat_webhook&token=<chat_token>`.
+A chave vai na URL porque o corpo é a mensagem do cliente, e `chat_webhook` está em `SEM_SESSAO`.
+Chave errada dá 401. Copie e cole no campo `webhookUrl` do GreenAPI, **ou** aperte
+"Instalar na instância agora" (`chat_instalar`), que chama `setWebhookUrl` na instância armada na
+aba Configuração. ⚠️ Esse botão muda o tráfego real da instância: enquanto a função publicada for a
+da cópia, toda mensagem do WhatsApp cai no banco de teste. Na produção, só depois de publicar a
+função de produção.
+
+O mesmo endereço recebe o **status de entrega** (`type: messageStatus`, `eventType: 8`), que vai para
+`whatsapp_status` (`id_message`, `status`, telefone, `arrivato`). É a única prova de que a mensagem
+chegou no aparelho: o `POST` do GreenAPI responde 200 com `idMessage` quando **aceitou**, e o
+`getMessageState` / `getChatHistory` desta instância respondem 404. Por isso a fila da aba
+"Não recuperados" mostra agora o `entrega` de cada linha (via `lote_fila`): *sem confirmação do
+WhatsApp* (webhook não instalado), *no servidor*, *entregue ao WhatsApp*, *chegou no celular*,
+*lida*, *o WhatsApp recusou*.
+
 ## Provar sem mexer em cliente de verdade
 
 - Deixe `PEIXEIRO_MODO_TESTE=1`. Assim nada sai no WhatsApp e nada é apagado no MC, mas todas
@@ -243,6 +280,14 @@ ela: quem começa o envio continua sendo o "Não recuperados → Revisar e envia
   sem nenhum WhatsApp sair. **Nunca rode `lote_contagem` por fora com a fila de mentira montada**:
   ela é substituída pela varredura dos clientes de verdade (o travamento novo só impede isso
   enquanto o lote está no ar).
+
+- O chat foi provado com `tools/_prova_chat.py`: 44 provas batendo no webhook com o payload no
+  formato real do GreenAPI (mensagem de cliente, status de entrega, duplicado, grupo, mídia sem
+  texto, botão respondido), mais ligar/desligar o robô, criar/editar/apagar regra, retenção e o
+  CSV. Rode com a função local no ar (`deno run --allow-all --env-file=.env index.ts` com
+  `PEIXEIRO_MODO_TESTE=1`): `python tools/_prova_chat.py` e, se precisar só limpar,
+  `python tools/_prova_chat.py limpar`. Ela imprime tudo com os números mascarados e devolve o
+  banco para `(0 mensagens, 0 treino, 0 status, 4 regras, robô desligado)`.
 
 ## Quando for para a produção
 
