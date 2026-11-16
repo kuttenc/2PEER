@@ -2,7 +2,7 @@
 // registros de "já avisei". É o que o automate_mcapi.py fazia com psycopg, agora em SQL puro.
 import { aleatorio, confereSenha, consultar, consultar1, hashSenha, igual } from "./db.ts";
 import { formatarBrasilia, isoUtc, normalizarWhatsapp, parseExpDate, telefoneValido, textoVencido } from "./texto.ts";
-import { LINES_URL, normalizarBearer, tokenDoPainel } from "./mcapi.ts";
+import { getLinhas, tokenDoPainel } from "./mcapi.ts";
 
 export type Conf = {
   api_url: string;
@@ -291,10 +291,15 @@ export async function espelharLinhas(itens: Record<string, unknown>[], telefones
 export async function sincronizarLinhas(clientIp: string, maxPaginas = 5) {
   const info = await tokenDoPainel(clientIp);
   if (!info.ok) return { ok: false, error: "login no painel mc falhou", login_status: info.login_status };
-  const headers = { accept: "application/json", authorization: `Bearer ${normalizarBearer(info.token || "")}` };
+  const bearer = info.token || "";
   const brutos: Record<string, unknown>[] = [];
   for (let pagina = 1; pagina <= maxPaginas; pagina++) {
-    const resp = await fetch(`${LINES_URL}?page=${pagina}&quantityPerPage=200&orderBy=createdAt.DESC`, { headers });
+    const params = new URLSearchParams({
+      page: String(pagina),
+      quantityPerPage: "200",
+      orderBy: "createdAt.DESC",
+    });
+    const resp = await getLinhas(bearer, params);
     if (resp.status >= 400) return { ok: false, error: `MC devolveu ${resp.status}`, lines_status: resp.status };
     const body = (await resp.json()) as Record<string, unknown>;
     const itens = (body.items || []) as Record<string, unknown>[];

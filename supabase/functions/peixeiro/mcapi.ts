@@ -56,8 +56,10 @@ export async function limparCacheToken(): Promise<void> {
   await consultar("delete from public.mcapi_token_cache where id = 1");
 }
 
-/** GET /lines pelas páginas. O 401/403 limpa o cache para a próxima chamada logar de novo. */
-async function getLinhas(bearer: string, params: URLSearchParams): Promise<Response> {
+/** GET /lines pelas páginas. O 401/403 limpa o cache para a próxima chamada logar de novo.
+ *  Todo leitor de linha passa por aqui: o MC recusa pedido que não mande os cabeçalhos de
+ *  navegador (o `origin`/`referer`/`user-agent`), então um fetch montado à mão dá 401. */
+export async function getLinhas(bearer: string, params: URLSearchParams): Promise<Response> {
   const resp = await fetch(`${LINES_URL}?${params}`, { headers: cabecalhoAuth(bearer) });
   if (resp.status === 401 || resp.status === 403) await limparCacheToken();
   return resp;
