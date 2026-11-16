@@ -29,6 +29,9 @@
     link_padrao: "Endereço padrão salvo. Todo link de recuperação sem endereço próprio abre nele agora.",
     link_destino: "Endereço salvo para este link. Quem clicar já cai no novo, mesmo em mensagem antiga.",
     lote_terminado: "Lote terminado.",
+    fila_tirar: "Tirados da fila: nada foi apagado no painel MC e nada do que já saiu mudou.",
+    fila_retomou: "O envio voltou do ponto em que parou.",
+    fila_montada: "Fila nova montada com a varredura do painel MC. Nada foi enviado.",
   };
 
   var MSG_ERRO = {
@@ -61,7 +64,11 @@
     sem_sobra: "Ninguém sobrou para enviar. Desmarque alguém ou cadastre o telefone.",
     sem_sobra_apagar: "Ninguém sobrou para apagar. Desmarque alguém ou ligue o item de quem está ativo.",
     conferencia_venceu: "A conferência venceu. Abra o modal de novo para contar outra vez.",
-    lote_rodando: "Já existe um lote rodando. Abra o progresso para ver.",
+    lote_rodando: "Já existe um lote rodando. Pare o envio antes de mexer na fila.",
+    fila_no_fim: "A fila já terminou: não sobrou ninguém para retomar.",
+    plano_vazio: "Ainda não há fila montada. Abra o Não recuperados na aba Acessos e revise a contagem.",
+    sem_marca: "Ninguém marcado: toque Selecionar e marque as linhas da fila.",
+    muita_marca: "Marque até 2000 linhas por vez.",
     prefixo_ruim: "Prefixo demais: até 24 letras, sem espaço.",
     intervalo_obrigatorio: "Preencha o de e o até com números.",
     intervalo_invertido: "O \u201caté\u201d precisa ser maior que o \u201cde\u201d.",
@@ -229,8 +236,9 @@
 
   // ------------------------------------------------------------------ rotas
 
-  var TELAS = ["inicio", "config", "avisos", "acessos", "recuperacao", "clientes", "deletar", "links", "senha", "apagar"];
+  var TELAS = ["inicio", "config", "avisos", "acessos", "fila", "recuperacao", "clientes", "deletar", "links", "senha", "apagar"];
   var CARREGA = {};
+  var TELA_ATUAL = "inicio";
 
   function irPara(hash) {
     var partes = (hash || "#inicio").replace(/^#/, "").split("?");
@@ -243,6 +251,7 @@
     });
     if (tela === "sair") return sair();
     if (TELAS.indexOf(tela) < 0) tela = "inicio";
+    TELA_ATUAL = tela;
 
     document.body.classList.remove("mesclar", "lote");
     limpar($("recado"));
@@ -925,6 +934,8 @@
         }
         var estado = d.estado || {};
         mostrarEstado(tipo, estado);
+        // A aba da fila é o mesmo lote visto por dentro: atualiza junto, sem esperar o relógio.
+        if (tipo === "recuperar" && TELA_ATUAL === "fila") carregarFila(false);
         if (d.terminado || !estado.rodando) {
           terminarLote(tipo, estado);
           return;
@@ -936,29 +947,37 @@
   }
 
   /** A função devolve quantos segundos esperar antes do próximo item (0 = sem espera,
-   *  como no lote de apagar). A contagem na tela é para ele saber que o lote está vivo. */
+   *  como no lote de apagar). A contagem na tela é para ele saber que o lote está vivo,
+   *  e aparece no modal e na aba da fila ao mesmo tempo. */
   function esperar(ms) {
     pararTemporizador();
-    var alvo = $("lpPausa");
-    if (ms <= 1000 || !alvo) {
+    if (ms <= 1000) {
       lote.temporizador = setTimeout(function () { lote.temporizador = null; lote.passo(); }, ms);
       return;
     }
     var restante = Math.ceil(ms / 1000);
-    alvo.hidden = false;
-    alvo.textContent = "próxima mensagem em " + restante + "s";
+    escreverPausa(restante);
     lote.temporizador = setInterval(function () {
       restante -= 1;
-      if (restante > 0) { alvo.textContent = "próxima mensagem em " + restante + "s"; return; }
+      if (restante > 0) { escreverPausa(restante); return; }
       pararTemporizador();
       if (lote.rodando) lote.passo();
     }, 1000);
   }
 
+  function escreverPausa(segundos) {
+    var valor = segundos ? "próxima mensagem em " + segundos + "s" : "";
+    ["lpPausa", "frPausa"].forEach(function (id) {
+      var alvo = $(id);
+      if (!alvo) return;
+      alvo.hidden = !valor;
+      alvo.textContent = valor;
+    });
+  }
+
   function pararTemporizador() {
     if (lote.temporizador) { clearTimeout(lote.temporizador); clearInterval(lote.temporizador); lote.temporizador = null; }
-    var alvo = $("lpPausa");
-    if (alvo) { alvo.hidden = true; alvo.textContent = ""; }
+    escreverPausa(0);
   }
 
   function mostrarEstado(tipo, estado) {
@@ -1017,7 +1036,7 @@
   function pararLote(tipo) {
     var botao = $(tipo === "apagar" ? "apParar" : "lpParar");
     if (botao) { botao.disabled = true; botao.textContent = "parando…"; }
-    chamar("lote_parar", { tipo: tipo }, 30).then(function () {
+    return chamar("lote_parar", { tipo: tipo }, 30).then(function () {
       pararTemporizador();
       lote.rodando = false;
       if (botao) { botao.disabled = false; botao.textContent = tipo === "apagar" ? "Parar de apagar" : "Parar de enviar"; }
@@ -1108,6 +1127,242 @@
       botao.textContent = "Sim, enviar para todos";
       if (!d.ok) { botao.disabled = false; recado(d.erro, d.detalhe); return; }
       abrirProgresso("recuperar", d.total);
+    });
+  });
+
+  // ------------------------------------------------------------------ NÃO RECUPERADOS: fila viva
+
+  var frDados = null;          // última resposta de lote_fila
+  var frMarcados = [];         // posições escolhidas para tirar da fila
+  var frSelecionando = false;
+  var frArmado = false;        // "tirar da fila" precisa de dois toques
+  var frSoErro = false;
+  var frTemporizador = null;
+  var FR_TOPO = 200;           // lista longa demais travaria o celular no meio do envio
+
+  CARREGA.fila = function () {
+    frLimparSelecao();
+    carregarFila(true);
+  };
+
+  function frPill(situacao) {
+    if (situacao === "enviado") return criar("span", "pill on", "enviado");
+    if (situacao === "falhou") return criar("span", "pill", "falhou");
+    if (situacao === "enviando") return criar("span", "pill", "enviando…");
+    if (situacao === "fora") return criar("span", "muted", "fora da fila");
+    return criar("span", "muted", "na fila");
+  }
+
+  function frEscolhido(item) {
+    return frSelecionando && item.situacao === "fila";
+  }
+
+  function desenharFila() {
+    var d = frDados;
+    if (!d) return;
+    var estado = d.estado || {}, itens = d.itens || [];
+    var total = Number(d.total || 0), fora = Number(d.fora || 0);
+    var feitos = (estado.enviados || 0) + (estado.falhas || 0);
+    var alvo = Math.round(100 * feitos / Math.max(1, total - fora));
+    $("frBarra").style.width = Math.min(100, Math.max(0, alvo)) + "%";
+
+    var partes = [];
+    if (!d.vazia) {
+      partes.push(d.na_fila + " na fila");
+      partes.push((estado.enviados || 0) + " enviados");
+      partes.push((estado.falhas || 0) + " com erro");
+      if (fora) partes.push(fora + " fora da fila");
+      partes.push(total + " no total");
+    }
+    $("frResumo").textContent = d.vazia ? "nenhuma fila montada ainda" : partes.join(" · ");
+
+    var vivo = $("frVivo"), atual = estado.enviando === null || estado.enviando === undefined
+      ? null : itens[estado.enviando];
+    vivo.hidden = true;
+    if (estado.rodando && atual) {
+      vivo.hidden = false;
+      vivo.textContent = "enviando agora para " + atual.usuario + " (#" + (atual.i + 1) + " de " + total + ")";
+    } else if (estado.rodando) {
+      vivo.hidden = false;
+      vivo.textContent = "o envio está rodando neste momento";
+    } else if (!d.vazia && estado.motivo) {
+      vivo.hidden = false;
+      vivo.textContent = motivoParada(estado.motivo) || "o lote está parado.";
+    }
+
+    var mostrados = frSoErro ? itens.filter(function (i) { return i.situacao === "falhou"; }) : itens;
+    var caixa = limpar($("frLista"));
+    mostrados.slice(0, FR_TOPO).forEach(function (item) {
+      var linha = criar("label", "item" + (item.situacao === "fora" ? " fora" : ""));
+      if (frEscolhido(item)) {
+        var marca = document.createElement("input");
+        marca.type = "checkbox";
+        marca.value = String(item.i);
+        marca.checked = frMarcados.indexOf(item.i) >= 0;
+        marca.setAttribute("aria-label", "tirar " + item.usuario + " da fila");
+        marca.addEventListener("change", function () {
+          var posicao = frMarcados.indexOf(item.i);
+          if (marca.checked && posicao < 0) frMarcados.push(item.i);
+          if (!marca.checked && posicao >= 0) frMarcados.splice(posicao, 1);
+          frArmado = false;
+          atualizarFrBarra();
+        });
+        linha.appendChild(marca);
+      }
+      linha.appendChild(criar("b", "", "#" + (item.i + 1) + " " + item.usuario));
+      linha.appendChild(frPill(item.situacao));
+      linha.appendChild(criar("span", "muted",
+        (item.telefone || "sem telefone") + (item.vencido ? " · " + item.vencido : "")));
+      if (item.erro) linha.appendChild(criar("span", "muted verm", item.erro));
+      caixa.appendChild(linha);
+    });
+
+    var topo = $("frTopo");
+    topo.hidden = mostrados.length <= FR_TOPO;
+    if (!topo.hidden) {
+      topo.textContent = "mostrando os primeiros " + FR_TOPO + " de " + mostrados.length +
+        (frSoErro ? " com erro" : " da fila") + " — o resto continua no mesmo lugar.";
+    }
+    var vazia = $("frVazia");
+    vazia.hidden = !d.vazia;
+    if (d.vazia) {
+      vazia.textContent = "A fila aparece aqui depois que você aperta Não recuperados na aba Acessos " +
+        "ou Clientes e revise a contagem. Ela é a mesma lista, vista por dentro.";
+    }
+    if (frSoErro && !d.vazia && !mostrados.length) {
+      limpar(caixa).appendChild(criar("p", "muted", "ninguém com erro até agora — todo envio conseguiu."));
+    }
+
+    $("frBarraAccoes").hidden = Boolean(d.vazia);
+    $("frParar").hidden = !estado.rodando;
+    $("frRetomar").hidden = Boolean(estado.rodando) || !d.na_fila;
+    $("frSelecionar").hidden = Boolean(estado.rodando);
+    $("frTirar").hidden = !(frSelecionando && !estado.rodando);
+    $("frFiltro").textContent = frSoErro ? "Ver a fila toda" : "Ver só os com erro";
+    $("frMontar").disabled = Boolean(estado.rodando);
+    atualizarFrBarra();
+    frProgramar();
+  }
+
+  function atualizarFrBarra() {
+    var marcados = $("frMarcados");
+    marcados.hidden = !frSelecionando;
+    if (frSelecionando) {
+      marcados.textContent = frMarcados.length
+        ? frMarcados.length + " linha(s) marcada(s) para sair da fila."
+        : "Marque quem não deve receber mais nada nesta fila.";
+    }
+    var botao = $("frTirar");
+    if (!frArmado) botao.textContent = "Tirar da fila";
+  }
+
+  function frLimparSelecao() {
+    frSelecionando = false;
+    frArmado = false;
+    frMarcados = [];
+    $("frSelecionar").textContent = "Selecionar";
+  }
+
+  function carregarFila(mostrarErro) {
+    return chamar("lote_fila", { tipo: "recuperar" }, 60).then(function (d) {
+      if (!d.ok) {
+        if (mostrarErro) recado(d.erro, d.detalhe);
+        return;
+      }
+      frDados = d;
+      desenharFila();
+    });
+  }
+
+  /** Enquanto o lote corre, a tela se refaz sozinha: assim o "enviando…" aparece mesmo
+   *  quando o envio foi começado em outra aba ou em outro aparelho. */
+  function frProgramar() {
+    if (frTemporizador) { clearTimeout(frTemporizador); frTemporizador = null; }
+    var d = frDados;
+    if (!d || TELA_ATUAL !== "fila") return;
+    if (!(d.estado || {}).rodando && !lote.rodando) return;
+    frTemporizador = setTimeout(function () {
+      frTemporizador = null;
+      carregarFila(false);
+    }, 4000);
+  }
+
+  $("frAtualizar").addEventListener("click", function () {
+    var botao = $("frAtualizar");
+    botao.disabled = true;
+    carregarFila(true).then(function () { botao.disabled = false; });
+  });
+
+  $("frFiltro").addEventListener("click", function () {
+    frSoErro = !frSoErro;
+    desenharFila();
+  });
+
+  $("frSelecionar").addEventListener("click", function () {
+    frSelecionando = !frSelecionando;
+    if (!frSelecionando) { frMarcados = []; frArmado = false; }
+    $("frSelecionar").textContent = frSelecionando ? "Parar de selecionar" : "Selecionar";
+    desenharFila();
+  });
+
+  $("frParar").addEventListener("click", function () {
+    var botao = $("frParar");
+    botao.disabled = true;
+    botao.textContent = "parando…";
+    pararLote("recuperar").then(function () {
+      botao.disabled = false;
+      botao.textContent = "Parar o envio";
+      return carregarFila(false);
+    });
+  });
+
+  $("frRetomar").addEventListener("click", function () {
+    var botao = $("frRetomar");
+    botao.disabled = true;
+    botao.textContent = "retomando…";
+    chamar("lote_retomar", { tipo: "recuperar" }, 45).then(function (d) {
+      botao.disabled = false;
+      botao.textContent = "Retomar de onde parou";
+      if (!d.ok) { recado(d.erro, d.detalhe); carregarFila(false); return; }
+      recado("fila_retomou");
+      if (!lote.rodando) rodarLote("recuperar");
+      carregarFila(false);
+    });
+  });
+
+  $("frTirar").addEventListener("click", function () {
+    var botao = $("frTirar");
+    if (!frMarcados.length) { recado("sem_marca"); return; }
+    if (!frArmado) {
+      frArmado = true;
+      botao.textContent = "Confirmar: tirar " + frMarcados.length + " da fila";
+      return;
+    }
+    frArmado = false;
+    botao.disabled = true;
+    botao.textContent = "tirando…";
+    chamar("lote_tirar", { tipo: "recuperar", indices: frMarcados }, 60).then(function (d) {
+      botao.disabled = false;
+      botao.textContent = "Tirar da fila";
+      if (!d.ok) { recado(d.erro, d.detalhe); carregarFila(false); return; }
+      recado("fila_tirar", d.fora + " cliente(s) saíram da fila.");
+      frMarcados = [];
+      carregarFila(false);
+    });
+  });
+
+  $("frMontar").addEventListener("click", function () {
+    var botao = $("frMontar");
+    botao.disabled = true;
+    botao.textContent = "varrendo o painel MC…";
+    $("frMontarNota").textContent = "isso só monta a lista: nenhuma mensagem sai";
+    chamar("lote_contagem", { tipo: "recuperar", pular: Array.from(pular) }, 180).then(function (d) {
+      botao.disabled = false;
+      botao.textContent = "Montar a fila do zero";
+      if (!d.ok) { recado(d.erro, d.detalhe); $("frMontarNota").textContent = "varre o painel MC de novo, com as marcas “pular” — não envia nada"; return; }
+      recado("fila_montada", d.alvos + " na fila, " + d.pulados + " pulados, " + d.sem_telefone + " sem telefone.");
+      frSoErro = false;
+      carregarFila(false);
     });
   });
 

@@ -54,6 +54,9 @@ const ACAO: Record<string, Handler> = {
   lote_item: acoes.loteItem,
   lote_status: acoes.loteStatus,
   lote_parar: acoes.loteParar,
+  lote_fila: acoes.loteFila,
+  lote_retomar: acoes.loteRetomar,
+  lote_tirar: acoes.loteTirar,
 
   apagar_linha_ver: acoes.apagarLinhaVer,
   apagar_linha_fazer: acoes.apagarLinhaFazer,

@@ -32,6 +32,7 @@
       <a href="#config" data-tela="config">Configuração</a>
       <a href="#avisos" data-tela="avisos">Avisos</a>
       <a href="#acessos" data-tela="acessos">Acessos</a>
+      <a href="#fila" data-tela="fila">Não recuperados</a>
       <a href="#recuperacao" data-tela="recuperacao">Recuperação</a>
       <a href="#clientes" data-tela="clientes">Clientes</a>
       <a href="#deletar" data-tela="deletar">Deletar</a>
@@ -266,6 +267,43 @@
           O botão <b>recuperar</b> manda o PIX pelo WhatsApp para o telefone guardado na linha.
           <b>Não recuperados</b> abre a coluna <b>pular</b>: marque só quem <b>não</b> deve receber, em qualquer página,
           e o envio vai para todos os vencidos do painel &mdash; inclusive das páginas que não estão na tela.</p>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- NÃO RECUPERADOS (FILA) -->
+    <section data-pagina="fila" hidden>
+      <div class="card">
+        <h2>Fila do &ldquo;Não recuperados&rdquo;</h2>
+        <p class="muted" style="margin-top:0" id="frResumo">abrindo a fila&hellip;</p>
+        <div class="prog"><i id="frBarra"></i></div>
+        <p class="muted" id="frVivo" hidden></p>
+        <p class="muted" id="frPausa" hidden style="margin-top:0"></p>
+        <div class="lista" id="frLista" style="max-height:340px"></div>
+        <p class="muted" id="frTopo" hidden></p>
+        <p class="muted" id="frVazia" hidden></p>
+        <div class="barra" id="frBarraAccoes" hidden style="margin-top:10px">
+          <button type="button" class="alerta" id="frParar" hidden>Parar o envio</button>
+          <button type="button" class="verde" id="frRetomar" hidden>Retomar de onde parou</button>
+          <button type="button" class="segundo" id="frSelecionar">Selecionar</button>
+          <button type="button" class="alerta" id="frTirar" hidden>Tirar da fila</button>
+          <button type="button" class="mini" id="frFiltro">Ver só os com erro</button>
+          <button type="button" id="frAtualizar">Atualizar</button>
+        </div>
+        <p class="muted" id="frMarcados" hidden></p>
+      </div>
+
+      <div class="card">
+        <h2>Como a fila se forma</h2>
+        <p class="muted" style="margin-top:0">A fila é a lista congelada na última conferência do botão
+          <b>Não recuperados</b> (abas <a href="#acessos">Acessos</a> e <a href="#clientes">Clientes</a>).
+          Ela é a mesma em qualquer tela, então dá para acompanhar o envio aqui, parar, retomar de onde parou
+          e tirar alguém sem mandar mensagem repetida.</p>
+        <p class="muted"><b>Tirar da fila</b> só tira da fila: não apaga ninguém no painel MC e não desfaz o que
+          já foi enviado. Quem sair volta para a fila na próxima conferência.</p>
+        <div class="linha">
+          <button type="button" class="segundo" id="frMontar">Montar a fila do zero</button>
+          <span class="muted" id="frMontarNota">varre o painel MC de novo, com as marcas &ldquo;pular&rdquo; &mdash; não envia nada</span>
+        </div>
       </div>
     </section>
 

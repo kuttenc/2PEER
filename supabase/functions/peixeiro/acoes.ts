@@ -69,12 +69,16 @@ import {
   zerarTentativas,
 } from "./sessao.ts";
 import {
+  estadoVazio,
+  foraDaFila,
   gravarPlano,
   iniciarLote,
   pararLote,
   proximoItem,
   registrarItem,
   resumoLote,
+  retomarLote,
+  tirarDaFila,
   verLote,
   type Item,
   type TipoLote,
@@ -613,7 +617,11 @@ async function expiraDoEspelho(username: string): Promise<Date | null> {
 // ------------------------------------------------------------------ lotes (recuperar todos / apagar intervalo)
 
 export async function loteContagem(dados: Registro, ctx: Contexto): Promise<Saida> {
-  return tipoLote(dados.tipo) === "apagar" ? apagarContagem(dados, ctx) : recuperarContagem(dados, ctx);
+  const tipo = tipoLote(dados.tipo);
+  // Remontar o plano com o lote andando jogaria o envio para outra lista no meio do caminho.
+  const vista = await verLote(tipo);
+  if (vista && vista.estado.rodando) return falha("lote_rodando", 409, { rodando: true });
+  return tipo === "apagar" ? apagarContagem(dados, ctx) : recuperarContagem(dados, ctx);
 }
 
 async function recuperarContagem(dados: Registro, ctx: Contexto): Promise<Saida> {
@@ -859,6 +867,85 @@ export async function loteStatus(dados: Registro): Promise<Saida> {
 
 export async function loteParar(dados: Registro): Promise<Saida> {
   return ok({ estado: await pararLote(tipoLote(dados.tipo)) });
+}
+
+/** O "há 1 mês e 4 dias" da linha congelada, calculado do mesmo jeito que o envio faz na hora. */
+function textoDoItem(item: Item): string {
+  const expira = parseExpDate(txt(item.exp_iso));
+  if (!expira) return "";
+  return textoVencido((expira.getTime() - Date.now()) / 3_600_000);
+}
+
+/** A fila congelada do lote, linha por linha, com o que aconteceu em cada uma. É a tela
+ *  "Não recuperados": quem falhou continua visível mesmo depois que o envio acaba. */
+export async function loteFila(dados: Registro): Promise<Saida> {
+  const tipo = tipoLote(dados.tipo);
+  const vista = await verLote(tipo);
+  if (!vista || !vista.plano.length) {
+    return ok({ vazia: true, itens: [], estado: estadoVazio(0), na_fila: 0, fora: 0, total: 0 });
+  }
+  const { plano, estado } = vista;
+  const resultados = estado.resultados || {};
+  let naFila = 0, fora = 0;
+  const itens = plano.map((item, i) => {
+    const marca = resultados[String(i)];
+    const saiu = foraDaFila(item);
+    const enviando = Boolean(estado.rodando) && estado.enviando === i;
+    if (saiu) fora += 1;
+    else if (!marca) naFila += 1;
+    return {
+      i,
+      usuario: txt(item.username) || txt(item.usuario),
+      telefone: formatarTelefone(txt(item.telefone)),
+      vencido: textoDoItem(item) || txt(item.intervalo),
+      situacao: marca ? (marca.ok ? "enviado" : "falhou") : saiu ? "fora" : enviando ? "enviando" : "fila",
+      erro: marca && !marca.ok ? marca.erro : "",
+    };
+  });
+  return ok({
+    vazia: false,
+    itens,
+    estado,
+    na_fila: naFila,
+    fora,
+    total: plano.length,
+    idade: Number.isFinite(vista.idade) ? Math.round(vista.idade) : null,
+    fresco: vista.fresco,
+    aviso: vista.aviso,
+  });
+}
+
+/** Continua o mesmo plano de onde parou, sem recontar ninguém. */
+export async function loteRetomar(dados: Registro, ctx: Contexto): Promise<Saida> {
+  const tipo = tipoLote(dados.tipo);
+  const retomado = await retomarLote(tipo);
+  if (!retomado.ok) return falha(retomado.erro || "lote_rodando", 409);
+  await gravarEvento({
+    event_type: tipo === "apagar" ? "painel_online_lote_retoma" : "recuperar_lote_retoma",
+    status_code: 200,
+    request_payload: { tipo, indice: retomado.estado ? retomado.estado.indice : null },
+    response_payload: {},
+    client_ip: ctx.ip,
+  });
+  return ok({ estado: retomado.estado });
+}
+
+/** Só tira da fila: nada é apagado no painel MC e nada do que já saiu muda de lugar. */
+export async function loteTirar(dados: Registro, ctx: Contexto): Promise<Saida> {
+  const tipo = tipoLote(dados.tipo);
+  const indices = lista(dados.indices).map((v) => Number(v)).filter((n) => Number.isInteger(n) && n >= 0);
+  if (!indices.length) return falha("sem_marca");
+  if (indices.length > 2000) return falha("muita_marca");
+  const saida = await tirarDaFila(tipo, indices);
+  if (!saida.ok) return falha(saida.erro || "lote_rodando", 409);
+  await gravarEvento({
+    event_type: tipo === "apagar" ? "painel_online_lote_tirar" : "recuperar_lote_tirar",
+    status_code: 200,
+    request_payload: { tipo, indices: indices.length },
+    response_payload: { fora: saida.fora },
+    client_ip: ctx.ip,
+  });
+  return ok({ fora: saida.fora, estado: await resumoLote(tipo) });
 }
 
 // ------------------------------------------------------------------ apagar uma linha só
