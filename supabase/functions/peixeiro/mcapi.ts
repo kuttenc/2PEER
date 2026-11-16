@@ -65,6 +65,18 @@ export async function getLinhas(bearer: string, params: URLSearchParams): Promis
   return resp;
 }
 
+/** O que o MC devolve no login vai para o log sem as chaves de acesso: o bearer fica só na
+ *  tabela própria (`mcapi_token_cache`), que é onde o painel lê. */
+const SEGREDOS = /^(token|accesstoken|access_token|refreshtoken|refresh_token|jwt|password|senha)$/i;
+
+export function mascararResposta(body: Record<string, unknown>): Record<string, unknown> {
+  const saida: Record<string, unknown> = {};
+  for (const [chave, valor] of Object.entries(body || {})) {
+    saida[chave] = SEGREDOS.test(chave) ? `(oculto ${String(valor || "").length} chars)` : valor;
+  }
+  return saida;
+}
+
 // ---------------------------------------------------------------- login + cache do token
 
 export type TokenInfo = { ok: boolean; token?: string; login_status?: number; erro?: string };
@@ -118,9 +130,10 @@ export async function tokenDoPainel(clientIp: string, forcar = false): Promise<T
     await gravarEvento({
       event_type: "login_refresh",
       status_code: status,
-      bearer_token: normalizarBearer(token),
-      request_payload: corpo,
-      response_payload: resposta,
+      // A senha nunca entra no log: `mcapi_events` é texto puro no banco e a senha do MC não
+      // expira como o bearer. O corpo da resposta também só sai mascarado.
+      request_payload: { username: usuario },
+      response_payload: mascararResposta(resposta),
       error_message: status >= 400 ? "login refresh failed" : null,
       client_ip: clientIp,
     });
