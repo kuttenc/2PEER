@@ -67,7 +67,7 @@ são para chamar o banco/Auth/Storage, e o CLI responde `Invalid access token fo
 | `DATABASE_URL` | Postgres do Supabase (o painel abre a conexão direto) | banco da cópia |
 | `MC_USERNAME` / `MC_PASSWORD` | logar no painel MC | preenchidas (a conta real do revendedor) |
 | `PEIXEIRO_MODO_TESTE` | `1` = nada é enviado nem apagado de verdade; a tela mostra a faixa "MODO DE TESTE" | **desligado** desde 16/11/2026 |
-| `URTADOR_TOKEN` | links curtos na sua conta em vez de visita | vazio |
+| `URTADOR_TOKEN` | link curto criado na conta dele (aparece no admin do Urtador) em vez de visita. **Não** muda a janela de 15 minutos. É a sessão do login por WhatsApp, vencível: se estiver morta, o `create` falha e a mensagem sai comprida | secret existe; valor não conferido daqui |
 | `PAINEL_ORIGENS` | origens permitidas no CORS, separadas por vírgula | `https://kuttenc.github.io` |
 | `PAINEL_ASSETS_URL` | onde ficam o wasm e a fonte da imagem do aviso | endereço do Pages |
 | `PAINEL_LINK_BASE` | para onde o `{link}` da mensagem de recuperação leva o cliente | `https://kuttenc.github.io/2PEER` |
@@ -94,12 +94,38 @@ A aba **Links** (`#links`) tem três blocos: o padrão, a lista de links com um 
 cliente, e o encurtador avulso de sempre. As ações novas são `links_padrao_salvar` e
 `links_destino_salvar` (com login) e `links_destino` (sem login, é o clique do cliente).
 
-Cuidado com o que o encurtador responde no clique: link criado **como visita** (sem `URTADOR_TOKEN`)
-tem período de acesso. Em 16/11/2026 o `rc-11zc083-...` que já está no WhatsApp do Pedroso respondia
-`{"accessExpired": true}` e devolvia o cliente para a home do Urtador, enquanto outro link do mesmo
-dia ainda abria. Antes de mandar recuperação para cliente de verdade, coloque o `URTADOR_TOKEN` dele
-como secret da função para o link nascer na conta, e confira no admin do Urtador se os links já
-enviados ainda abrem.
+Cuidado com o que o encurtador faz no clique — ele é o produto do Fabio (`kuttenc/urtador`, função
+`kutt-short-links` no projeto `ggufcvrwctieacvbbwim`) e tem regra própria:
+
+- `https://kuttenc.github.io/urtador/<slug>` não é arquivo nenhum: o Pages devolve o **404** do
+  Urtador, que carrega `assets/redirect.js`. Aquela tela **"Toque em Abrir destino"** é esse 404.
+- O `redirect.js` chama `start-link-access-window` **assim que a página abre** (antes do toque) e só
+  chama `resolve` quando ele aperta o botão. `resolve` é o que faz `location.assign(destino)`.
+- A janela é **15 minutos por link por IP do visitante**, contados do primeiro acesso, e **não renova**
+  (`kutt_link_access_windows`, migration `202610190001_kutt_link_access_windows.sql` do repo do
+  Urtador). Depois disso a API responde `{"accessExpired": true, "redirectUrl": ".../urtador/"}` e o
+  cliente cai na home do Urtador em vez de abrir o acesso. Isso vale para link da conta **e** de
+  visita: o `URTADOR_TOKEN` não escapa da janela, ele só muda em nome de quem o link aparece no admin.
+- IP desconhecido (`clientIp() === "unknown"`) não ganha janela nenhuma.
+- O Urtador só aceita **10 criações por minuto** por sessão de visita e por IP (`guest-create-ip`,
+  `guest-create-session`). Medido daqui em 16/11/2026: a 4ª chamada seguida já devolve "Muitas
+  tentativas" (as sondas daquela semana já tinham gasto o resto do minuto). Como a função chama o
+  encurtador de um IP só, um lote de clientes **novos** com a pausa mínima em 4,5 s (≈13 links/min)
+  passa do limite — os que estourarem saem com o endereço comprido. Para todo mundo sair com link
+  curto, a régua do item 5 da aba Configuração precisa de `recupera_pausa_min` em **7 segundos** ou
+  mais. Reenvio para o mesmo cliente não conta: o final já existe e o painel monta o endereço sem
+  chamar o encurtador.
+- Se ele quiser link de recuperação que abre amanhã também, o ajuste é no Urtador (renovar
+  `expires_at` a cada acesso, ou isentar os links `rc-`), não no painel — e mexer ali mexe no
+  encurtador monetizado que ele usa em outras coisas.
+
+**O que mudou em 16/11/2026 (link comprido no reenvio).** Antes, no reenvio para o mesmo cliente o
+`create` respondia "final já está em uso", o painel ia chamar `resolve` só para descobrir o endereço,
+e o `resolve` vinha morto (janela daquele IP já vencida) — a mensagem saía com o **endereço
+comprido**, pulando o Urtador: é o "está indo direto" que ele viu. Desde a versão 15 da função o
+reenvio remonta `BASE/<slug>` direto e continua saindo com o link curto. Prova do caminho (sem mandar
+WhatsApp): `linkRecuperacao("11zc083", <telefone>)` devolve `.../urtador/rc-11zc083-...` enquanto
+`resolver("rc-11zc083-...")` continua `ok:false`.
 
 Com o modo teste desligado, **a cópia age de verdade**: o botão da aba Deletar apaga a linha no
 painel MC real, e recuperar/avisar disparam no WhatsApp assim que a instância GreenAPI for

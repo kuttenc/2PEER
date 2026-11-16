@@ -92,7 +92,9 @@ export async function encurtar(url: string, slug = "", titulo = "", timeout = 15
   if ("erro" in resposta) return { ok: false, erro: resposta.erro };
   const { status, dados, c } = resposta;
   if (status >= 400 || !dados.slug) {
-    return { ok: false, erro: String(dados.error || `o encurtador respondeu ${status}`).slice(0, 200) };
+    const mensagem = String(dados.error || `o encurtador respondeu ${status}`).slice(0, 200);
+    // "final já em uso" não é falha: o link existe, e quem cria sabe o endereço dele de cor.
+    return { ok: false, emUso: /j[áa] est[áa] em uso|already/i.test(mensagem), erro: mensagem };
   }
   return {
     ok: true,
@@ -166,7 +168,10 @@ export async function linkRecuperacao(usuario: string, telefone: string): Promis
   const alvo = urlRedirecionamento(slug);
   const criado = await encurtar(alvo, slug, `recuperacao ${usuario}`);
   if (criado.ok) return { url: String(criado.curto), slug, curto: true };
-  // "já está em uso" é o caso normal de um reenvio para o mesmo cliente.
+  // Reenvio para o mesmo cliente: o final é sempre o mesmo, então o link já existe e o endereço
+  // dele se monta daqui. Passar por `resolve` nesse caso era o que fazia a mensagem sair com o
+  // link comprido, porque o Urtador recusa o resolve depois que a janela de acesso do IP venceu.
+  if (criado.emUso) return { url: `${baseEncurtador()}/${slug}`, slug, curto: true };
   const existente = await resolver(slug);
   if (existente.ok) return { url: String(existente.curto), slug, curto: true };
   return { url: alvo, slug, curto: false, erro: String(criado.erro || existente.erro || "").slice(0, 160) };
