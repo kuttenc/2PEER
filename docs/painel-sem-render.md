@@ -43,6 +43,11 @@ não o JWT do Supabase. Sem ele toda chamada volta 401.
 
 O push do `painel/` para o GitHub Pages publica a página; não existe deploy separado.
 
+Se os dois comandos voltarem `403 (does not have the necessary privileges)`, o problema é o
+`SUPABASE_ACCESS_TOKEN`, não o código: ele expira ou perde escopo na sua conta e é preciso
+gerar um novo em Account settings → Access tokens. A função que já está no ar continua
+respondendo enquanto isso.
+
 ## Secrets que a função usa
 
 | Nome | Para quê | Na cópia hoje |
@@ -80,9 +85,14 @@ O token da agenda (`aviso_cron`) não é secret: ele mora na coluna `aviso_token
 - Deixe `PEIXEIRO_MODO_TESTE=1`. Assim nada sai no WhatsApp e nada é apagado no MC, mas todas
   as telas, contagens e progresso funcionam.
 - Para testar o caminho que fala com o painel MC sem credencial real, apontou-se a função para
-  um MC de mentira local: `MC_API_BASE=http://127.0.0.1:8099` mais um servidor Deno que
-  devolve uma lista fixa de linhas com nome começando em `stub`. Esse endereço não é secret de
-  produção: se estiver vazio, a função cai no `mcapi.knewcms.com:2087` de verdade.
+  um MC de mentira local: `MC_API_BASE=http://127.0.0.1:8099` mais `tools/mc_stub.ts`, um
+  servidor Deno que devolve uma lista fixa de linhas com nome começando em `stub`. Esse
+  endereço não é secret de produção: se estiver vazio, a função cai no
+  `mcapi.knewcms.com:2087` de verdade. O comando dos dois lados está no cabeçalho do stub.
+- O bearer devolvido pelo stub é falso e fica guardado em `mcapi_token_cache` por uma hora.
+  Depois da brincadeira, apague a linha (`delete from public.mcapi_token_cache where id = 1`);
+  com ela lá, o painel mostra as abas do MC como se estivesse logado e leva 401 em tudo. Uma
+  resposta 401/403 do MC agora limpa essa linha sozinho.
 - As linhas de teste desses dois modos entram em `mc_linhas`, `usuarios_criados_ip`,
   `painel_lote` e `mcapi_events`. Para limpar o banco da cópia, apague o que vier de `stub%`.
 
