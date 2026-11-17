@@ -116,13 +116,21 @@ function proximoPosicao(plano: Item[], indice: number): number {
   return alvo;
 }
 
-/** O navegador pede o item seguinte; devolve null quando o lote acabou ou está parado. */
+/** O navegador pede o item seguinte; devolve null quando o lote acabou ou está parado, e
+ *  `{ emEnvio }` quando outro navegador está com um item em mão — sem isso, celular e PC
+ *  abertos na mesma conta mandariam o mesmo cliente duas vezes. */
 export async function proximoItem(
   tipo: TipoLote,
-): Promise<{ item: Item; indice: number; total: number } | null> {
+): Promise<{ item: Item; indice: number; total: number } | { emEnvio: true } | null> {
   const vista = await verLote(tipo);
   if (!vista || !vista.estado.rodando) return null;
   const { plano, estado } = vista;
+  if (estado.enviando !== null && estado.enviando !== undefined) {
+    // Três minutos sem mexer na linha quer dizer que quem pegou o item morreu no meio do
+    // envio (aba fechada, celular travado): o lote não pode ficar preso para sempre.
+    if (vista.idade < 180) return { emEnvio: true };
+    estado.enviando = null;
+  }
   const indice = proximoPosicao(plano, estado.indice);
   if (indice >= plano.length) return null;
   estado.indice = indice;

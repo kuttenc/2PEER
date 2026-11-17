@@ -199,6 +199,38 @@ aviso vai aparecer de vez em quando — é por isso, não é senha errada.
   apagar nem para a agenda das 6h. Com 900 clientes na lista, a conta é de horas com o painel
   aberto (4,5–105 s ≈ 13 h 40 no meio-termo) — por isso a régua existe.
 
+### Quem conta o tempo (e por que o lote parava sozinho)
+
+O `esperar` sai do servidor, mas **quem conta os segundos é a aba** — não existe timer nenhum no
+backend, e a prova é o próprio banco: no intervalo morto o `painel_lote` fica com `rodando: true`,
+`enviando: null` e `atualizado_em` parado, porque nenhum `lote_item` chegou.
+
+Como o navegador congela a aba em segundo plano (no celular, com a tela apagada, em poucos
+minutos), o desenho antigo morria aí: ele **decrementava um contador** a cada tick. Em segundo
+plano o Chrome dispara o timer uma vez por minuto, então uma pausa de 50 s virava 50 minutos;
+congelada de vez, nada rodava e o lote parava de aparecer. Isso é o `tools/_prova_pausa.js`:
+
+```bash
+node tools/_prova_pausa.js   # 7 provas — relógio falso, nenhuma rede, nenhuma mensagem
+```
+
+O motor de agora guarda um **prazo** (`lote.limite`, uma hora no relógio) e um vigia de 1 s só
+compara a hora. Congelou e acordou 6 minutos depois, o prazo já venceu e o item sai no primeiro
+tique — atraso máximo de um tique, nunca uma parada. Vem junto:
+
+- **wake lock** (`navigator.wakeLock`) enquanto o lote corre: no celular a tela fica acesa, que é
+  o que impede o congelamento. Perde o lock quando a aba some e pede de novo no `visibilitychange`.
+- **um item por vez no mundo**: `proximoItem` recusa entregar cliente enquanto `estado.enviando`
+  estiver preenchido e devolve `em_envio` + `esperar: 8`; sem isso, celular e PC abertos na mesma
+  conta mandavam o mesmo cliente duas vezes. A trava vence sozinha em 3 minutos (quem pegou o
+  item morreu no meio), senão o lote ficaria preso para sempre.
+- **o banco diz a verdade**: se o navegador desistiu de um `lote_item` por erro, ele chama
+  `lote_parar` em vez de só apagar o timer — assim a faixa de andamento não fica acesa mentindo
+  e o lote seguinte não trava em "já existe um lote rodando".
+
+> `python tools/_prova_lote.py` **apaga** a linha `recuperar_todos` de `painel_lote` na limpeza.
+> Não rode com um lote de verdade em andamento.
+
 ## O telefone que viaja com o link de recuperação
 
 Quem chega pelo link curto (`.../urtador/rc-<usuario>-<payload>`) já foi identificado: o número

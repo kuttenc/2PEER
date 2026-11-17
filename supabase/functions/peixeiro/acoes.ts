@@ -1006,6 +1006,10 @@ export async function loteExecutar(dados: Registro, ctx: Contexto): Promise<Said
 export async function loteItem(dados: Registro, ctx: Contexto): Promise<Saida> {
   const tipo = tipoLote(dados.tipo);
   const proximo = await proximoItem(tipo);
+  if (proximo && "emEnvio" in proximo) {
+    // Tem um item saindo em outro navegador: devolve o mesmo estado e manda esperar.
+    return ok({ em_envio: true, esperar: 8, estado: await resumoLote(tipo), proximo: true });
+  }
   if (!proximo) return ok({ terminado: true, estado: await resumoLote(tipo) });
 
   let resultado;

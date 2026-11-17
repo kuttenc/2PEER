@@ -910,7 +910,7 @@
 
   // ------------------------------------------------------------------ motor dos lotes
 
-  var lote = { tipo: "recuperar", rodando: false, temporizador: null, terminou: false, passo: null };
+  var lote = { tipo: "recuperar", rodando: false, limite: 0, vigia: null, tela: null, terminou: false, passo: null };
 
   /** Os três lotes (recuperação, exclusão, mensagem) andam no mesmo motor; o que muda é só onde
    *  cada peça está na tela. "p" é o prefixo dos ids do progresso. */
@@ -956,13 +956,18 @@
     lote.tipo = tipo;
     lote.rodando = true;
     lote.terminou = false;
+    lote.limite = 0;
+    pedirTela();
+    vigiar();
     lote.passo = function () {
       if (!lote.rodando) return;
       chamar("lote_item", { tipo: tipo }, 120).then(function (d) {
         if (!lote.rodando) return;
         if (!d.ok) {
-          lote.rodando = false;
-          pararTemporizador();
+          // O banco continua dizendo "rodando" enquanto o navegador desistiu: sem o lote_parar
+          // a faixa fica acesa para sempre e o próximo lote trava em "já existe um lote rodando".
+          pararLocal(tipo);
+          chamar("lote_parar", { tipo: tipo }, 30).catch(function () {});
           recado(d.erro, d.detalhe);
           return;
         }
@@ -974,30 +979,63 @@
           terminarLote(tipo, estado);
           return;
         }
-        esperar(Number(d.esperar || 0) * 1000 || 120);
+        // Outro navegador com a mesma conta (celular e PC abertos) está com um item em mão:
+        // o servidor devolve em_envio em vez de entregar o mesmo cliente duas vezes.
+        esperar(Number(d.em_envio ? (d.esperar || 8) : (d.esperar || 0)) || 0.12);
       });
     };
     lote.passo();
   }
 
   /** A função devolve quantos segundos esperar antes do próximo item (0 = sem espera,
-   *  como no lote de apagar). A contagem na tela é para ele saber que o lote está vivo,
-   *  e aparece no modal e na aba da fila ao mesmo tempo. */
-  function esperar(ms) {
-    pararTemporizador();
-    if (ms <= 1000) {
-      lote.temporizador = setTimeout(function () { lote.temporizador = null; lote.passo(); }, ms);
+   *  como no lote de apagar). O que segura o lote vivo é o prazo, não o relógio da aba:
+   *  o navegador congela a página em segundo plano e o setTimeout dorme junto — o vigia de
+   *  um segundo só compara a hora, então ao acordar o prazo já venceu e o item sai na hora. */
+  function esperar(segundos) {
+    lote.limite = Date.now() + Math.max(0, Number(segundos || 0)) * 1000;
+  }
+
+  function vigiar() {
+    if (lote.vigia) return;
+    lote.vigia = setInterval(zelar, 1000);
+  }
+
+  function zelar() {
+    if (!lote.rodando) {
+      if (lote.vigia) { clearInterval(lote.vigia); lote.vigia = null; }
       return;
     }
-    var restante = Math.ceil(ms / 1000);
-    escreverPausa(restante);
-    lote.temporizador = setInterval(function () {
-      restante -= 1;
-      if (restante > 0) { escreverPausa(restante); return; }
-      pararTemporizador();
-      if (lote.rodando) lote.passo();
-    }, 1000);
+    if (!lote.limite) { escreverPausa(0); return; }
+    var falta = Math.ceil((lote.limite - Date.now()) / 1000);
+    if (falta > 0) { escreverPausa(falta); return; }
+    var passo = lote.passo;
+    lote.limite = 0;
+    escreverPausa(0);
+    if (passo) passo();
   }
+
+  /** Tela ligada = aba viva. No celular é isto que impede o navegador de congelar o lote
+   *  quando a tela apaga; sem a API (ou negada) o resto do conserto continua valendo. */
+  function pedirTela() {
+    if (!navigator.wakeLock || !lote.rodando || document.hidden) return;
+    navigator.wakeLock.request("screen").then(function (trava) {
+      lote.tela = trava;
+      trava.addEventListener("release", function () { if (lote.tela === trava) lote.tela = null; });
+    }).catch(function () {});
+  }
+
+  function soltarTela() {
+    if (!lote.tela) return;
+    var trava = lote.tela;
+    lote.tela = null;
+    try { trava.release(); } catch (e) { /* já solta pelo navegador */ }
+  }
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) { lote.tela = null; return; }
+    pedirTela();
+    zelar();
+  });
 
   function escreverPausa(segundos) {
     var valor = segundos ? "próxima mensagem em " + segundos + "s" : "";
@@ -1010,8 +1048,19 @@
   }
 
   function pararTemporizador() {
-    if (lote.temporizador) { clearTimeout(lote.temporizador); clearInterval(lote.temporizador); lote.temporizador = null; }
+    lote.limite = 0;
     escreverPausa(0);
+  }
+
+  /** Desliga o motor deste navegador sem encostar no banco. */
+  function pararLocal(tipo) {
+    lote.rodando = false;
+    lote.limite = 0;
+    if (lote.vigia) { clearInterval(lote.vigia); lote.vigia = null; }
+    escreverPausa(0);
+    soltarTela();
+    var botao = $(maquina(tipo).p + "Parar");
+    if (botao) { botao.hidden = true; botao.disabled = false; }
   }
 
   function mostrarEstado(tipo, estado) {
@@ -1037,6 +1086,8 @@
   function terminarLote(tipo, estado) {
     pararTemporizador();
     lote.rodando = false;
+    if (lote.vigia) { clearInterval(lote.vigia); lote.vigia = null; }
+    soltarTela();
     lote.terminou = true;
     var m = maquina(tipo);
     mostrarEstado(tipo, estado);
@@ -1077,6 +1128,7 @@
     return chamar("lote_parar", { tipo: tipo }, 30).then(function () {
       pararTemporizador();
       lote.rodando = false;
+      soltarTela();
       if (botao) { botao.disabled = false; botao.textContent = m.parar; }
     });
   }
