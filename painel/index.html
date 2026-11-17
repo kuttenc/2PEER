@@ -405,6 +405,13 @@
       <div class="card">
         <h2>Clientes guardados</h2>
         <p class="muted" style="margin-top:0" id="clAvisoLista"></p>
+        <div class="linha" style="margin-bottom:10px">
+          <input type="text" id="clBusca" placeholder="pesquisar CPF, nome, telefone ou qualquer palavra"
+                 style="flex:1;min-width:200px" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <button type="button" id="clBuscar">Buscar</button>
+          <button type="button" class="segundo" id="clLimpar">Limpar</button>
+        </div>
+        <p class="muted" style="margin:0 0 10px" id="clPaginacao"></p>
         <div class="linha" style="margin-bottom:10px" id="clBarraLote" hidden>
           <button type="button" class="segundo" id="btnLoteClientes">Não recuperados</button>
           <button type="button" class="prim" id="btnMensagemLote">Mensagem pelo WhatsApp</button>
@@ -413,7 +420,7 @@
         </div>
         <table id="tabelaClientes">
           <thead>
-            <tr><th class="lote">pular</th><th>Usuário</th><th>Telefone</th><th>Expira</th>
+            <tr><th class="lote">pular</th><th>Usuário</th><th>Nome e CPF</th><th>Telefone</th><th>Expira</th>
               <th>Faltam</th><th>Status</th><th>Nota</th><th></th></tr>
           </thead>
           <tbody id="clLinhas"></tbody>

@@ -1560,29 +1560,67 @@
 
   // ------------------------------------------------------------------ clientes
 
-  CARREGA.clientes = function () { carregarClientes(); };
+  CARREGA.clientes = function () { carregarClientes(1, clBusca); };
+  var clPagina = 1, clBusca = "";
 
-  function carregarClientes() {
-    chamar("clientes_ver", {}, 60).then(function (d) {
+  function carregarClientes(pagina, busca) {
+    clPagina = pagina || clPagina;
+    clBusca = busca === undefined ? clBusca : busca;
+    chamar("clientes_ver", { pagina: clPagina, q: clBusca }, 120).then(function (d) {
       if (!d.ok) { recado(d.erro, d.detalhe); return; }
-      var linhas = d.linhas || [];
-      var comTelefone = d.com_telefone || 0;
-      $("clResumo").textContent = linhas.length + " clientes · " + comTelefone + " com telefone" +
-        (linhas.length && linhas[0].sincronizado ? " · última sincronização " + linhas[0].sincronizado : "");
+      var linhas = d.linhas || [], info = d.info || {};
+      var naBase = info.na_base || 0;
+      $("clResumo").textContent = (clBusca
+        ? info.encontrados + " de " + naBase + " clientes batem com \u201c" + clBusca + "\u201d"
+        : naBase + " clientes") +
+        " · " + info.com_telefone + " com telefone" +
+        (info.so_agenda ? " · " + info.so_agenda + " só na agenda" : "") +
+        (info.sincronizado ? " · última sincronização " + info.sincronizado : "");
       $("clAvisoLista").textContent = linhas.length
         ? "Corrija ou cadastre o número na caixinha e toque salvar — a máscara já formata (DDD) nnnnn-nnnn e o 55 entra sozinho."
         : "";
-      $("clBarraLote").hidden = !linhas.length;
+      $("clBarraLote").hidden = !naBase;
       var corpo = limpar($("clLinhas"));
       if (!linhas.length) {
-        var vazio = criar("p", "muted", "Nada no espelho ainda. Use \"Sincronizar agora\" ou abra a tela Acessos — cada página aberta já grava aqui.");
-        corpo.appendChild(vazio);
+        corpo.appendChild(criar("p", "muted", clBusca
+          ? "Ninguém na base bate com \u201c" + clBusca + "\u201d — o campo procura usuário, nome, CPF, telefone e nota."
+          : "Nada no espelho ainda. Use \"Sincronizar agora\" ou abra a tela Acessos — cada página aberta já grava aqui."));
       }
       linhas.forEach(function (c) { corpo.appendChild(linhaCliente(c)); });
+      paginarClientes(info);
       aplicarMarcasPular();
       atualizarBarraLote();
     });
   }
+
+  /** A lista inteira na tela travava o navegador, então a página vem do banco de 900 em 900. */
+  function paginarClientes(info) {
+    var caixa = limpar($("clPaginacao"));
+    if ((info.paginas || 1) <= 1 && !clBusca) return;
+    if (clPagina > 1) caixa.appendChild(linkPaginaClientes(clPagina - 1, "‹ anterior"));
+    caixa.appendChild(criar("span", "muted", " página " + info.pagina + " de " + info.paginas +
+      " · " + info.encontrados + " nesta busca · " + info.por_pagina + " por vez "));
+    if (clPagina < info.paginas) caixa.appendChild(linkPaginaClientes(clPagina + 1, "próxima ›"));
+  }
+
+  function linkPaginaClientes(pagina, rotulo) {
+    var a = criar("a", "", rotulo);
+    a.href = "#clientes";
+    a.addEventListener("click", function (evento) {
+      evento.preventDefault();
+      carregarClientes(pagina, clBusca);
+    });
+    return a;
+  }
+
+  $("clBuscar").addEventListener("click", function () { carregarClientes(1, $("clBusca").value.trim()); });
+  $("clBusca").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); carregarClientes(1, $("clBusca").value.trim()); }
+  });
+  $("clLimpar").addEventListener("click", function () {
+    $("clBusca").value = "";
+    carregarClientes(1, "");
+  });
 
   function linhaCliente(c) {
     var linha = document.createElement("tr");
@@ -1601,6 +1639,17 @@
 
     var tdNome = criar("td");
     tdNome.appendChild(criar("b", "", c.username));
+
+    // O nome e o CPF vêm da lista colada com PIX (cliente_pix), não do painel MC: sem esta
+    // coluna a busca por nome ou CPF acharia linhas que não mostram o que foram achar.
+    var tdPix = criar("td");
+    if (c.nome || c.cpf) {
+      tdPix.appendChild(criar("span", "", texto(c.nome || "—")));
+      if (c.cpf) {
+        tdPix.appendChild(document.createElement("br"));
+        tdPix.appendChild(criar("span", "muted", c.cpf));
+      }
+    } else tdPix.appendChild(criar("span", "muted", "—"));
 
     var tdTel = criar("td");
     var form = document.createElement("form");
@@ -1656,7 +1705,7 @@
     mensagem.title = telefoneBr(c.telefone) || "sem telefone cadastrado";
     mensagem.addEventListener("click", function () { abrirMensagem(c); });
     tdAccoes.appendChild(mensagem);
-    [tdLote, tdNome, tdTel, tdExpira, tdFaltam, tdStatus, tdNota, tdAccoes].forEach(function (c2) {
+    [tdLote, tdNome, tdPix, tdTel, tdExpira, tdFaltam, tdStatus, tdNota, tdAccoes].forEach(function (c2) {
       linha.appendChild(c2);
     });
     return linha;

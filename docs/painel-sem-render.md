@@ -742,6 +742,49 @@ console. As três linhas de prova foram apagadas do banco da cópia depois.
 A tabela nasce sozinha do DDL idempotente (`db.ts`), então **na produção não tem nada para criar
 à mão**: o primeiro cold start da função depois do deploy já cria `cliente_pix`.
 
+## A aba Clientes de 900 em 900, com busca em tudo (17/11/2026)
+
+O pedido dele, dito em 17/11/2026: *"como tem mais de 4 mil contatos acho que a aba clientes agora
+sobrecarregou e nem abre, coloca pra mostrar de 900 em 900 pra não forçar o navegador, coloca um
+campo que eu consigo fazer pesquisa por CPF NOME telefone PALAVRA, o que tiver na base toda"*.
+
+A causa era essa: `clientes_ver` devolvia a lista inteira e `carregarClientes` desenhava cada linha
+em `<tr>`. Depois da colagem com CPF a base da cópia está em **17.304** no espelho, 17.301 com
+telefone e 16.382 com CPF — o navegador não consegue montar 17 mil linhas e a aba não abre.
+
+- **A página vem do banco**, não do navegador: `listarClientesPagina(pagina, termo)`
+  (`banco.ts`) devolve `CLIENTES_POR_PAGINA = 900` linhas por vez com
+  `order by exp_date desc nulls last, username` (a mesma ordem de antes, então a paginação é
+  estável) e um segundo `select` só com os totais. A aba Acessos já fazia assim; aqui o front usa
+  `#clBusca` / `#clBuscar` / `#clPaginacao` com `carregarClientes(pagina, busca)`.
+- **A união pesquisada é a mesma lista da tela** — `mc_linhas` com `left join cliente_pix` (nome e
+  CPF) em cima, e embaixo quem só tem telefone em `usuarios_criados_ip`. O `listarClientes()` de
+  sempre continua existindo porque `lote_contagem` o usa para contar o lote.
+- **Um campo só, duas réguas** (`FILTRO_CLIENTES`): se o termo **tem letra**, procura em
+  `username`, `nome` e `notes` com `ilike` (não diferencia maiúscula); se o termo é **só número e
+  pontuação**, procura em `cpf`, `telefone` e `username` como dígitos. Por isso
+  `(96) 99204-8213`, `96992048213` e `5596992048213` acham a mesma linha, e `820.715.272-91` acha
+  pelo CPF. Um nome com dígitos no meio não inunda a tela com quem tem aqueles dígitos no telefone.
+- **O que não é busca:** campo vazio (ou só espaço, ou só `%`) devolve a base inteira, porque o
+  termo vazio não é filtro. `%` e `_` são tirados do termo para não virarem curinga do `LIKE`.
+- **O resumo do topo conta a base, não a página**: "N de 17304 clientes batem com "fulano" ·
+  17301 com telefone · 1 só na agenda · última sincronização ...", e embaixo
+  "página 3 de 20 · 17304 nesta busca · 900 por vez" com ‹ anterior / próxima ›.
+- **A coluna nova "Nome e CPF"** veio junto porque sem ela a busca por nome achava linhas que não
+  mostravam o nome achado. Quem não foi colado com PIX mostra `—`.
+
+**Medido na cópia (17/11/2026, 17.304 linhas):** com o banco acordado a página custa
+**~150-190 ms** e os totais **~64-190 ms** (roda de 3 vezes em cada forma — `explain analyze` da
+busca por "silva" fecha em 84 ms: um `seq scan` de 17 mil linhas com hash join do `cliente_pix`,
+sem índice nenhum envolvido). A primeira chamada depois de o container dormir paga o despertar do
+banco e já foi medida em 10-13 s — o painel espera 120 s no `chamar` da aba, então o toque não
+falha, só demora uma vez.
+
+Prova: `npx --yes deno run -A --env-file=../../../.env ../../../tools/_prova_clientes_pagina.ts` na
+pasta `supabase/functions/peixeiro` — **21/21**, só leitura (nada escreve, nada envia): 900 por
+página, páginas sem sobreposição, última página com o resto, página além da última vazia, quem só
+tem telefone na agenda cai no fim, e as réguas de busca acima.
+
 ## O que os logs do MC guardavam
 
 `mcapi_events` é texto puro e o `login_refresh` gravava o corpo inteiro da chamada — **a senha do MC

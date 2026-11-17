@@ -326,28 +326,32 @@ export async function sincronizarLinhas(clientIp: string, maxPaginas = 5) {
   return { ok: true, linhas };
 }
 
+/** A linha do espelho na forma que a tela usa; o `agora` entra por fora para o "faltam X dias"
+ *  de uma página inteira calcular com um único instante. */
+function desenhoDaLinha(linha: Record<string, unknown>, agora: number) {
+  const exp = linha.exp_date ? new Date(String(linha.exp_date)) : null;
+  return {
+    username: String(linha.username || ""),
+    linha_id: String(linha.linha_id || ""),
+    telefone: String(linha.telefone || ""),
+    expira: exp ? formatarBrasilia(exp) : "",
+    exp_iso: exp ? isoUtc(exp) : "",
+    texto_dias: exp ? textoVencido((exp.getTime() - agora) / 3_600_000) : "",
+    vencido: Boolean(exp && exp.getTime() <= agora),
+    status: Number(linha.status || 0),
+    ativo: Number(linha.status || 0) === 1,
+    notes: String(linha.notes || "").slice(0, 80),
+    sincronizado: linha.synced_at ? formatarBrasilia(new Date(String(linha.synced_at))) : "",
+  };
+}
+
 export async function listarEspelho() {
   const r = await consultar(
     `select username, linha_id, telefone, exp_date, status, notes, synced_at
        from public.mc_linhas order by exp_date desc nulls last`,
   );
   const agora = Date.now();
-  return r.rows.map((linha: Record<string, unknown>) => {
-    const exp = linha.exp_date ? new Date(String(linha.exp_date)) : null;
-    return {
-      username: String(linha.username || ""),
-      linha_id: String(linha.linha_id || ""),
-      telefone: String(linha.telefone || ""),
-      expira: exp ? formatarBrasilia(exp) : "",
-      exp_iso: exp ? isoUtc(exp) : "",
-      texto_dias: exp ? textoVencido((exp.getTime() - agora) / 3_600_000) : "",
-      vencido: Boolean(exp && exp.getTime() <= agora),
-      status: Number(linha.status || 0),
-      ativo: Number(linha.status || 0) === 1,
-      notes: String(linha.notes || "").slice(0, 80),
-      sincronizado: linha.synced_at ? formatarBrasilia(new Date(String(linha.synced_at))) : "",
-    };
-  });
+  return r.rows.map((linha) => desenhoDaLinha(linha, agora));
 }
 
 /** Quem só existe na agenda de telefones (`usuarios_criados_ip`): cliente importado por CSV ou
@@ -381,6 +385,96 @@ export async function listarSoAgenda() {
 /** A lista da aba Clientes: o espelho do MC em cima e a gente que só tem telefone embaixo. */
 export async function listarClientes() {
   return [...await listarEspelho(), ...await listarSoAgenda()];
+}
+
+/** Quantas linhas a aba Clientes mostra de uma vez. Com a base inteira na tela (17 mil em
+ *  17/11/2026) o navegador não consegue desenhar e a aba não abre, então o servidor devolve
+ *  uma página por vez — o mesmo caminho que a aba Acessos já tinha. */
+export const CLIENTES_POR_PAGINA = 900;
+
+/** As duas consultas de clientes lêem esta união: o espelho do MC com o nome e o CPF do PIX em
+ *  cima, e embaixo quem só tem telefone na agenda (CSV importado ou linha apagada do MC). */
+const BASE_CLIENTES = `
+  with base as (
+    select m.username, m.linha_id, m.telefone, m.exp_date, m.status, m.notes, m.synced_at,
+           p.nome, p.cpf, false as so_agenda
+      from public.mc_linhas m
+      left join public.cliente_pix p on p.usuario = m.username
+    union all
+    select a.username, '', a.telefone, null, 0, '', null, p.nome, p.cpf, true
+      from (select distinct on (u.username) u.username, u.telefone
+              from public.usuarios_criados_ip u
+             where coalesce(u.telefone, '') <> ''
+               and not exists (select 1 from public.mc_linhas m where m.username = u.username)
+             order by u.username, u.updated_at desc) a
+      left join public.cliente_pix p on p.usuario = a.username
+  )`;
+
+/** Um campo só pesquisa em tudo, pelo formato do que foi digitado: com letra procura usuário,
+ *  nome e nota; só com números procura CPF, telefone e usuário. Assim "(11) 99204-8213" acha o
+ *  número mesmo com a máscara e um nome com algarismos no meio não inunda a tela com quem tem
+ *  aqueles dígitos no telefone. `$3` é o termo aproveitado; vazio quer dizer "sem busca", que
+ *  devolve a base inteira. */
+const FILTRO_CLIENTES = `($3 = ''
+      or ($1 <> '' and (b.username ilike '%'||$1||'%'
+                        or coalesce(b.nome, '') ilike '%'||$1||'%'
+                        or coalesce(b.notes, '') ilike '%'||$1||'%'))
+      or ($2 <> '' and (coalesce(b.cpf, '') like '%'||$2||'%'
+                        or coalesce(b.telefone, '') like '%'||$2||'%'
+                        or b.username like '%'||$2||'%')))`;
+
+export async function listarClientesPagina(pagina: number, termo: string) {
+  const bruto = (termo || "").trim();
+  // A régua é letra ou não é: pontuação de telefone e de CPF não conta como palavra.
+  const temLetra = /\p{L}/u.test(bruto);
+  // `%` e `_` são curingas do LIKE: dentro de um termo pesquisado eles não significam nada.
+  const texto = temLetra ? bruto.replace(/[%_]/g, "") : "";
+  const digitos = temLetra ? "" : bruto.replace(/\D/g, "");
+  const params = [texto, digitos, texto || digitos];
+  const numero = Math.max(1, Math.trunc(Number(pagina) || 1));
+
+  const totais = await consultar(
+    `${BASE_CLIENTES}
+     select count(*)::int as na_base,
+            count(*) filter (where coalesce(b.telefone, '') <> '')::int as com_telefone,
+            count(*) filter (where b.so_agenda)::int as so_agenda,
+            count(*) filter (where ${FILTRO_CLIENTES})::int as encontrados,
+            max(b.synced_at) as sincronizado
+       from base b`,
+    params,
+  );
+  const r = await consultar(
+    `${BASE_CLIENTES}
+     select b.username, b.linha_id, b.telefone, b.exp_date, b.status, b.notes, b.synced_at,
+            b.nome, b.cpf, b.so_agenda
+       from base b
+      where ${FILTRO_CLIENTES}
+      order by b.exp_date desc nulls last, b.username
+      limit ${CLIENTES_POR_PAGINA} offset $4`,
+    [...params, (numero - 1) * CLIENTES_POR_PAGINA],
+  );
+
+  const t = totais.rows[0] || {};
+  const encontrados = Number(t.encontrados || 0);
+  const agora = Date.now();
+  return {
+    linhas: r.rows.map((linha) => ({
+      ...desenhoDaLinha(linha, agora),
+      nome: String(linha.nome || ""),
+      cpf: String(linha.cpf || ""),
+      so_agenda: Boolean(linha.so_agenda),
+    })),
+    info: {
+      pagina: numero,
+      paginas: Math.max(1, Math.ceil(encontrados / CLIENTES_POR_PAGINA)),
+      por_pagina: CLIENTES_POR_PAGINA,
+      encontrados,
+      na_base: Number(t.na_base || 0),
+      com_telefone: Number(t.com_telefone || 0),
+      so_agenda: Number(t.so_agenda || 0),
+      sincronizado: t.sincronizado ? formatarBrasilia(new Date(String(t.sincronizado))) : "",
+    },
+  };
 }
 
 // ---------------------------------------------------------------- "já avisei"

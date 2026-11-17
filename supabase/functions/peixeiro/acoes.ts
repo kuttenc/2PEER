@@ -4,6 +4,7 @@ import {
   chaveAvisadas,
   espelharLinhas,
   listarClientes,
+  listarClientesPagina,
   mesclarTelefones,
   obterConfig,
   registrarAviso,
@@ -428,13 +429,8 @@ export async function acessosVer(dados: Registro, ctx: Contexto): Promise<Saida>
 
 // ------------------------------------------------------------------ clientes (espelho do MC)
 
-export async function clientesVer(): Promise<Saida> {
-  const linhas = await listarClientes();
-  return ok({
-    linhas,
-    com_telefone: linhas.filter((l) => l.telefone).length,
-    so_agenda: linhas.filter((l) => !l.linha_id).length,
-  });
+export async function clientesVer(dados: Registro): Promise<Saida> {
+  return ok(await listarClientesPagina(Number(dados.pagina || 1), txt(dados.q)));
 }
 
 export async function clientesSincronizar(_dados: Registro, ctx: Contexto): Promise<Saida> {
