@@ -365,7 +365,8 @@ WhatsApp* (webhook não instalado), *no servidor*, *entregue ao WhatsApp*, *cheg
   `PEIXEIRO_MODO_TESTE=1` local e as contas conferidas contra o banco). O comando está na seção
   "As duas listas do Não recuperados", mais adiante.
 
-- A mensagem comum da aba Clientes foi provada com `tools/_prova_mensagem.py` (40 provas): a conta
+- A mensagem comum da aba Clientes foi provada com `tools/_prova_mensagem.py` (**38 provas**; eram 40
+  enquanto sobrou gente na agenda — a bateria roda no grupo que tem alvo, `fora` ou `todos`): a conta
   conferida contra o banco, o plano congelado com o texto dentro de cada item, o `"todos"` que chama o
   espelho de volta, filtro, texto vazio, texto de 1300 caracteres, o envio de um cliente só, os três
   simulados, o registro com `exp_date=''`, a fila viva, parar, retomar e a prova de que o painel MC não
@@ -491,7 +492,7 @@ dois planos congelados que as minhas conferências deixaram em `painel_lote` (`r
 `mensagem_lote`), porque conferência velha não serve para nada.
 
 ⚠️ Consequência direta, e foi isso que ele escolheu: a aba Clientes da cópia voltou a ter **14 linhas** e
-o botão **"Mensagem para fora do MC"** (`quem: "fora"`) ficou com **0 alvos** — a lista que ele tinha
+o botão **"Mensagem pelo WhatsApp"** (`quem: "fora"` no padrão) ficou com **0 alvos** — a lista que ele tinha
 pedido para messagear era exatamente essa gente. Quem sobra para mensagem é o `quem: "todos"`: **11** com
 número, 3 sem. E o "Não recuperados" nunca alcançou os 963, com ou sem essa limpeza: aquele lote só conta
 **vencidos**, e linha de agenda não tem data de expiração — não é bug, é o critério.
@@ -551,6 +552,21 @@ botão leu "Sim, enviar para 961". Cada conferência congela o plano em `painel_
 **Medido de novo depois da limpeza da agenda (mesmo dia):** a aba Clientes caiu de 977 para **14 linhas**
 (`so_agenda` 0, 11 com número, 10 vencidas), `quem: "fora"` ficou com **0 alvos** e `quem: "todos"` com
 **11**. As duas medições acima valem para o banco antes desse `delete`.
+
+**E o botão passou a servir para a lista toda (decisão dele, 16/11/2026):** *"a aba cleintes deve poder
+enviar mensagem para todos os cliente mesmo se esta no mc"* — com a agenda esvaziada, o `quem: "fora"` não
+tem mais ninguém, então o botão da aba Clientes se chama **"Mensagem pelo WhatsApp"** (antes era
+"Mensagem para fora do MC") e o seletor **"para quem vai"** mostra o tamanho de cada grupo na hora
+("só quem NÃO está no painel MC (0 na lista)" / "a lista inteira da aba Clientes (14 na lista)" — os
+números vêm do `lote_contagem`, só trocam depois da primeira conta). Se o grupo escolhido der conta em
+zero e o outro tiver alvo, **o modal cai sozinho no outro** (`msTrocado` segura para não ficar pulando
+entre os dois), em vez de deixar o botão morto com "? não" na tela. O motor já alcançava a lista inteira
+(`contagemDeMensagem` com `quem: "todos"`), e a bateria `tools/_prova_mensagem.py` agora roda **no grupo que
+tem alvo** — na cópia de hoje ela prova o `"todos"`: `na_lista` 14, `alvos` 11 → **10** com um marcado para
+pular, `sem_linha_mc` 0, `esperando` 0, os três envios simulados saem de linhas que **têm `linha_id` no
+painel MC**, cada uma registrada com `exp_date = ''` e `via = 'mensagem'`, nenhum `painel_links` nasce e
+os `login_refresh` param em 35 → 35. São **38/38 provas** (eram 40; a que testava o grupo vazio saiu porque
+não há mais para quem mandar).
 
 ## O que os logs do MC guardavam
 
