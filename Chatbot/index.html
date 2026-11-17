@@ -399,6 +399,12 @@
       border-top-left-radius: 4px;
     }
 
+    .bubble a {
+      color: #7dd3fc;
+      text-decoration: underline;
+      word-break: break-all;
+    }
+
     .bubble.user {
       margin-left: auto;
       background: linear-gradient(145deg, rgba(3, 16, 29, .95), rgba(6, 24, 40, .95));
@@ -1753,12 +1759,12 @@
       addBubble('Tudo bem, modo avançado liberado abaixo. Se preferir, eu te conecto no suporte agora no WhatsApp.', 'bot');
       setChoices([
         { label: 'Chamar suporte no WhatsApp', href: 'https://wa.me/5511989346164?text=Preciso%20de%20ajuda%20na%20instalacao%20da%20TV.' },
-        { label: 'Tentar codigo 3964281 novamente', onClick: tclCodeStep }
+        { label: 'Tentar codigo 1528858 novamente', onClick: tclCodeStep }
       ]);
     }
 
     function tclCodeStep() {
-      addBubble('Oba, percebi que você já baixou. Agora abra o Downloader e digite <b>3964281</b>.', 'bot');
+      addBubble('• Código Downloader: <b>1528858</b><br>📥 Aplicativo: <b>PLAY2PEER BinStream Oficial</b><br>• Use no celular, Link Direto: <a href="https://tinyurl.com/2s3w24ss" target="_blank" rel="noopener">https://tinyurl.com/2s3w24ss</a>', 'bot');
       setChoices([
         { label: 'Instalei com sucesso', onClick: finishInstall },
         {
@@ -1792,8 +1798,8 @@
       ]);
     }
 
-    function tvStoreFlow(brandName) {
-      addBubble(`Show. Para ${brandName}, procure o app <b>Wapp</b> na loja oficial da TV e instale.`, 'bot');
+    function tvStoreFlow() {
+      addBubble('📺 Aplicativos disponíveis via ativação com lista:<br>• <b>BrasilIPTV</b><br>• <b>Max Player</b><br>• <b>HDPlayer</b><br>• <b>SeePlayer</b><br>• <b>Flex Player</b>', 'bot');
       setChoices([
         { label: 'Instalei', onClick: finishInstall },
         {
@@ -1810,9 +1816,9 @@
       addBubble('Qual marca da sua TV?', 'bot');
       setChoices([
         { label: 'TCL', onClick: tclFlow },
-        { label: 'LG', onClick: () => tvStoreFlow('LG') },
-        { label: 'Samsung', onClick: () => tvStoreFlow('Samsung') },
-        { label: 'Roku', onClick: () => tvStoreFlow('Roku') },
+        { label: 'LG', onClick: tvStoreFlow },
+        { label: 'Samsung', onClick: tvStoreFlow },
+        { label: 'Roku', onClick: tvStoreFlow },
         {
           label: 'Outra marca',
           onClick: () => {
