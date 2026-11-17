@@ -785,6 +785,14 @@ pasta `supabase/functions/peixeiro` — **21/21**, só leitura (nada escreve, na
 página, páginas sem sobreposição, última página com o resto, página além da última vazia, quem só
 tem telefone na agenda cai no fim, e as réguas de busca acima.
 
+Ao vivo, no painel do Pages com a função publicada (17/11/2026, nenhuma mensagem saiu): a aba abriu
+com **900** linhas e "17304 clientes · 17301 com telefone · 1 só na agenda · última sincronização
+17/11/2026 12:19"; `próxima ›` levou à página 2 (`r566948` no topo, 900 linhas); buscar
+`82071527291` devolveu **1** linha com o nome e o CPF na coluna nova; `(96) 99204-8213` e
+`ADERLANE` também acharam a mesma linha; `zzninguemnabase999` deixou a tabela vazia com o texto
+"Ninguém na base bate com … — o campo procura usuário, nome, CPF, telefone e nota" e o resumo
+continuou contando a base; **Limpar** voltou às 20 páginas. Console sem nenhuma mensagem.
+
 ## O que os logs do MC guardavam
 
 `mcapi_events` é texto puro e o `login_refresh` gravava o corpo inteiro da chamada — **a senha do MC
