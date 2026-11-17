@@ -134,11 +134,18 @@ def limpar(cli):
     print("limpo: fila 'mensagem_lote', avisos via=mensagem e os logs desta bateria")
 
 
-def provar(token, cli, fora, no_mc, nomes):
+def provar(token, cli, fora, no_mc, nomes, grupo):
     local = "127.0.0.1" in FUNCAO
     pulado, alvo, avulso = nomes
     recentes = {r[0] for r in consulta(cli, RECENTES_SQL)}
-    alvos_fora = len([u for u in fora if u not in recentes])
+    # O grupo que a bateria confere é o que tem alvo: "fora" enquanto sobrou gente da agenda,
+    # "todos" quando a agenda esvaziou — é a lista inteira, com quem ainda tem linha no MC dentro.
+    def alvos_de(escolhido):
+        pool = fora if escolhido == "fora" else [u for u in fora if u not in recentes] + no_mc
+        vivos = [u for u in pool if u not in recentes]
+        return len(vivos) - (1 if pulado in vivos else 0)
+
+    alvos_grupo = alvos_de(grupo)
 
     status, d = chamar("ping")
     checar("a função está de pé", status == 200 and d.get("ok"), str(d))
@@ -152,7 +159,7 @@ def provar(token, cli, fora, no_mc, nomes):
 
     antes = eventos_mc(cli)
     t0 = time.time()
-    status, d = chamar("lote_contagem", {"tipo": "mensagem", "texto": TEXTO, "quem": "fora",
+    status, d = chamar("lote_contagem", {"tipo": "mensagem", "texto": TEXTO, "quem": grupo,
                                          "pular": [pulado]}, token)
     durou = time.time() - t0
     checar("a contagem da mensagem responde", status == 200 and d.get("ok"), str(d)[:120])
@@ -161,8 +168,8 @@ def provar(token, cli, fora, no_mc, nomes):
     checar("sem_linha_mc bate com a aba Clientes", d.get("sem_linha_mc") == len(fora),
            "%s vs %s" % (d.get("sem_linha_mc"), len(fora)))
     checar("o marcado para pular saiu da conta", d.get("pulados") == 1, str(d.get("pulados")))
-    checar("vão receber é a agenda menos o marcado", d.get("alvos") == alvos_fora - 1,
-           "%s vs %s" % (d.get("alvos"), alvos_fora - 1))
+    checar("vão receber é o grupo menos o marcado", d.get("alvos") == alvos_grupo,
+           "%s vs %s" % (d.get("alvos"), alvos_grupo))
     checar("quem recebeu algo nas últimas 3h ficou de fora",
            d.get("esperando") == len([u for u in fora if u in recentes]), str(d.get("esperando")))
     checar("a contagem da mensagem não abre o painel MC", durou < 20 and eventos_mc(cli) == antes, "%.1fs" % durou)
@@ -174,31 +181,40 @@ def provar(token, cli, fora, no_mc, nomes):
     checar("todo item do plano carrega o texto", bool(plano) and all(i.get("texto") == TEXTO for i in plano), "")
     checar("todo item do plano tem telefone", all(str(i.get("telefone") or "") for i in plano), "")
     checar("o marcado para pular não entrou no plano", pulado not in {i["username"] for i in plano}, "")
-    checar("quem tem linha no MC ficou de fora do \"fora\"",
-           all(u not in no_mc for u in [i["username"] for i in plano]), "")
-    checar("a mensagem alcança muito mais gente que o MC", len(plano) > 100, "%s na fila" % len(plano))
-
-    if no_mc:
-        status, d = chamar("lote_contagem", {"tipo": "mensagem", "texto": TEXTO, "quem": "todos",
-                                             "pular": [pulado]}, token)
-        checar("\"todos\" chama o espelho de volta para a fila",
-               d.get("ok") and d.get("alvos") == alvos_fora - 1 + len(no_mc),
-               "%s vs %s+%s" % (d.get("alvos"), alvos_fora - 1, len(no_mc)))
-        checar("e o marcado para pular continua de fora", d.get("pulados") == 1, str(d.get("pulados")))
-        chamar("lote_contagem", {"tipo": "mensagem", "texto": TEXTO, "quem": "fora", "pular": [pulado]}, token)
+    do_plano = {i["username"] for i in plano}
+    if grupo == "fora":
+        checar("quem tem linha no MC ficou de fora do \"fora\"", all(u not in no_mc for u in do_plano), "")
+        checar("a mensagem alcança mais gente que as linhas do MC", len(plano) > len(no_mc),
+               "%s na fila, %s no MC" % (len(plano), len(no_mc)))
     else:
-        print("   (nenhum cliente do espelho com telefone fora das últimas 3h: \"todos\" não foi provado)")
+        checar("no \"todos\" quem tem linha no MC entrou na fila", bool(no_mc) and
+               all(u in do_plano for u in no_mc if u != pulado),
+               "%s de %s (menos o marcado)" % (len([u for u in no_mc if u != pulado]), len(do_plano)))
+        checar("e o \"todos\" alcança todo mundo com número", len(plano) >= alvos_grupo,
+               "%s na fila" % len(plano))
 
-    status, d = chamar("lote_contagem", {"tipo": "mensagem", "texto": TEXTO, "quem": "fora", "q": alvo}, token)
+    outro = "todos" if grupo == "fora" else "fora"
+    if alvos_de(outro):
+        status, d = chamar("lote_contagem", {"tipo": "mensagem", "texto": TEXTO, "quem": outro,
+                                             "pular": [pulado]}, token)
+        checar("o outro grupo da tela também monta fila",
+               d.get("ok") and d.get("alvos") == alvos_de(outro),
+               "%s vs %s (%s)" % (d.get("alvos"), alvos_de(outro), outro))
+        checar("e o marcado para pular continua de fora", d.get("pulados") == 1, str(d.get("pulados")))
+        chamar("lote_contagem", {"tipo": "mensagem", "texto": TEXTO, "quem": grupo, "pular": [pulado]}, token)
+    else:
+        print("   (o grupo %r não tem alvo nenhum na cópia: ele não foi provado)" % outro)
+
+    status, d = chamar("lote_contagem", {"tipo": "mensagem", "texto": TEXTO, "quem": grupo, "q": alvo}, token)
     checar("o filtro da tela também vale na mensagem", d.get("ok") and d.get("alvos") == 1, str(d.get("alvos")))
-    status, d = chamar("lote_contagem", {"tipo": "mensagem", "texto": "   ", "quem": "fora"}, token)
+    status, d = chamar("lote_contagem", {"tipo": "mensagem", "texto": "   ", "quem": grupo}, token)
     checar("texto vazio não monta fila", not d.get("ok") and d.get("erro") == "sem_texto", str(d)[:80])
     status, d = chamar("lote_contagem", {"tipo": "mensagem", "texto": "x" * 1300, "quem": "fora"}, token)
     checar("texto acima de 1200 caracteres é recusado", not d.get("ok") and d.get("erro") == "texto_grande",
            str(d)[:80])
 
     # Volta para a conferência do lote, com o pulado de fora e sem filtro.
-    status, d = chamar("lote_contagem", {"tipo": "mensagem", "texto": TEXTO, "quem": "fora",
+    status, d = chamar("lote_contagem", {"tipo": "mensagem", "texto": TEXTO, "quem": grupo,
                                          "pular": [pulado]}, token)
     plano = plano_congelado(cli)
 
@@ -251,7 +267,7 @@ def provar(token, cli, fora, no_mc, nomes):
                          "  and atualizado_em > now() - interval '30 minutes'", (enviados,))[0][0] == 0, "")
 
     status, d = chamar("lote_fila", {"tipo": "mensagem"}, token)
-    checar("a fila viva mostra a lista de fora do MC", d.get("ok") and d.get("fonte") == "fora",
+    checar("a fila viva mostra o grupo escolhido", d.get("ok") and d.get("fonte") == grupo,
            str(d.get("fonte")))
     checar("a fila tem o total do plano", d.get("total") == len(plano), str(d.get("total")))
     situacoes = {i["usuario"]: i["situacao"] for i in d.get("itens", [])}
@@ -274,19 +290,26 @@ def main():
     token = token_sessao(cli)
     fora = [r[0] for r in consulta(cli, FORA_MC_SQL + " order by a.username")]
     no_mc = [r[0] for r in consulta(cli, NO_MC_SQL)]
-    if len(fora) < 3:
-        print("a agenda da cópia não tem 3 clientes fora do MC: %s" % fora[:3])
+    if len(fora) < 3 and len(no_mc) < 3:
+        print("a cópia não tem 3 clientes com número nem na agenda (%s) nem no espelho do MC (%s)"
+              % (len(fora), len(no_mc)))
         sys.exit(2)
     if "limpar" in sys.argv[1:]:
         limpar(cli)
         return
+    # A bateria roda no grupo que tem alvo: "fora" enquanto a agenda da cópia tem gente sobrando,
+    # "todos" quando ela esvaziou — e é assim que ela prova o envio para quem ainda tem linha no MC.
+    grupo = "fora" if len(fora) >= 3 else "todos"
     # A ordem do plano é a da tela; escolho o marcado, o filtro e o avulso por dentro dela para
     # nenhum dos três brigar com os três envios do lote.
-    chamar("lote_contagem", {"tipo": "mensagem", "texto": TEXTO, "quem": "fora"}, token)
+    chamar("lote_contagem", {"tipo": "mensagem", "texto": TEXTO, "quem": grupo}, token)
     ordem = [str(i.get("username")) for i in plano_congelado(cli)]
+    if len(ordem) < 3:
+        print("a cópia não tem 3 clientes com número no grupo %r: %s" % (grupo, ordem))
+        sys.exit(2)
     nomes = (ordem[0], ordem[1], ordem[-1])
     try:
-        provar(token, cli, fora, no_mc, nomes)
+        provar(token, cli, fora, no_mc, nomes, grupo)
     finally:
         limpar(cli)
         print("fila congelada depois da limpeza: %s"

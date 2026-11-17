@@ -1588,6 +1588,7 @@
   var msModo = "lote";      // "lote" = a lista da aba; "um" = só o cliente do botão da linha
   var msAlvo = null;        // a linha da tabela quando msModo === "um"
   var msEspera = null;      // o tempo entre digitar e contar no servidor
+  var msTrocado = false;    // se este modal já pulo sozinho para "a lista inteira"
 
   function msCorpo() { return $("msCorpo").value.trim(); }
 
@@ -1617,7 +1618,7 @@
         (telefoneBr(msAlvo.telefone) || "que ainda não está cadastrado");
       $("msEnviar").disabled = !msCorpo();
     } else {
-      $("msTitulo").textContent = "Mensagem avulsa pelo WhatsApp";
+      $("msTitulo").textContent = "Mensagem em massa pelo WhatsApp";
       $("msEnviar").textContent = "Sim, enviar";
     }
   }
@@ -1650,12 +1651,26 @@
           $("msPulados").textContent = d.pulados;
           $("msSemTelefone").textContent = d.sem_telefone;
           $("msEsperando").textContent = d.esperando;
+          // Os dois grupos da lista aparecem no seletor já com o tamanho de cada um.
+          var opcoes = $("msQuem").options;
+          opcoes[0].textContent = "só quem NÃO está no painel MC (" + d.sem_linha_mc + " na lista)";
+          opcoes[1].textContent = "a lista inteira da aba Clientes (" + d.na_lista + " na lista)";
+          // Não sobrou ninguém fora do MC: a única lista que ainda tem alvo é a inteira, e o modal
+          // cai nela sozinho em vez de deixar o botão morto com a conta em zero.
+          if (!msTrocado && $("msQuem").value === "fora" && !d.alvos && !d.sem_linha_mc && d.na_lista) {
+            msTrocado = true;
+            $("msQuem").value = "todos";
+            msQuemNota();
+            msContar();
+            return;
+          }
           var nomes = limpar($("msNomes"));
           (d.primeiros || []).forEach(function (n) { nomes.appendChild(criar("span", "", n)); });
           var enviar = $("msEnviar");
           enviar.textContent = "Sim, enviar para " + d.alvos;
           enviar.disabled = !d.alvos;
-          msAviso(d.alvos ? "" : "Ninguém sobrou para enviar: desmarque alguém na coluna pular ou cadastre o telefone.");
+          msAviso(d.alvos ? "" : "Ninguém sobrou para enviar: desmarque alguém na coluna pular ou salve o " +
+            "telefone na linha — embaixo de \"para quem vai\" dá para trocar para a lista inteira.");
         });
     }, 600);
   }
@@ -1663,6 +1678,7 @@
   function abrirMensagem(alvo) {
     msAlvo = alvo || null;
     msModo = alvo ? "um" : "lote";
+    msTrocado = false;
     $("mmRevisar").hidden = false;
     $("mmProgresso").hidden = true;
     msAviso("");
