@@ -4,12 +4,14 @@ import * as acoes from "./acoes.ts";
 import { avisoCron } from "./varredura.ts";
 import { usuarioAutenticado } from "./sessao.ts";
 import { modoTeste } from "./mcapi.ts";
+import { gerarAcesso } from "./site.ts";
 import type { Handler, Registro } from "./acoes.ts";
 
 // O clique de um cliente na página r/ é anônimo por natureza: ele não tem, e não pode ter,
 // sessão do painel — e só pede o endereço para onde o link dele já mandava. O webhook do
 // GreenAPI é a mesma coisa: quem bate aqui é o servidor dele, e a chave vai na URL.
-const SEM_SESSAO = new Set(["ping", "entrar", "aviso_cron", "links_destino", "chat_webhook"]);
+// `site_gerar` entra no mesmo grupo: é o botão do clone do site, apertado pelo cliente.
+const SEM_SESSAO = new Set(["ping", "entrar", "aviso_cron", "links_destino", "chat_webhook", "site_gerar"]);
 
 /** O contrato público do painel: cada rota do Flask vira uma action com nome de rota.
  *  Escrita à mão de propósito — assim dá para conferir, linha por linha, que nenhuma
@@ -51,6 +53,9 @@ const ACAO: Record<string, Handler> = {
   recuperar_um: acoes.recuperarUm,
 
   mensagem_um: acoes.mensagemUm,
+
+  // O botão "Gerar acesso 4 horas" do clone do site, sem sessão e sem Render.
+  site_gerar: gerarAcesso,
 
   lote_contagem: acoes.loteContagem,
   lote_executar: acoes.loteExecutar,

@@ -72,7 +72,14 @@ const SEGREDOS = /^(token|accesstoken|access_token|refreshtoken|refresh_token|jw
 export function mascararResposta(body: Record<string, unknown>): Record<string, unknown> {
   const saida: Record<string, unknown> = {};
   for (const [chave, valor] of Object.entries(body || {})) {
-    saida[chave] = SEGREDOS.test(chave) ? `(oculto ${String(valor || "").length} chars)` : valor;
+    if (SEGREDOS.test(chave)) {
+      saida[chave] = `(oculto ${String(valor || "").length} chars)`;
+    } else if (valor && typeof valor === "object" && !Array.isArray(valor)) {
+      // O MC embrulha a linha criada em `line`, e é ali que mora a senha do teste.
+      saida[chave] = mascararResposta(valor as Record<string, unknown>);
+    } else {
+      saida[chave] = valor;
+    }
   }
   return saida;
 }
@@ -400,6 +407,49 @@ export async function apagarLinha(bearer: string, linhaId: string): Promise<{ st
     corpo = { raw: bruto.slice(0, 300) };
   }
   return { status: resp.status, corpo };
+}
+
+/** O teste de 4 horas do site: é POST /lines/test com os pacotes já escolhidos e a nota do
+ *  cliente. Os mesmos cabeçalhos de navegador do GET /lines — sem eles o MC devolve 401. */
+export async function criarLinhaTeste(
+  bearer: string,
+  nota: string,
+): Promise<{ status: number; corpo: Record<string, unknown>; pedido: Record<string, unknown> }> {
+  const pedido = {
+    notes: nota,
+    package_p2p: "646d1492db22a7b1bc518941",
+    package_iptv: "70",
+    testDuration: 4,
+    krator_package: "1",
+  };
+  if (modoTeste()) {
+    const expira = new Date(Date.now() + 4 * 3_600_000).toISOString();
+    return {
+      status: 200,
+      pedido,
+      corpo: { simulado: true, username: `sim${aleatorioHex(5)}`, password: "simulada", exp_date: expira, id: "sim" },
+    };
+  }
+  const resp = await fetch(`${MC_BASE}/lines/test`, {
+    method: "POST",
+    headers: cabecalhoAuth(bearer),
+    body: JSON.stringify(pedido),
+  });
+  const bruto = await resp.text();
+  let corpo: Record<string, unknown>;
+  try {
+    corpo = JSON.parse(bruto);
+  } catch {
+    corpo = { raw: bruto.slice(0, 300) };
+  }
+  if (resp.status === 401 || resp.status === 403) await limparCacheToken();
+  return { status: resp.status, corpo, pedido };
+}
+
+function aleatorioHex(n: number): string {
+  let s = "";
+  while (s.length < n) s += Math.floor(Math.random() * 16 ** 8).toString(16).padStart(8, "0");
+  return s.slice(0, n);
 }
 
 /** O generalSearch do MC não acha pelo id, então varremos as linhas até bater. */

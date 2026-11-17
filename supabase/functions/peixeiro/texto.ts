@@ -38,6 +38,13 @@ export function formatarBrasilia(data: Date): string {
   return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
 }
 
+/** O que o site mostra em "Expira em": a mesma data, com os segundos. */
+export function formatarBrasiliaSegundos(data: Date): string {
+  const d = new Date(data.getTime() - BRAZIL_OFFSET_MS);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${formatarBrasilia(data)}:${p(d.getUTCSeconds())}`;
+}
+
 export function horaDeBrasilia(data: Date): number {
   return new Date(data.getTime() - BRAZIL_OFFSET_MS).getUTCHours();
 }
