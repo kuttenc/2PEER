@@ -473,10 +473,28 @@ fora do git porque têm telefone de cliente dentro — e depois
 com **14 linhas, todas com `linha_id`, 10 vencidas**, e a conferência linha por linha contra o MC deu
 `so no MC: []`, `so no espelho: []`, `linha_id diferente: []`. Espelho e painel MC batem 100%.
 
-Não foi mexido: `usuarios_criados_ip` ainda tem **974** usuários (963 deles dessa lista apagada), porque
-é de lá que o painel tira o telefone de cada um. Se um dia essas contas voltarem a existir, o telefone
-já está guardado; se a intenção for sumir com esses números também, é o mesmo critério (`linha_id` vazio
-em `mc_linhas`) aplicado a `usuarios_criados_ip`, decisão do dono.
+**Apagado também em 16/11/2026, por decisão do dono.** Sobrava o rastro na agenda: `usuarios_criados_ip`
+tinha **975** linhas, 963 delas dessa lista apagada (os `r566…`), e era de lá que a aba Clientes ainda
+mostrava essa gente sem linha nenhuma no MC. Backup antes para
+`../backup-espelho/usuarios_criados_ip-2026-11-16-so-agenda.csv` — 963 linhas, todas com telefone,
+**nenhuma com `exp_date`** — e depois o mesmo critério aplicado à agenda:
+
+```sql
+delete from public.usuarios_criados_ip a
+ where not exists (select 1 from public.mc_linhas m where m.username = a.username);
+```
+
+Foram **963** apagadas; a agenda ficou com **12** linhas (11 dos 14 usuários do espelho + `r5660a6`, que
+continua no MC) e `mc_linhas` continua intocado com **14 / 10 vencidas**. Nada precisou ser desfeito em
+outro lugar: `renovacao_avisos` e `painel_links` têm **0** linhas apontando para essa gente, e apaguei os
+dois planos congelados que as minhas conferências deixaram em `painel_lote` (`recuperar_todos`,
+`mensagem_lote`), porque conferência velha não serve para nada.
+
+⚠️ Consequência direta, e foi isso que ele escolheu: a aba Clientes da cópia voltou a ter **14 linhas** e
+o botão **"Mensagem para fora do MC"** (`quem: "fora"`) ficou com **0 alvos** — a lista que ele tinha
+pedido para messagear era exatamente essa gente. Quem sobra para mensagem é o `quem: "todos"`: **11** com
+número, 3 sem. E o "Não recuperados" nunca alcançou os 963, com ou sem essa limpeza: aquele lote só conta
+**vencidos**, e linha de agenda não tem data de expiração — não é bug, é o critério.
 
 Na **produção** não havia o que limpar: `mc_linhas` lá está com **0 linhas** (medido por REST em
 16/11/2026) — o import do CSV nunca rodou nesse banco.
@@ -485,8 +503,9 @@ Na **produção** não havia o que limpar: `mc_linhas` lá está com **0 linhas*
 
 Mensagem de WhatsApp normal **não depende de existir linha no painel MC**: depende só de um número.
 Depois da limpeza dos 966, essa gente toda continuou na `usuarios_criados_ip` — é de lá que o painel
-tira o telefone. Foi para isso que a aba Clientes ganhou o caminho de mensagem, e ele não abre o MC,
-não cria link de recuperação e não manda foto:
+tira o telefone (o fim dessa lista está em "Os 966 que só existiam no espelho"; o caminho abaixo continua
+valendo para qualquer número que volte a existir só na agenda). Foi para isso que a aba Clientes ganhou o
+caminho de mensagem, e ele não abre o MC, não cria link de recuperação e não manda foto:
 
 - **`listarClientes()` = `listarEspelho()` + `listarSoAgenda()`**. A segunda metade são os usuários que
   têm telefone na agenda e **não** têm linha em `mc_linhas` (`distinct on (username)`, o mais recente
@@ -528,6 +547,10 @@ modal abriu em **977** na lista, **963** sem linha no MC, o texto de 39 caracter
 "Sim, enviar para 963", e com duas marcas `pular` guardadas no navegador a conta caiu para **961** e o
 botão leu "Sim, enviar para 961". Cada conferência congela o plano em `painel_lote` (chave
 `mensagem_lote`) sem enviar nada — nada sai dali antes do `lote_executar`.
+
+**Medido de novo depois da limpeza da agenda (mesmo dia):** a aba Clientes caiu de 977 para **14 linhas**
+(`so_agenda` 0, 11 com número, 10 vencidas), `quem: "fora"` ficou com **0 alvos** e `quem: "todos"` com
+**11**. As duas medições acima valem para o banco antes desse `delete`.
 
 ## O que os logs do MC guardavam
 
