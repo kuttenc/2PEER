@@ -281,6 +281,19 @@ create table if not exists public.mc_linhas (
 alter table public.mc_linhas enable row level security;
 create index if not exists idx_mc_linhas_exp on public.mc_linhas (exp_date desc);
 
+-- O CPF de cada cliente, do que ele cola na aba Clientes. Mora fora do mc_linhas de propósito:
+-- a varredura do painel MC reescreve aquela tabela inteira e jogaria o CPF no lixo na primeira
+-- sincronização. É a tabela com que ele confere o extrato do PIX.
+create table if not exists public.cliente_pix (
+  usuario text primary key,
+  cpf text not null default '',
+  nome text not null default '',
+  criado_em timestamptz not null default now(),
+  atualizado_em timestamptz not null default now()
+);
+alter table public.cliente_pix enable row level security;
+create index if not exists idx_cliente_pix_cpf on public.cliente_pix (cpf);
+
 -- Quem abriu o painel e errou a senha (o limite por IP que antes vivia na memória do Render).
 create table if not exists public.painel_tentativas (
   id bigserial primary key,

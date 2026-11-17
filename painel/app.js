@@ -68,8 +68,9 @@
     telefone_invalido: "Telefone incompleto: digite o DDD e os 8 ou 9 números, como (11) 91234-5678.",
     origem_sem_telefone: "Quem vai emprestar o telefone está sem número: cadastre primeiro na caixinha da linha.",
     mesmo_usuario: "Escolha dois usuários diferentes para mesclar.",
-    csv_vazio: "O CSV não veio, ou não tem nenhuma linha com usuário.",
+    csv_vazio: "O CSV ou a lista colada não veio, ou não tem nenhuma linha com usuário.",
     csv_cabecalho: "Use as colunas Usuário, Telefone, Expira, Status, Nota (na ordem ou no cabeçalho).",
+    sem_lista: "Cole a lista primeiro: Nome, dados+CPF, Expira, Status, Telefone, Usuário.",
     varrer: "A varredura não conseguiu rodar agora.",
     sem_sessao: "A sessão expirou. Entre de novo.",
     sem_sobra: "Ninguém sobrou para enviar. Desmarque alguém ou cadastre o telefone.",
@@ -1153,6 +1154,7 @@
   $("apFechar").addEventListener("click", function () { fecharLote("apagar"); });
   $("maVoltar").addEventListener("click", function () { $("modalApagar").hidden = true; });
   $("mgFechar").addEventListener("click", function () { fecharLote("mensagem"); });
+  $("mpFechar").addEventListener("click", function () { $("modalPix").hidden = true; });
   $("msVoltar").addEventListener("click", function () { $("modalMensagem").hidden = true; });
   $("btnVerEnvio").addEventListener("click", function () { $("modalLote").hidden = false; });
   $("btnVerExclusao").addEventListener("click", function () { $("modalApagar").hidden = false; });
@@ -1161,6 +1163,7 @@
   document.addEventListener("keydown", function (evento) {
     if (evento.key !== "Escape") return;
     $("modalMescla").hidden = true;
+    $("modalPix").hidden = true;
     if (!$("modalLote").hidden) fecharLote("recuperar");
     if (!$("modalApagar").hidden) fecharLote("apagar");
     if (!$("modalMensagem").hidden) fecharLote("mensagem");
@@ -1844,6 +1847,31 @@
       if (!d.ok) { recado(d.erro, d.detalhe); return; }
       recado("importado", "(" + d.n + " linhas)");
       $("clCsv").value = "";
+      carregarClientes();
+    });
+  });
+
+  // A lista colada com CPF: o resultado todo vai para o modal, não para o recado do topo —
+  // é ele que tem que dizer quais linhas ficaram de fora.
+  $("clImportarPix").addEventListener("click", function () {
+    var colada = $("clPixLista").value;
+    if (!colada.trim()) { recado("sem_lista"); return; }
+    var botao = $("clImportarPix");
+    botao.disabled = true;
+    botao.textContent = "importando…";
+    chamar("clientes_importar_pix", { texto: colada }, 300).then(function (d) {
+      botao.disabled = false;
+      botao.textContent = "Importar lista com CPF";
+      if (!d.ok) { recado(d.erro, d.detalhe); return; }
+      var erros = d.erros || [];
+      $("mpResumo").textContent = d.importados + " usuários importados sem erro." +
+        (erros.length ? " " + erros.length + " linha(s) ficaram de fora." : " O CPF de cada um está guardado.");
+      $("mpErros").textContent = erros.map(function (e) {
+        return "linha " + e.linha + " · " + e.motivo + "\n  " + e.texto;
+      }).join("\n\n");
+      $("mpErrosWrap").hidden = !erros.length;
+      $("modalPix").hidden = false;
+      $("clPixLista").value = "";
       carregarClientes();
     });
   });

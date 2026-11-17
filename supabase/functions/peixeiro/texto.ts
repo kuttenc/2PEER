@@ -115,6 +115,31 @@ export function legendaRecuperar(conf: Record<string, unknown>, textoDias: strin
   return preencher(String(conf.recupera_legenda || RECUPERA_LEGENDA_PADRAO), conf, textoDias, { link });
 }
 
+/** dd/mm/aa ou dd/mm/aaaa no horário de Brasília, com ou sem hora. O CSV dele e a tabela
+ *  colada do painel MC usam as duas larguras de ano, e "15/10/26" sem os dois dígitos
+ *  virava lixo no parseExpDate. Os quatro anos vêm antes no alternado de propósito: com
+ *  \d{2} primeiro, "2026" casava como "20" e sobrava "26". */
+export function parseDataBr(texto: string): Date | null {
+  const valor = String(texto || "").trim();
+  if (!valor) return null;
+  const br = /^(\d{1,2})[/.](\d{1,2})[/.](\d{4}|\d{2})(?:[ T](\d{1,2}):(\d{2}))?/.exec(valor);
+  if (br) {
+    const dia = Number(br[1]), mes = Number(br[2]);
+    // Sem essa checagem, "32/13/26" rolava sozinha no Date.UTC e virava uma data de 2027.
+    if (mes < 1 || mes > 12 || dia < 1 || dia > 31) return null;
+    const ano = br[3].length === 2 ? 2000 + Number(br[3]) : Number(br[3]);
+    return new Date(Date.UTC(ano, mes - 1, dia, Number(br[4] || 0) - 3, Number(br[5] || 0)));
+  }
+  return parseExpDate(valor);
+}
+
+/** O CPF que vem na coluna "Dados" do painel MC, no formato dados+82071527291. São sempre
+ *  onze dígitos, com os zeros da esquerda (00955986427 é um CPF real dele). */
+export function cpfDaDados(texto: string): string {
+  const m = /(\d{11})/.exec(String(texto || ""));
+  return m ? m[1] : "";
+}
+
 // ---------------------------------------------------------------- telefone
 
 export function normalizarWhatsapp(bruto: string): string {

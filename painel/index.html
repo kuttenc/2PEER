@@ -377,6 +377,19 @@
       </div>
 
       <div class="card">
+        <h2>Colar lista com CPF</h2>
+        <p class="muted" style="margin-top:0">Cole aqui a tabela do painel MC nas colunas
+          <code>Nome</code>, <code>Dados</code>, <code>Expira</code>, <code>Status</code>,
+          <code>Telefone</code>, <code>Usuário</code> &mdash; a linha de cabeçalho é opcional. O
+          <code>dados+CPF</code> fica guardado para você conferir, na conta da pessoa, se o PIX
+          entrou. O <code>Status</code> dessa tabela é uma hora, então ele não mexe no ativo/parado.
+          Linha com erro <b>não</b> entra: o modal mostra qual foi.</p>
+        <textarea id="clPixLista" rows="6" spellcheck="false" autocapitalize="off"
+                  placeholder="Aderlane monteiro da Silva&#9;dados+82071527291&#9;15/10/26&#9;23:00&#9;5596992048213&#9;r70000000007"></textarea>
+        <div style="margin-top:10px"><button class="prim" type="button" id="clImportarPix">Importar lista com CPF</button></div>
+      </div>
+
+      <div class="card">
         <h2>Exportar e importar CSV</h2>
         <p class="muted" style="margin-top:0">As colunas são sempre
           <code>Usuário;Telefone;Expira;Status;Nota</code>. Na importação o que estiver vazio é ignorado e o
@@ -670,6 +683,20 @@
     <div class="linha" style="margin-top:12px">
       <button type="button" id="mdVoltar">Voltar</button>
       <button type="button" class="verde" id="mdConfirmar">Sim, mesclar os telefones</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="modalPix" hidden role="dialog" aria-modal="true" aria-labelledby="mpTitulo">
+  <div class="modal-caixa">
+    <h2 id="mpTitulo">Lista com CPF</h2>
+    <p style="margin-top:0" id="mpResumo"></p>
+    <div id="mpErrosWrap" hidden>
+      <p class="erro" style="margin-bottom:6px">Estas linhas não entraram (nada nelas foi gravado):</p>
+      <pre class="exemplo" id="mpErros"></pre>
+    </div>
+    <div class="linha" style="margin-top:12px">
+      <button type="button" class="verde" id="mpFechar">Fechar</button>
     </div>
   </div>
 </div>

@@ -17,7 +17,9 @@ export function lerCsv(texto: string): string[][] {
   const corpo = String(texto || "").replace(/﻿/g, "").trim();
   if (!corpo) return [];
   const primeira = corpo.split(/\r?\n/)[0];
-  const separador = [";", ",", "\t"].find((c) => primeira.includes(c)) || ";";
+  // O tab vem primeiro: colar a tabela do painel MC em uma textarea traz o tab, e um nome com
+  // vírgula ("Silva, Aderson") não pode fazer a leitura inteira trocar de separador.
+  const separador = ["\t", ";", ","].find((c) => primeira.includes(c)) || ";";
   const linhas = dividir(corpo, separador).filter((linha) => linha.length && linha.some((c) => c.trim()));
   const cabecalho = ["usuario", "user", "username"];
   if (linhas.length && cabecalho.includes(normalizar(linhas[0][0] || ""))) linhas.shift();

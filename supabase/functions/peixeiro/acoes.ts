@@ -94,6 +94,7 @@ import {
 } from "./lote.ts";
 import { avisarRenovacao, avisarVencimentos } from "./varredura.ts";
 import { escreverCsv, lerCsv } from "./csv.ts";
+import { gravarPix, parsearPix } from "./pix.ts";
 import {
   b64ParaBytes,
   bytesParaB64,
@@ -102,6 +103,7 @@ import {
   legendaAviso,
   legendaRecuperar,
   normalizarWhatsapp,
+  parseDataBr,
   parseExpDate,
   semAcento,
   telefoneValido,
@@ -496,19 +498,26 @@ export async function clientesImportar(dados: Registro, ctx: Contexto): Promise<
   return ok({ n: novos, sem_usuario: semUsuario });
 }
 
-function parseStatus(texto: string): number {
-  return ["1", "ativo", "true", "on"].includes(semAcento(texto).toLowerCase()) ? 1 : 0;
+/** A lista colada com o CPF de cada um. O CPF não mora em mc_linhas porque a varredura do MC
+ *  reescreve aquela tabela; ele fica em cliente_pix, só nosso. Linha com erro é devolvida no
+ *  modal e não entra. */
+export async function clientesImportarPix(dados: Registro, ctx: Contexto): Promise<Saida> {
+  const { linhas, erros } = parsearPix(String(dados.texto || ""));
+  if (!linhas.length && !erros.length) return falha("csv_vazio");
+  const importados = await gravarPix(linhas);
+  await gravarEvento({
+    event_type: "painel_clientes_pix",
+    status_code: 200,
+    // Sem o texto colado no log: CPF e telefone não vão para mcapi_events.
+    request_payload: { coladas: linhas.length + erros.length },
+    response_payload: { importados, erros: erros.length },
+    client_ip: ctx.ip,
+  });
+  return ok({ importados, erros });
 }
 
-/** As datas do CSV dele são de Brasília; o banco guarda UTC. */
-function parseDataBr(texto: string): Date | null {
-  const valor = String(texto || "").trim();
-  if (!valor) return null;
-  const br = /^(\d{1,2})[/.](\d{1,2})[/.](\d{4})(?:[ T](\d{1,2}):(\d{2}))?/.exec(valor);
-  if (br) {
-    return new Date(Date.UTC(Number(br[3]), Number(br[2]) - 1, Number(br[1]), Number(br[4] || 0) - 3, Number(br[5] || 0)));
-  }
-  return parseExpDate(valor);
+function parseStatus(texto: string): number {
+  return ["1", "ativo", "true", "on"].includes(semAcento(texto).toLowerCase()) ? 1 : 0;
 }
 
 // ------------------------------------------------------------------ telefones

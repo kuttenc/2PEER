@@ -42,6 +42,7 @@ const ACAO: Record<string, Handler> = {
   clientes_sincronizar: acoes.clientesSincronizar,
   clientes_exportar: acoes.clientesExportar,
   clientes_importar: acoes.clientesImportar,
+  clientes_importar_pix: acoes.clientesImportarPix,
 
   telefone_salvar: acoes.telefoneSalvar,
   telefones_mesclar: acoes.telefonesMesclar,
