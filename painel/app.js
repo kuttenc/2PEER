@@ -1129,6 +1129,7 @@
     $("mlProgresso").hidden = true;
     $("mlAviso").hidden = true;
     fonteTrocada = false;
+    foraDoMC = 0;
     $("mlFonte").value = fonteLote();
     desenharFonteLote();
     $("modalLote").hidden = false;
@@ -1137,17 +1138,21 @@
 
   $("mlFonte").addEventListener("change", function () {
     guardarFonteLote($("mlFonte").value);
+    // Escolheu ele, não o modal: nesta abertura não troco mais a fonte sozinho.
+    fonteTrocada = true;
     desenharFonteLote();
     contarRecuperar();
   });
 
-  /** O painel MC tem 14 linhas; os clientes importados por CSV só existem no espelho. A escolha
-   *  fica guardada porque a conferência e a fila do zero precisam sair da mesma lista. */
+  /** O painel MC tem 14 linhas e os clientes importados por CSV só existem no espelho, então a
+   *  lista maior é o banco: quem nunca escolheu cai no espelho e nem espera a varrida do MC. A
+   *  escolha fica guardada porque a conferência e a fila do zero precisam sair da mesma lista. */
   function fonteLote() {
-    try { return localStorage.getItem(CHAVE_FONTE) === "espelho" ? "espelho" : "mc"; } catch (e) { return "mc"; }
+    try { return localStorage.getItem(CHAVE_FONTE) === "mc" ? "mc" : "espelho"; } catch (e) { return "espelho"; }
   }
 
-  var fonteTrocada = false;   // se este modal já pulo sozinho para os vencidos do espelho
+  var fonteTrocada = false;   // se este modal já pulou sozinho ou se ele escolheu a fonte à mão
+  var foraDoMC = 0;           // quantos vencidos a varrida do painel MC deixou de fora
 
   function guardarFonteLote(valor) {
     try { localStorage.setItem(CHAVE_FONTE, valor === "espelho" ? "espelho" : "mc"); } catch (e) { /* ignora */ }
@@ -1202,10 +1207,12 @@
           (d.so_no_espelho > (d.fora_do_mc || []).length ? "…" : "") +
           " — troque para \u201cvencidos do espelho\u201d acima para enviar também para eles.")
         : "";
-      // A varredura do painel MC não acha nenhum desses vencidos (a linha foi apagada de lá), então o
-      // modal refaz a conta com o espelho em vez de deixar o botão travado em zero.
-      if (!fonteTrocada && d.fonte === "mc" && !d.alvos && d.so_no_espelho) {
+      // A varredura do painel MC deixa de fora todo vencido cuja linha foi apagada de lá (ou nunca
+      // existiu): se sobrou gente fora e ele não escolheu a fonte à mão, o modal refaz a conta com
+      // o espelho, que é a lista da aba Clientes.
+      if (!fonteTrocada && d.fonte === "mc" && d.so_no_espelho) {
         fonteTrocada = true;
+        foraDoMC = d.so_no_espelho;
         guardarFonteLote("espelho");
         $("mlFonte").value = "espelho";
         desenharFonteLote();
@@ -1216,12 +1223,12 @@
       (d.primeiros || []).forEach(function (n) { nomes.appendChild(criar("span", "", n)); });
       var enviar = $("mlEnviar");
       enviar.disabled = !d.alvos;
-      if (!d.alvos) avisoLote("Ninguém sobrou para enviar. Desmarque alguém ou cadastre o telefone.");
+      if (!d.alvos) avisoLote("Ninguém sobrou para enviar. Desmarque alguém na coluna pular ou salve o telefone na linha.");
       else if (d.aviso) avisoLote("A varrida parou antes do fim: " + d.aviso);
       else avisoLote("");
-      if (fonteTrocada) {
-        $("mlBusca").textContent = "O modal trocou sozinho para os vencidos do espelho: na varredura do " +
-          "painel MC não sobrou ninguém para enviar. " + $("mlBusca").textContent;
+      if (foraDoMC) {
+        $("mlBusca").textContent = "O modal trocou sozinho para os vencidos do espelho: a varredura do " +
+          "painel MC deixou " + foraDoMC + " vencido(s) de fora. " + $("mlBusca").textContent;
       }
     });
   }

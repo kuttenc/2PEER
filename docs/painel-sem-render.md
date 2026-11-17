@@ -412,17 +412,22 @@ O `lote_fila` devolve a `fonte` do plano congelado, porque retomar de onde parou
 claro de qual lista aquela fila nasceu.
 
 Na tela, o seletor fica no modal (logo abaixo do título), com as opções
-**"vencidos do painel MC"** e **"vencidos do espelho (aba Clientes)"**; trocar recomeça a contagem.
-A escolha fica em `localStorage["peixeiro_lote_fonte"]` — o "Montar a fila do zero" da aba
+**"vencidos do espelho (aba Clientes)"** e **"vencidos do painel MC"**; trocar recomeça a contagem.
+**A fonte padrão agora é o espelho** — com o MC em 14 linhas e o CSV no banco, varrer o MC é a exceção, e
+pular a varredura também economiza o minuto que ela leva. A escolha fica em
+`localStorage["peixeiro_lote_fonte"]` — o "Montar a fila do zero" da aba
 Não recuperados usa a mesma, e a nota dele diz qual é. Os rótulos do modal trocam de texto:
 "vencidos no painel MC" ↔ "vencidos no espelho" e "só no espelho, sem linha no MC" ↔
 "desses, já têm linha no MC".
 
-**E o modal não espera mais ele trocar (16/11/2026, `fonteTrocada` em `painel/app.js`):** se a varredura
-do painel MC devolve **0 para receber** mas existe vencido só no espelho (`so_no_espelho > 0`), o modal
-grava `espelho` na escolha, troca o seletor na tela e refaz a conta sozinho, com a nota
-"O modal trocou sozinho para os vencidos do espelho…". Uma troca por modal aberto — quem quiser a varredura
-do MC de volta é só trocar na hora, e a mesma trava existe no modal da mensagem comum (`msTrocado`).
+**E o modal não espera mais ele trocar (16/11/2026, `fonteTrocada` + `foraDoMC` em `painel/app.js`):** se a
+fonte ainda é o painel MC e a varredura devolve **qualquer vencido só no espelho** (`so_no_espelho > 0`), o
+modal grava `espelho`, troca o seletor na tela e refaz a conta sozinho, com a nota
+"O modal trocou sozinho para os vencidos do espelho: a varredura do painel MC deixou N vencido(s) de fora…".
+A primeira versão só pulava quando sobravam **0** para receber, e era o bug que ele viu: com 7 alvos no MC os
+907 do CSV ficavam de fora e o botão continuava travado. Trocar na mão vale para aquela abertura (a troca
+automática não briga com a escolha dele). Uma troca por modal aberto — a mesma trava existe no modal da
+mensagem comum (`msTrocado`).
 
 **Reimportado em 16/11/2026, depois da limpeza:** ele voltou a subir o CSV. O espelho da cópia está com
 **921 linhas** (907 `r566…` sem `linha_id`, 14 do MC), **917 vencidas**, 918 com telefone, e a agenda
