@@ -331,7 +331,70 @@ aqui já vem pronta do Pages; o que falta de servidor cabe numa chamada.
 - O que o clone **não** tem: a vitrine (`/api/...` de produtos) e nada de admin. É a tela de
   geração e o assistente de instalação, iguais.
 
+## O guia do `Chatbot/` virou modal (e o vídeo de resgate saiu)
+
+O pedido dele, em 17/11/2026: *"tira a imagem de fundo dessa pagina ... e deixa escuro o fundo mas
+bonito e inteligente"*, *"a imagem ilustrado do guia interativo deve virar apartir de agora um modal
+não sendo mais fixo na pagina para que o usuario consiga a todo momento interagir com o modal"*,
+*"vamos tentar sempre deixar facil um botão pra ele pelo guia interativo clicar e ver o usuario e
+senha apertando um botão"*, *"percebi que as letras tão pequenas ajuste para atender celular movel
+pois tem idoso que nao enxerga"* e, depois de ver a primeira versão: *"deste modal aqui remova o
+video e o seguinte texto"*, *"as letras ficaram enormes no guia interativo diminui um pouco mas nem
+tanto"*. Tudo cabe num arquivo só: `Chatbot/index.html`.
+
+- **Fundo.** `convocacao.png` saiu do CSS (o Pages não recebe mais nenhum pedido de imagem de
+  fundo — provado abaixo). No lugar: `body::before` é uma grade de 46px com pontos de circuito de
+  138px que deriva devagar (`@keyframes grade-deriva`), e `body::after` traz uma linha de varredura
+  na diagonal com dois brilhos. `@keyframes slow-pan`, que existia para a foto, foi apagado.
+- **O guia é `#guideModal`**, um overlay com `z-index: 36` (a oferta pop fica em 30, então o guia
+  passa por cima), card de `max-height: 94vh` com o corpo em `overflow: auto`. Abre por três
+  caminhos: o botão fixo `#guideFab` (esquina inferior esquerda, com pulso
+  `@keyframes fab-brilho`), o auto-abrir na **primeira** visita (uma vez só, marcado em
+  `localStorage["wplay_guide_aberto"]`) e `goToGenerateForm()` que, ao contrário, **fecha** o modal
+  antes de rolar até o formulário. Fecha no **×**, no fundo escuro, no **Esc** — e enquanto aberto
+  `body.guia-aberto` trava a rolagem da página.
+- **Onde o guia morava** virou um cartão que aponta para o botão ("Toque no botao Guia de
+  instalacao..."), porque o cliente precisa entender como voltar para o modal depois de fechar.
+- **Usuário e senha a um toque.** `#guideCredsBtn` ("Ver meu usuario e senha") chama
+  `mostrarAcesso()`, que desenha `#guideCred` dentro do próprio guia: usuário, senha e validade em
+  caixas grandes, com **Copiar usuario** / **Copiar senha**. Sem acesso na sessão, o mesmo painel
+  mostra o texto explicativo e um **Liberar teste agora** (que fecha o modal e foca o telefone). A
+  fonte é o `TEST_ACCESS` que já existia; quem o preenche é `mostrar()` do `site_gerar`, que agora
+  também chama `window.acessoChegouNoGuia()` — o painel se atualiza sozinho assim que o acesso
+  chega, sem o cliente procurar. O `#guideFab` ganha a classe `com-acesso` (um ponto verde) para
+  avisar que já dá para ver o acesso.
+- **Nada de `innerHTML` com o que vem do servidor**: usuário e senha entram por `textContent` nas
+  três caixas fixas do HTML. O painel é estático; só os valores e o `hidden` mudam.
+  Detalhe que quebra sem olhar: `.guide-cred-list` é `display: grid`, e a regra do autor **vence** o
+  `[hidden]` do navegador — por isso existe o bloco `.guide-cred-list[hidden] { display: none }`.
+- **O vídeo foi embora junto com o texto dele.** Apagados o CSS `.video-rescue*`, o markup
+  `#videoRescue` (com o "⚡ Espera! Antes de desistir..." e o "Assiste esse video e termina em 1
+  minuto..."), e toda a JS em volta: `openVideoRescue`/`closeVideoRescue`,
+  `videoRescueShownCount`, `registerGuideError`, o `setInterval` de 5s que vigiava ociosidade e as
+  duas chamadas de `registerGuideError()` que havia em `showAdvancedHelp` e `tclCodeStep`. O
+  `indexhtml.mp4` continua no repositório, só não é mais pedido.
+- **Letras.** A página subiu (base 18px, `.btn` 18, `.status` 14, `.pill` 18, `.tiny` 15, `.badge`
+  15 → 14 no celular, `.btn-pop` 13 → 16, `.chat` com `min-height: 220px`). O guia, que ficou grande
+  demais na primeira versão, voltou um degrau: bolha e botões de escolha **17 → 16**, título do modal
+  `clamp(1.45rem, 4.4vw, 1.85rem)` (media 23,2px, antes 31), modo avançado 19/16 → **17/15**, caixa
+  do acesso 22 → **19** (título 24 → 20), voz 16/14 → **15/13**, botão flutuante **16**. O `.btn`
+  comum ficou em 18 de propósito: é o "Gerar acesso 4 horas" e o "Copiar PIX", e para o idoso esses
+  dois têm que continuar grandes.
+- **No celular** o `#guideFab` vira uma barra larga (esquerda a direita) e a oferta pop sobe para
+  `bottom: 78px` para não cobrir o botão; o rodapé do modal empilha em uma coluna abaixo de 640px.
+
+Prova local (servindo o repositório com `python -m http.server` numa pasta que expõe a cópia como
+`/2PEER/`): modal aberto sozinho na primeira visita, zero `<video>`, zero `.wizard-box` dentro de
+`main`, fechar/abrir/Esc/backdrop funcionando, `body.guia-aberto` entrando e saindo, painel do
+acesso nos dois estados (sem acesso: lista e cópias ocultas + "Liberar teste agora"; com acesso:
+`rz999999999` / senha / validade nas caixas, ponto verde no botão) e os três scripts inline passando
+por `new vm.Script` sem erro de sintaxe. Ao vivo, no commit `7c563fe` com o build do Pages em
+`built`: `h2` do guia 23,2px, bolha 16px, `videos: 0`, `guiaNaPagina: 0`, os únicos pedidos de
+imagem/JS da página são `sinal-logo.jpg` e `painel/config.js` — **nenhum** `convocacao.png` e
+nenhum `.mp4` — e o console limpo.
+
 ## A aba "Não recuperados" (a fila por dentro)
+
 
 O mesmo lote das abas Acessos e Clientes, visto linha por linha. Nada de novo é enviado por
 ela: quem começa o envio continua sendo o "Não recuperados → Revisar e enviar".
