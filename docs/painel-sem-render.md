@@ -418,6 +418,19 @@ Não recuperados usa a mesma, e a nota dele diz qual é. Os rótulos do modal tr
 "vencidos no painel MC" ↔ "vencidos no espelho" e "só no espelho, sem linha no MC" ↔
 "desses, já têm linha no MC".
 
+**E o modal não espera mais ele trocar (16/11/2026, `fonteTrocada` em `painel/app.js`):** se a varredura
+do painel MC devolve **0 para receber** mas existe vencido só no espelho (`so_no_espelho > 0`), o modal
+grava `espelho` na escolha, troca o seletor na tela e refaz a conta sozinho, com a nota
+"O modal trocou sozinho para os vencidos do espelho…". Uma troca por modal aberto — quem quiser a varredura
+do MC de volta é só trocar na hora, e a mesma trava existe no modal da mensagem comum (`msTrocado`).
+
+**Reimportado em 16/11/2026, depois da limpeza:** ele voltou a subir o CSV. O espelho da cópia está com
+**921 linhas** (907 `r566…` sem `linha_id`, 14 do MC), **917 vencidas**, 918 com telefone, e a agenda
+`usuarios_criados_ip` acompanhou com 919. Medido na função publicada, sem enviar nada:
+`fonte: "espelho"` → **917 vencidos, 10 com linha no MC, 914 para receber**; `tipo: "mensagem"`,
+`quem: "todos"` → **921 na lista, 913 alvos** (3 sem telefone, 5 marcados que eu tirei de amostra). Os
+planos que essas duas conferências congelaram em `painel_lote` foram apagados em seguida.
+
 Medido no banco da cópia em 16/11/2026, com `fonte: "espelho"`: **976 vencidos, 10 deles com linha
 no MC, 6 sem telefone, 967 para receber** (com 1 marcado para pular) em 0,6 s — contra os 10 vencidos
 que a varredura do MC achava. Nada disso toca o painel MC: nem login, nem `/lines`.

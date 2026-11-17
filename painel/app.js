@@ -1128,6 +1128,7 @@
     $("mlRevisar").hidden = false;
     $("mlProgresso").hidden = true;
     $("mlAviso").hidden = true;
+    fonteTrocada = false;
     $("mlFonte").value = fonteLote();
     desenharFonteLote();
     $("modalLote").hidden = false;
@@ -1145,6 +1146,8 @@
   function fonteLote() {
     try { return localStorage.getItem(CHAVE_FONTE) === "espelho" ? "espelho" : "mc"; } catch (e) { return "mc"; }
   }
+
+  var fonteTrocada = false;   // se este modal já pulo sozinho para os vencidos do espelho
 
   function guardarFonteLote(valor) {
     try { localStorage.setItem(CHAVE_FONTE, valor === "espelho" ? "espelho" : "mc"); } catch (e) { /* ignora */ }
@@ -1199,6 +1202,16 @@
           (d.so_no_espelho > (d.fora_do_mc || []).length ? "…" : "") +
           " — troque para \u201cvencidos do espelho\u201d acima para enviar também para eles.")
         : "";
+      // A varredura do painel MC não acha nenhum desses vencidos (a linha foi apagada de lá), então o
+      // modal refaz a conta com o espelho em vez de deixar o botão travado em zero.
+      if (!fonteTrocada && d.fonte === "mc" && !d.alvos && d.so_no_espelho) {
+        fonteTrocada = true;
+        guardarFonteLote("espelho");
+        $("mlFonte").value = "espelho";
+        desenharFonteLote();
+        contarRecuperar();
+        return;
+      }
       var nomes = limpar($("mlNomes"));
       (d.primeiros || []).forEach(function (n) { nomes.appendChild(criar("span", "", n)); });
       var enviar = $("mlEnviar");
@@ -1206,6 +1219,10 @@
       if (!d.alvos) avisoLote("Ninguém sobrou para enviar. Desmarque alguém ou cadastre o telefone.");
       else if (d.aviso) avisoLote("A varrida parou antes do fim: " + d.aviso);
       else avisoLote("");
+      if (fonteTrocada) {
+        $("mlBusca").textContent = "O modal trocou sozinho para os vencidos do espelho: na varredura do " +
+          "painel MC não sobrou ninguém para enviar. " + $("mlBusca").textContent;
+      }
     });
   }
 
