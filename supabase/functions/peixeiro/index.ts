@@ -50,6 +50,8 @@ const ACAO: Record<string, Handler> = {
   recuperacao_salvar: acoes.recuperacaoSalvar,
   recuperar_um: acoes.recuperarUm,
 
+  mensagem_um: acoes.mensagemUm,
+
   lote_contagem: acoes.loteContagem,
   lote_executar: acoes.loteExecutar,
   lote_item: acoes.loteItem,

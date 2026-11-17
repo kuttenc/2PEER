@@ -3,7 +3,7 @@
 import {
   chaveAvisadas,
   espelharLinhas,
-  listarEspelho,
+  listarClientes,
   mesclarTelefones,
   obterConfig,
   registrarAviso,
@@ -33,6 +33,7 @@ import {
   cotaEsgotada,
   enviarArquivo,
   enviarRecuperacao,
+  enviarTexto,
   estadoInstancia,
   falhaGreenApi,
   infosInstancia,
@@ -62,7 +63,8 @@ import {
 } from "./destinos.ts";
 import {
   ajustarChat, apagarRegra, exportarTreino, instalarWebhook, ligarRegra, listarRegras, mensagensDe,
-  novaRegra, receberWebhook, resumoChat, salvarRegra, telefonesConversados, tokenChat,
+  novaRegra, receberWebhook, renderizar, resumoChat, salvarRegra, telefonesConversados, tokenChat,
+  variaveis,
   entregasPorUsuario,
 } from "./chat.ts";
 import {
@@ -102,6 +104,7 @@ import {
   normalizarWhatsapp,
   parseExpDate,
   semAcento,
+  telefoneValido,
   textoDiasRestantes,
   textoVencido,
 } from "./texto.ts";
@@ -125,6 +128,8 @@ const TRAVADOS = ["id_instance", "api_token"];
 const PARADA_ERROS = 3;
 const PALAVRA_APAGAR = "deletar";
 const APAGAR_MAX = 300;
+/** O teto do WhatsApp é bem maior, mas um texto desse tamanho já é print de tela cheia no celular. */
+const MAX_TEXTO = 1200;
 
 function ok(dados: Registro = {}): Saida {
   return { status: 200, dados: { ok: true, ...dados } };
@@ -150,7 +155,16 @@ function booleano(valor: unknown): boolean {
 }
 
 function tipoLote(valor: unknown): TipoLote {
-  return txt(valor) === "apagar" ? "apagar" : "recuperar";
+  const tipo = txt(valor);
+  if (tipo === "apagar") return "apagar";
+  if (tipo === "mensagem") return "mensagem";
+  return "recuperar";
+}
+
+/** O nome do evento no `mcapi_events` segue o tipo do lote, com o mesmo sufixo para os três. */
+function eventoLote(tipo: TipoLote, sufixo: string): string {
+  if (tipo === "apagar") return `painel_online_lote_${sufixo}`;
+  return `${tipo}_lote_${sufixo}`;
 }
 
 // ------------------------------------------------------------------ entrar / sair / senha
@@ -413,8 +427,12 @@ export async function acessosVer(dados: Registro, ctx: Contexto): Promise<Saida>
 // ------------------------------------------------------------------ clientes (espelho do MC)
 
 export async function clientesVer(): Promise<Saida> {
-  const linhas = await listarEspelho();
-  return ok({ linhas, com_telefone: linhas.filter((l) => l.telefone).length });
+  const linhas = await listarClientes();
+  return ok({
+    linhas,
+    com_telefone: linhas.filter((l) => l.telefone).length,
+    so_agenda: linhas.filter((l) => !l.linha_id).length,
+  });
 }
 
 export async function clientesSincronizar(_dados: Registro, ctx: Contexto): Promise<Saida> {
@@ -641,6 +659,96 @@ async function expiraDoEspelho(username: string): Promise<Date | null> {
   return linha?.exp_date ? new Date(String(linha.exp_date)) : null;
 }
 
+// ------------------------------------------------------------------ mensagem comum (sem painel MC)
+
+/** O número de quem vai receber: o digitado na tela manda, senão a agenda de telefones, senão o
+ *  espelho. Nada aqui pergunta nada ao painel MC — cliente apagado de lá continua tendo WhatsApp. */
+async function telefoneDaMensagem(username: string, bruto: string): Promise<string> {
+  const digitos = normalizarWhatsapp(bruto);
+  if (telefoneValido(digitos)) return digitos;
+  if (!username) return "";
+  const daAgenda = (await telefonesPorUsuario())[username] || "";
+  if (daAgenda) return daAgenda;
+  const linha = await consultar1(
+    "select telefone from public.mc_linhas where username = $1 and coalesce(telefone, '') <> '' limit 1",
+    [username],
+  );
+  return normalizarWhatsapp(String(linha?.telefone || ""));
+}
+
+/** `{{usuario}}`, `{{pix}}`, `{{site}}` e o resto das variáveis do robô, com o que a gente sabe
+ *  do cliente. Quem não tem data — o apagado do painel MC — recebe `{{vence}}` = "não está no nosso
+ *  sistema" de propósito: é melhor o texto honesto do que uma data velha passando por verdade. */
+function corpoMensagem(texto: string, username: string, telefone: string, conf: Conf, expira: Date | null): string {
+  const cliente = { usuario: username, telefone, nota: "", status: 0, expira };
+  return renderizar(texto, variaveis(cliente, conf, telefone)).slice(0, 4000);
+}
+
+/** Um cliente só, texto livre, sem link e sem foto. */
+export async function mensagemUm(dados: Registro, ctx: Contexto): Promise<Saida> {
+  const conf = await obterConfig();
+  if (!conf) return falha("banco", 500);
+  const texto = String(dados.texto || "").trim();
+  if (!texto) return falha("sem_texto", 400);
+  if (texto.length > MAX_TEXTO) return falha("texto_grande", 400, { maximo: MAX_TEXTO });
+  const username = txt(dados.username);
+  const telefone = await telefoneDaMensagem(username, String(dados.telefone || ""));
+  if (!telefone) return falha("sem_telefone", 400, { q: username });
+
+  // A data que a linha tinha na tela: sem ela {{vence}} mentiria para quem ainda tem linha no MC.
+  const resultado = await enviarTexto(
+    conf, telefone, corpoMensagem(texto, username, telefone, conf, parseExpDate(txt(dados.exp_iso))),
+  );
+  await gravarEvento({
+    event_type: "mensagem_envio",
+    status_code: resultado.status_code ?? null,
+    request_payload: { username, telefone, via: "avulso", texto: texto.slice(0, 160) },
+    response_payload: resultado.response,
+    client_ip: ctx.ip,
+  });
+  if (!resultado.ok) {
+    return falha(cotaEsgotada(resultado) ? "cota" : "enviar", 502, { detalhe: falhaGreenApi(resultado).slice(0, 220) });
+  }
+  return ok({ telefone, caracteres: texto.length });
+}
+
+async function itemMensagem(
+  item: Item,
+  ctx: Contexto,
+): Promise<{ ok: boolean; erro?: string; parar?: string; info: Registro }> {
+  const conf = await obterConfig();
+  const username = String(item.username || ""), telefone = String(item.telefone || "");
+  if (!conf) return { ok: false, erro: `${username}: config ausente`, info: { username } };
+  const texto = String(item.texto || "").trim();
+  if (!texto) return { ok: false, erro: `${username}: a mensagem sumiu do plano`, parar: "sem_texto", info: { username } };
+  if (!telefone) return { ok: false, erro: `${username}: sem telefone`, info: { username } };
+
+  let resultado: ResultadoEnvio;
+  try {
+    resultado = await enviarTexto(
+      conf, telefone, corpoMensagem(texto, username, telefone, conf, parseExpDate(txt(item.expira))),
+    );
+  } catch (exc) {
+    resultado = { ok: false, error: String(exc).slice(0, 160) };
+  }
+  // A linha vazia no `exp_date` é o que separa o registro desta mensagem do aviso de vencimento
+  // do mesmo cliente, e é dela que a tela da fila puxa a prova de entrega.
+  if (resultado.ok) await registrarRenovacao(username, "", telefone, 0, resultado, "mensagem");
+  await gravarEvento({
+    event_type: "mensagem_envio",
+    status_code: resultado.status_code ?? null,
+    request_payload: { username, telefone, via: "lote", quem: String(item.quem || "fora"), texto: texto.slice(0, 160) },
+    response_payload: resultado.response,
+    client_ip: ctx.ip,
+  });
+  return {
+    ok: resultado.ok,
+    erro: resultado.ok ? undefined : `${username}: ${falhaGreenApi(resultado).slice(0, 120)}`,
+    parar: !resultado.ok && cotaEsgotada(resultado) ? "cota" : undefined,
+    info: { username },
+  };
+}
+
 // ------------------------------------------------------------------ lotes (recuperar todos / apagar intervalo)
 
 export async function loteContagem(dados: Registro, ctx: Contexto): Promise<Saida> {
@@ -648,6 +756,7 @@ export async function loteContagem(dados: Registro, ctx: Contexto): Promise<Said
   // Remontar o plano com o lote andando jogaria o envio para outra lista no meio do caminho.
   const vista = await verLote(tipo);
   if (vista && vista.estado.rodando) return falha("lote_rodando", 409, { rodando: true });
+  if (tipo === "mensagem") return contagemDeMensagem(dados);
   return tipo === "apagar" ? apagarContagem(dados, ctx) : recuperarContagem(dados, ctx);
 }
 
@@ -752,6 +861,53 @@ async function contagemDoEspelho(
   });
 }
 
+/** A lista vem do que a aba Clientes mostra — espelho do MC em cima e agenda de telefones embaixo
+ *  — então o lote de mensagem alcança quem foi apagado do painel MC sem alcançar ninguém que não
+ *  esteja na tela. O texto vai em cada item do plano porque `proximoItem` devolve só o item. */
+async function contagemDeMensagem(dados: Registro): Promise<Saida> {
+  const busca = txt(dados.q);
+  const pular = new Set(lista(dados.pular));
+  const texto = String(dados.texto || "").trim();
+  if (!texto) return falha("sem_texto", 400);
+  if (texto.length > MAX_TEXTO) return falha("texto_grande", 400, { maximo: MAX_TEXTO });
+  // "fora" (o padrão) é quem não tem linha no painel MC; "todos" é a lista inteira com telefone.
+  const quem = txt(dados.quem) === "todos" ? "todos" : "fora";
+  const linhas = await listarClientes();
+  const recentes = new Set(
+    (await consultar(`select username from public.renovacao_avisos where updated_at > now() - interval '3 hours'`))
+      .rows.map((r: Record<string, unknown>) => String(r.username)),
+  );
+
+  const alvos: Item[] = [];
+  let semTelefone = 0, pulados = 0, esperando = 0, comLinha = 0, semLinha = 0;
+  for (const linha of linhas) {
+    if (busca && !linha.username.toLowerCase().includes(busca.toLowerCase())) continue;
+    if (linha.linha_id) comLinha++;
+    else semLinha++;
+    if (quem === "fora" && linha.linha_id) continue;
+    if (pular.has(linha.username)) pulados++;
+    else if (!linha.telefone) semTelefone++;
+    else if (recentes.has(linha.username)) esperando++;
+    else alvos.push({ username: linha.username, telefone: linha.telefone, texto, quem, busca, expira: linha.exp_iso });
+  }
+  await gravarPlano("mensagem", alvos, "");
+
+  return ok({
+    quem,
+    na_lista: linhas.length,
+    sem_linha_mc: semLinha,
+    com_linha_mc: comLinha,
+    alvos: alvos.length,
+    sem_telefone: semTelefone,
+    pulados,
+    esperando,
+    marcados: pular.size,
+    busca,
+    caracteres: texto.length,
+    primeiros: alvos.slice(0, 8).map((a) => a.username),
+  });
+}
+
 function numeroDoNome(username: string, prefixo = ""): number | null {
   const nome = (username || "").trim();
   if (prefixo && nome.slice(0, prefixo.length).toLowerCase() !== prefixo.toLowerCase()) return null;
@@ -837,7 +993,7 @@ export async function loteExecutar(dados: Registro, ctx: Contexto): Promise<Said
   const iniciado = await iniciarLote(tipo);
   if (!iniciado.ok) return falha(iniciado.erro || "lote_rodando", 409);
   await gravarEvento({
-    event_type: tipo === "apagar" ? "painel_online_lote_inicio" : "recuperar_lote_inicio",
+    event_type: eventoLote(tipo, "inicio"),
     status_code: 200,
     request_payload: { tipo, total: plano.length, busca: txt(dados.busca) },
     response_payload: { mantidos, aviso: vista.aviso },
@@ -852,7 +1008,10 @@ export async function loteItem(dados: Registro, ctx: Contexto): Promise<Saida> {
   const proximo = await proximoItem(tipo);
   if (!proximo) return ok({ terminado: true, estado: await resumoLote(tipo) });
 
-  const resultado = tipo === "apagar" ? await itemApagar(proximo.item, ctx) : await itemRecuperar(proximo.item, ctx);
+  let resultado;
+  if (tipo === "apagar") resultado = await itemApagar(proximo.item, ctx);
+  else if (tipo === "mensagem") resultado = await itemMensagem(proximo.item, ctx);
+  else resultado = await itemRecuperar(proximo.item, ctx);
   const estado = await registrarItem(tipo, {
     ok: resultado.ok,
     erro: resultado.erro,
@@ -861,8 +1020,9 @@ export async function loteItem(dados: Registro, ctx: Contexto): Promise<Saida> {
   const vaiContinuar = estado.rodando && estado.indice < estado.total;
   const saida: Registro = { item: resultado.info, estado, proximo: vaiContinuar };
   // A pausa é sorteada aqui, e não no navegador, para que o ritmo seja o mesmo em qualquer
-  // tela (Acessos e Clientes) e sobreviva a um F5 no meio do lote.
-  if (tipo === "recuperar" && vaiContinuar) saida.esperar = await pausaRecuperar();
+  // tela (Acessos e Clientes) e sobreviva a um F5 no meio do lote. O lote de mensagem comum usa
+  // a mesma regulagem: o que protege a instância do GreenAPI é o intervalo, não o texto.
+  if (tipo !== "apagar" && vaiContinuar) saida.esperar = await pausaRecuperar();
   return ok(saida);
 }
 
@@ -981,6 +1141,7 @@ export async function loteFila(dados: Registro): Promise<Saida> {
       usuario: nome,
       telefone: formatarTelefone(txt(item.telefone)),
       vencido: textoDoItem(item) || txt(item.intervalo),
+      quem: txt(item.quem),
       situacao: marca ? (marca.ok ? "enviado" : "falhou") : saiu ? "fora" : enviando ? "enviando" : "fila",
       erro: marca && !marca.ok ? marca.erro : "",
       entrega: entregas[nome] || "",
@@ -990,7 +1151,9 @@ export async function loteFila(dados: Registro): Promise<Saida> {
     vazia: false,
     itens,
     estado,
-    fonte: plano.length && plano[0].fonte === "espelho" ? "espelho" : "mc",
+    fonte: tipo === "mensagem"
+      ? (plano.length && plano[0].quem === "todos" ? "todos" : "fora")
+      : (plano.length && plano[0].fonte === "espelho" ? "espelho" : "mc"),
     na_fila: naFila,
     fora,
     total: plano.length,
@@ -1006,7 +1169,7 @@ export async function loteRetomar(dados: Registro, ctx: Contexto): Promise<Saida
   const retomado = await retomarLote(tipo);
   if (!retomado.ok) return falha(retomado.erro || "lote_rodando", 409);
   await gravarEvento({
-    event_type: tipo === "apagar" ? "painel_online_lote_retoma" : "recuperar_lote_retoma",
+    event_type: eventoLote(tipo, "retoma"),
     status_code: 200,
     request_payload: { tipo, indice: retomado.estado ? retomado.estado.indice : null },
     response_payload: {},
@@ -1024,7 +1187,7 @@ export async function loteTirar(dados: Registro, ctx: Contexto): Promise<Saida> 
   const saida = await tirarDaFila(tipo, indices);
   if (!saida.ok) return falha(saida.erro || "lote_rodando", 409);
   await gravarEvento({
-    event_type: tipo === "apagar" ? "painel_online_lote_tirar" : "recuperar_lote_tirar",
+    event_type: eventoLote(tipo, "tirar"),
     status_code: 200,
     request_payload: { tipo, indices: indices.length },
     response_payload: { fora: saida.fora },

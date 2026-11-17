@@ -394,6 +394,7 @@
         <p class="muted" style="margin-top:0" id="clAvisoLista"></p>
         <div class="linha" style="margin-bottom:10px" id="clBarraLote" hidden>
           <button type="button" class="segundo" id="btnLoteClientes">Não recuperados</button>
+          <button type="button" class="prim" id="btnMensagemLote">Mensagem para fora do MC</button>
           <span class="muted">marque quem <b>não</b> deve receber &mdash; as mesmas marcas da aba
             <a href="#acessos">Acessos</a>.</span>
         </div>
@@ -409,6 +410,15 @@
           telefone guardado nesse cliente. O <b>Não recuperados</b> manda para todos os vencidos do painel MC de uma vez
           &mdash; a lista é contada no servidor, então nada depende desta tela; só fica de fora o que você marcar e o que
           já recebeu nas últimas 3 horas.</p>
+        <p class="muted" style="margin:10px 0 0">O <b>mensagem</b> da linha manda um texto que você escrever, sem
+          criar link e sem foto. Ele não pergunta nada ao painel MC: quem foi apagado de lá e tem telefone guardado
+          aqui continua recebendo igual.</p>
+      </div>
+
+      <div class="barra" id="msAndamento" hidden>
+        <b>Mensagem em andamento</b>
+        <span class="muted" id="msAndamentoTexto">contando&hellip;</span>
+        <button type="button" class="verde" id="btnVerMensagem">Ver o envio</button>
       </div>
     </section>
 
@@ -776,6 +786,62 @@
       <div class="linha" style="margin-top:12px">
         <button type="button" class="verm" id="apParar">Parar de apagar</button>
         <button type="button" id="apFechar">Fechar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="modalMensagem" hidden role="dialog" aria-modal="true" aria-labelledby="msTitulo">
+  <div class="modal-caixa">
+    <div id="mmRevisar">
+      <h2 id="msTitulo">Mensagem avulsa pelo WhatsApp</h2>
+      <p class="muted" style="margin-top:0">É texto puro enviado pelo GreenAPI: <b>não cria link, não pede foto e
+        não pergunta nada ao painel MC</b>. Quem foi apagado de lá mas tem telefone guardado aqui recebe do mesmo
+        jeito.</p>
+      <label class="rotulo" for="msCorpo">texto da mensagem</label>
+      <textarea id="msCorpo" rows="6" maxlength="1200" spellcheck="false"
+                placeholder="Oi {{usuario}}, seu acesso está parado. Responda aqui que eu mando o novo."></textarea>
+      <p class="muted" style="margin:4px 0 0"><b id="msContagem">0</b> caracteres &middot; você pode usar
+        <code>{{usuario}}</code> <code>{{nome}}</code> <code>{{telefone}}</code> <code>{{pix}}</code>
+        <code>{{site}}</code> <code>{{vence}}</code> <code>{{dias}}</code> <code>{{data}}</code>.</p>
+      <div id="msEscolha">
+        <label class="rotulo" for="msQuem">para quem vai</label>
+        <select id="msQuem">
+          <option value="fora">só quem NÃO está no painel MC (os do CSV)</option>
+          <option value="todos">a lista inteira da aba Clientes</option>
+        </select>
+        <p class="muted" style="margin:6px 0 0" id="msQuemNota"></p>
+      </div>
+      <p class="muted" style="margin:6px 0" id="msParaUm" hidden></p>
+      <div class="numeros" id="msNumeros">
+        <div><span class="rotulo">vão receber</span><b id="msAlvos">?</b></div>
+        <div><span class="rotulo">na lista da aba</span><b id="msNaLista">?</b></div>
+        <div><span class="rotulo">sem linha no painel MC</span><b id="msSemLinha">?</b></div>
+        <div><span class="rotulo">marcados para pular</span><b id="msPulados">0</b></div>
+        <div><span class="rotulo">sem telefone</span><b id="msSemTelefone">0</b></div>
+        <div><span class="rotulo">receberam algo nas últimas 3h</span><b id="msEsperando">0</b></div>
+      </div>
+      <p class="muted" style="margin:6px 0" id="msParNomes">Os primeiros que vão receber: <span class="nomes" id="msNomes"></span></p>
+      <p id="msAviso" class="erro" style="margin-top:12px" hidden></p>
+      <div class="linha" style="margin-top:12px">
+        <button type="button" id="msVoltar">Voltar</button>
+        <button type="button" class="verde" id="msEnviar" disabled>Sim, enviar</button>
+      </div>
+    </div>
+
+    <div id="mmProgresso" hidden>
+      <h2>Enviando as mensagens</h2>
+      <p class="muted" style="margin-top:0">Não feche o painel até terminar &mdash; se fechar, o lote para
+        sozinho no item que faltava e nada sai duas vezes. Entre uma mensagem e outra o painel espera o tempo
+        regulado em Configuração (sempre sorteado).</p>
+      <div class="prog"><i id="mgBarra"></i></div>
+      <p style="margin:6px 0"><b id="mgTexto">preparando&hellip;</b></p>
+      <p class="muted" id="mgPausa" style="margin:6px 0" hidden></p>
+      <p class="muted" style="margin:6px 0">Erros: <span class="nomes" id="mgErros"></span></p>
+      <p id="mgMotivo" class="erro" style="margin-top:12px" hidden></p>
+      <div class="linha" style="margin-top:12px">
+        <button type="button" class="verm" id="mgParar">Parar de enviar</button>
+        <button type="button" id="mgFechar">Fechar</button>
       </div>
     </div>
   </div>

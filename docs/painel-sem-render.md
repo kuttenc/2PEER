@@ -153,7 +153,7 @@ interruptores, religue a trava acima. O token em si nunca entra neste repositór
 Para religar a trava enquanto testar:
 
 ```bash
-npx supabase secrets set --yes --remote=bzgtptbwcvwpgnhbctjn PEIXEIRO_MODO_TESTE=1
+npx supabase secrets set --yes --project-ref bzgtptbwcvwpgnhbctjn PEIXEIRO_MODO_TESTE=1
 ```
 
 O `2peer/.env` não tem mais essa linha de propósito: se ela estivesse lá, o comando de publicar
@@ -365,6 +365,12 @@ WhatsApp* (webhook não instalado), *no servidor*, *entregue ao WhatsApp*, *cheg
   `PEIXEIRO_MODO_TESTE=1` local e as contas conferidas contra o banco). O comando está na seção
   "As duas listas do Não recuperados", mais adiante.
 
+- A mensagem comum da aba Clientes foi provada com `tools/_prova_mensagem.py` (40 provas): a conta
+  conferida contra o banco, o plano congelado com o texto dentro de cada item, o `"todos"` que chama o
+  espelho de volta, filtro, texto vazio, texto de 1300 caracteres, o envio de um cliente só, os três
+  simulados, o registro com `exp_date=''`, a fila viva, parar, retomar e a prova de que o painel MC não
+  foi aberto nenhuma vez. O comando está na seção "Mensagem comum para quem não está no MC".
+
 - Antes de mexer no espelho (`mc_linhas`), salve o que está lá: `python tools/_exporta_espelho.py`
   traz as 980 linhas e `python tools/_exporta_espelho.py so-espelho` traz só as que nunca tiveram
   linha no painel MC (o filtro `linha_id` vazio). O arquivo cai em `../backup-espelho/`, fora do
@@ -386,10 +392,10 @@ Medido em 16/11/2026 com o bearer que já estava no cache (sem logar de novo no 
   marcas, `alvos` ficou 0 e a fila nunca nasceu — por isso a aba "Não recuperados" não tinha nada em
   "enviando". O botão **Desmarcar todos** (`#btnDesmarcar`, ao lado do iniciar do lote) limpa a lista
   inteira; sem ele o `lote_contagem` continua contando os mesmos pulados.
-- O que fazer com os 966 era decisão dele, não bug: ou o MC deles deveria ter essas linhas (aí a
-  pergunta é para o knewcms — quantas linhas a conta do MC que a função usa tem na tela do painel?), ou o
-  lote precisava de uma fonte nova. Ele escolheu **deixar os 10 marcados e enviar para os 966**, e a
-  fonte do espelho existe desde aqui embaixo.
+- O que fazer com os 966 era decisão dele, não bug. Ele respondeu em 16/11/2026: **são clientes que
+  ficaram muito tempo sem usar e ele mesmo apagou da base do painel MC**. Ou seja, não havia o que
+  recuperar — e o lote do espelho ia mandar 966 mensagens de "recupere seu acesso" para gente que não
+  tem acesso nenhum. A limpeza está descrita na seção "Os 966 que só existiam no espelho", mais adiante.
 
 ## As duas listas do "Não recuperados" (`fonte`)
 
@@ -433,37 +439,87 @@ limpeza apaga a fila, os `renovacao_avisos` e os `painel_links` que a bateria cr
 `PEIXEIRO_PROVA_URL=` apontando para a função publicada a bateria para antes do
 `lote_executar` — ela prova a contagem no ar sem abrir envio nenhum.
 
-## De onde vieram os 966 que não estão no MC (medido em 16/11/2026)
+## Os 966 que só existiam no espelho (medido e resolvido em 16/11/2026)
 
 O painel MC (`mcapi.knewcms.com:2087`) é o único lugar onde o acesso do cliente existe de verdade;
-`mc_linhas` é só o espelho daqui do banco. A conta que a cópia e o site usam é a mesma
-(`MC_USERNAME` dos secrets) e ela tem **14 linhas**. O CSV que virou o espelho tem **980 linhas**, e
-elas não são todas do mesmo balaio:
+`mc_linhas` é só o espelho daqui do banco. O CSV que virou o espelho tem **980 linhas**, e elas não
+são todas do mesmo balaio:
 
 - **963** começam com `r566`, e **960** dessas são exatamente `r566001` a `r566960` em ordem, sem
   buraco — nome sequencial assim não sai do gerador do MC (os outros 17 têm cara de sempre: `11zc083`,
   `3u432a1`). As 963 compartilham **uma data só** de expiração e trazem `xxxxxxxxxxx` na coluna do
   nome do cliente; os 963 telefones são distintos entre si.
-- **17** têm nome no formato do MC. Dessas, **13** estão hoje no MC (com `linha_id`), **4** não estão
-  mais (foram apagadas de lá), e **1** linha do MC (`r5660a6`) é a única da série `r566` que existe de
-  fato — por isso o total do espelho é 980 e o de linhas de verdade é 14.
+- **17** têm nome no formato do MC. Dessas, **13** estão hoje no MC (com `linha_id`) e **4** não.
 
-Ou seja: os 966 que ficam de fora do lote montado no painel MC nunca foram acessos dessa conta. A
-prova pelo lado do site: os 1.000 eventos mais recentes de renovação (`line_test` / `line_test_reuse`)
-no banco de produção falam de 27 usuários e **nenhum** começa com `r566` — se eles vivessem na conta
-do MC, já teriam aparecido por aí.
+A explicação veio do dono em 16/11/2026: **são clientes que ficaram muito tempo sem usar e ele apagou
+da base do painel MC**. O CSV é o retrato de antes dessa limpeza, e importar de novo não resolve nada:
+o import escreve no espelho, ele não devolve linha para o MC.
 
-Por que isso importa para "importar direito pelo MC": o que a API do MC faz de escrita, e que o
-painel usa, é criar linha nova (`POST /lines/test`, que sorteia usuário e senha próprios) e apagar
-(`DELETE /lines/<id>`). Não tem como pedir uma linha **com o nome que o cliente já tem**, então os
-`r566…` não voltam para o MC pelo caminho de sempre. Restam três caminhos, e a escolha é do dono:
-(A) eles existem em outra conta do MC → trocar `MC_USERNAME`/`MC_PASSWORD` dos secrets e "Sincronizar
-agora"; (B) não existem mais em lugar nenhum → criar 960 linhas novas (todo cliente recebe usuário e
-senha novos) ; (C) apagar os 966 do espelho e ficar só com as 14 de verdade.
+As medidas que fecharam a pergunta, todas no mesmo dia:
 
-O passo seguro de qualquer um dos três é o backup antes: `python tools/_exporta_espelho.py` (tudo) e
-`python tools/_exporta_espelho.py so-espelho` (só os 966 sem `linha_id`). Sai em `../backup-espelho/`,
-fora do git, porque tem telefone de cliente dentro. Nenhum apagamento foi feito.
+- `POST /auth/login` → `201`; o `/lines` da conta devolve **14 linhas** numa página só (a varredura
+  parou porque acabou, não por limite de tela), com **10 vencidas**.
+- `generalSearch=r566` → **1** linha (`r5660a6`, a única que sobrou da série). `r566001`, `r566500` e
+  `r566960` respondem **zero**.
+- Os 1.000 eventos de renovação mais recentes (`line_test` / `line_test_reuse`) do banco de produção
+  falam de 27 usuários e **nenhum** `r566` — depois de apagados, eles não renovam mesmo.
+- `renovacao_avisos` e `painel_links` tinham **0** linhas apontando para os 966: nenhuma mensagem foi
+  enviada para essa gente, então não havia nada desfazer.
+
+**Feito no banco da cópia** (`bzgtptbwcvwpgnhbctjn`): backup antes com `python tools/_exporta_espelho.py`
+(980) e `python tools/_exporta_espelho.py so-espelho` (966) — os dois arquivos em `../backup-espelho/`,
+fora do git porque têm telefone de cliente dentro — e depois
+`delete from public.mc_linhas where coalesce(linha_id, '') = ''`, que apagou **966**. O espelho ficou
+com **14 linhas, todas com `linha_id`, 10 vencidas**, e a conferência linha por linha contra o MC deu
+`so no MC: []`, `so no espelho: []`, `linha_id diferente: []`. Espelho e painel MC batem 100%.
+
+Não foi mexido: `usuarios_criados_ip` ainda tem **974** usuários (963 deles dessa lista apagada), porque
+é de lá que o painel tira o telefone de cada um. Se um dia essas contas voltarem a existir, o telefone
+já está guardado; se a intenção for sumir com esses números também, é o mesmo critério (`linha_id` vazio
+em `mc_linhas`) aplicado a `usuarios_criados_ip`, decisão do dono.
+
+Na **produção** não havia o que limpar: `mc_linhas` lá está com **0 linhas** (medido por REST em
+16/11/2026) — o import do CSV nunca rodou nesse banco.
+
+## Mensagem comum para quem não está no MC (aba Clientes)
+
+Mensagem de WhatsApp normal **não depende de existir linha no painel MC**: depende só de um número.
+Depois da limpeza dos 966, essa gente toda continuou na `usuarios_criados_ip` — é de lá que o painel
+tira o telefone. Foi para isso que a aba Clientes ganhou o caminho de mensagem, e ele não abre o MC,
+não cria link de recuperação e não manda foto:
+
+- **`listarClientes()` = `listarEspelho()` + `listarSoAgenda()`**. A segunda metade são os usuários que
+  têm telefone na agenda e **não** têm linha em `mc_linhas` (`distinct on (username)`, o mais recente
+  vence). É por isso que a aba Clientes não ficou vazia depois do `delete`: ela perdeu as 966 linhas do
+  espelho e ganhou os mesmos 963 números pela agenda. `clientes_ver` devolve `so_agenda` com essa
+  contagem e o `#clResumo` mostra quem está "só na agenda".
+- **`mensagem_um`** (uma linha, botão **mensagem** da tabela): texto livre, até `MAX_TEXTO = 1200`
+  caracteres. O número vem do que foi digitado na tela → `telefonesPorUsuario()` → `mc_linhas.telefone`.
+  Sem número em lugar nenhum, volta `sem_telefone` e nada sai.
+- **`tipo: "mensagem"`** no lote: usa a mesma máquina dos outros dois (`painel_lote` com a chave
+  `mensagem_lote`, congelamento, pausa sorteada, três falhas seguidas param, parar/retomar/tirar da
+  fila). `quem: "fora"` (o padrão) é só quem não tem linha no MC; `quem: "todos"` é a lista inteira.
+- O **texto vai dentro de cada item do plano**, porque `proximoItem` devolve só o item. É o que garante
+  que a mensagem do "Sim, enviar" seja a que foi conferida, mesmo depois de um F5 no meio do lote.
+- As variáveis são as do robô (`{{usuario}}`, `{{pix}}`, `{{site}}`, `{{vence}}`...). Quem não tem data
+  recebe `{{vence}}` = **"não está no nosso sistema"** de propósito; quem ainda tem linha recebe a data
+  do espelho, porque o item do plano carrega `expira`.
+- A prova de entrega é a mesma cadeia do aviso de vencimento: `renovacao_avisos` com
+  **`exp_date = ''`** e `via = 'mensagem'`, ligada ao `whatsapp_status` pelo `id_message`. A data vazia
+  é o que separa a mensagem comum do aviso de vencimento do mesmo cliente. Cada envio também grava um
+  `mcapi_events` `mensagem_envio` com `via: "avulso"|"lote"` e só os 160 primeiros caracteres do texto.
+
+Medido no banco da cópia em 16/11/2026, com `PEIXEIRO_MODO_TESTE=1` local
+(`python tools/_prova_mensagem.py`, **40/40 provas**): `na_lista` 977 = 14 do espelho + 963 da agenda,
+`sem_linha_mc` 963, **962 na fila** com um marcado para pular, o `"todos"` sobe para 973 (os 11 do
+espelho que têm número), filtro por usuário fecha em 1 alvo, texto vazio volta `sem_texto` e 1300
+caracteres voltam `texto_grande` — e os `login_refresh` do MC ficam em 34 → 34 do começo ao fim da
+bateria, com a contagem inteira em 0,1 s. Os três envios simulados saem registrados com `exp_date=''`,
+nenhum `painel_links` nasce, e a pausa veio sorteada (65,9 s).
+
+⚠️ 962 mensagens com a pausa sorteada entre 4,5 s e 105 s são **de 1 a 5 horas com o navegador aberto**.
+A janela de 15 minutos da conferência vale só para abrir o envio, e na cópia publicada o modo teste está
+**desligado** desde 16/11/2026 — botão apertado nele é WhatsApp de verdade.
 
 ## O que os logs do MC guardavam
 

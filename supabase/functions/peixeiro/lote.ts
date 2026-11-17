@@ -2,7 +2,7 @@
 // navegador pede um item por vez, então fechar a aba no meio não deixa metade do trabalho feito.
 import { consultar, consultar1 } from "./db.ts";
 
-export type TipoLote = "recuperar" | "apagar";
+export type TipoLote = "recuperar" | "apagar" | "mensagem";
 
 export type Item = Record<string, unknown>;
 
@@ -25,8 +25,14 @@ export type EstadoLote = {
   enviando?: number | null;
 };
 
-const CHAVE: Record<TipoLote, string> = { recuperar: "recuperar_todos", apagar: "deletar_lote" };
-const VALIDAR: Record<TipoLote, number> = { recuperar: 900, apagar: 600 };
+const CHAVE: Record<TipoLote, string> = {
+  recuperar: "recuperar_todos",
+  apagar: "deletar_lote",
+  // A fila de mensagem comum divide a mesma tabela e a mesma máquina do "Não recuperados":
+  // parar, retomar e tirar da linha do meio funcionam igualzinheiro, e o que muda é só o texto.
+  mensagem: "mensagem_lote",
+};
+const VALIDAR: Record<TipoLote, number> = { recuperar: 900, apagar: 600, mensagem: 900 };
 
 export async function gravarPlano(tipo: TipoLote, plano: Item[], aviso = ""): Promise<void> {
   // O estado vai junto no update: contagem nova é plano novo, e o progresso velho deixaria

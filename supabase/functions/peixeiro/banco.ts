@@ -350,6 +350,39 @@ export async function listarEspelho() {
   });
 }
 
+/** Quem só existe na agenda de telefones (`usuarios_criados_ip`): cliente importado por CSV ou
+ *  apagado do painel MC depois, mas que ainda tem número para receber WhatsApp. A aba Clientes
+ *  mostra essa gente junto com o espelho — sem isso ela some da tela e não sobra para quem
+ *  mandar mensagem comum. */
+export async function listarSoAgenda() {
+  const r = await consultar(
+    `select distinct on (a.username) a.username, a.telefone, a.updated_at
+       from public.usuarios_criados_ip a
+      where coalesce(a.telefone, '') <> ''
+        and not exists (select 1 from public.mc_linhas m where m.username = a.username)
+      order by a.username, a.updated_at desc`,
+  );
+  return r.rows.map((linha: Record<string, unknown>) => ({
+    username: String(linha.username || ""),
+    linha_id: "",
+    telefone: String(linha.telefone || ""),
+    expira: "",
+    exp_iso: "",
+    texto_dias: "",
+    vencido: false,
+    status: 0,
+    ativo: false,
+    notes: "",
+    sincronizado: "",
+    so_agenda: true,
+  }));
+}
+
+/** A lista da aba Clientes: o espelho do MC em cima e a gente que só tem telefone embaixo. */
+export async function listarClientes() {
+  return [...await listarEspelho(), ...await listarSoAgenda()];
+}
+
 // ---------------------------------------------------------------- "já avisei"
 
 export async function chaveAvisadas(): Promise<string[]> {

@@ -42,6 +42,7 @@
     chat_ajuste: "Ajuste salvo.",
     chat_instalado: "Webhook instalado: o GreenAPI agora manda para cá o que chega e o que foi entregue.",
     chat_exportado: "Arquivo de treino baixado.",
+    mensagem_enviada: "Mensagem enviada pelo WhatsApp (sem link e sem painel MC no meio).",
   };
 
   var MSG_ERRO = {
@@ -93,6 +94,8 @@
     sem_regra: "Este chat não existe mais. Abra a aba de novo.",
     nada_gravar: "Não havia nada para mudar.",
     webhook: "A instância recusou o webhook. Confira a chave na Configuração e tente de novo.",
+    sem_texto: "Escreva a mensagem antes de contar ou enviar.",
+    texto_grande: "Texto grande demais: são até 1200 caracteres.",
   };
 
   // ------------------------------------------------------------------ utilidades
@@ -909,10 +912,25 @@
 
   var lote = { tipo: "recuperar", rodando: false, temporizador: null, terminou: false, passo: null };
 
+  /** Os três lotes (recuperação, exclusão, mensagem) andam no mesmo motor; o que muda é só onde
+   *  cada peça está na tela. "p" é o prefixo dos ids do progresso. */
+  function maquina(tipo) {
+    if (tipo === "apagar") {
+      return { p: "ap", revisar: "maRevisar", progresso: "maProgresso", modal: "modalApagar",
+               faixa: "apAndamento", verbo: "apagados", parar: "Parar de apagar" };
+    }
+    if (tipo === "mensagem") {
+      return { p: "mg", revisar: "mmRevisar", progresso: "mmProgresso", modal: "modalMensagem",
+               faixa: "msAndamento", verbo: "enviados", parar: "Parar de enviar" };
+    }
+    return { p: "lp", revisar: "mlRevisar", progresso: "mlProgresso", modal: "modalLote",
+             faixa: "loteAndamento", verbo: "enviados", parar: "Parar de enviar" };
+  }
+
   function desenharProgresso(tipo, estado) {
     var total = estado.total || 0;
     var feitos = (estado.enviados || 0) + (estado.falhas || 0);
-    var prefixo = tipo === "apagar" ? "ap" : "lp";
+    var prefixo = maquina(tipo).p;
     var barra = $(prefixo + "Barra"), textoBotao = $(prefixo + "Texto");
     if (barra) barra.style.width = (total ? Math.round(100 * feitos / total) : 0) + "%";
     var erros = $(prefixo + "Erros");
@@ -928,6 +946,7 @@
       cota: "O GreenAPI está sem saldo de mensagens do mês: o lote parou.",
       chave_recusada: "O painel MC recusou a chave: o lote parou.",
       mc_login: "Não deu para logar no painel MC: o lote parou.",
+      sem_texto: "A mensagem sumiu da lista congelada: o lote parou.",
       seguidas: "Três falhas seguidas: o lote parou para você conferir.",
       parou_manual: "Você parou o lote.",
     }[codigo] || "";
@@ -982,7 +1001,7 @@
 
   function escreverPausa(segundos) {
     var valor = segundos ? "próxima mensagem em " + segundos + "s" : "";
-    ["lpPausa", "frPausa"].forEach(function (id) {
+    ["lpPausa", "mgPausa", "frPausa"].forEach(function (id) {
       var alvo = $(id);
       if (!alvo) return;
       alvo.hidden = !valor;
@@ -996,19 +1015,21 @@
   }
 
   function mostrarEstado(tipo, estado) {
+    var m = maquina(tipo);
+    var apagar = m.verbo === "apagados";
     var desenhado = desenharProgresso(tipo, estado);
-    var alvo = $(tipo === "apagar" ? "apTexto" : "lpTexto");
+    var alvo = $(m.p + "Texto");
     if (alvo) {
-      alvo.textContent = (estado.enviados || 0) + (tipo === "apagar" ? " apagados de " : " enviados de ") +
+      alvo.textContent = (estado.enviados || 0) + (apagar ? " apagados de " : " enviados de ") +
         desenhado.total + " · " + (estado.falhas || 0) + " com erro";
     }
-    var faixa = $(tipo === "apagar" ? "apAndamento" : "loteAndamento");
+    var faixa = $(m.faixa);
     if (faixa) {
       faixa.hidden = !estado.rodando;
-      var textoFaixa = $(tipo === "apagar" ? "apAndamentoTexto" : "loteAndamentoTexto");
+      var textoFaixa = $(m.faixa + "Texto");
       if (textoFaixa) {
         textoFaixa.textContent = (estado.enviados || 0) + " de " + desenhado.total +
-          (tipo === "apagar" ? " apagados" : " enviados");
+          (apagar ? " apagados" : " enviados");
       }
     }
   }
@@ -1017,56 +1038,61 @@
     pararTemporizador();
     lote.rodando = false;
     lote.terminou = true;
+    var m = maquina(tipo);
     mostrarEstado(tipo, estado);
-    var alvo = $(tipo === "apagar" ? "apTexto" : "lpTexto");
+    var alvo = $(m.p + "Texto");
     if (alvo) {
       alvo.textContent = "terminou: " + (estado.enviados || 0) +
-        (tipo === "apagar" ? " apagados, " : " enviados, ") + (estado.falhas || 0) + " com erro";
+        (m.verbo === "apagados" ? " apagados, " : " enviados, ") + (estado.falhas || 0) + " com erro";
     }
-    var parar = $(tipo === "apagar" ? "apParar" : "lpParar");
+    var parar = $(m.p + "Parar");
     if (parar) parar.hidden = true;
     if (estado.motivo) {
-      var motivo = $(tipo === "apagar" ? "apMotivo" : "lpMotivo");
+      var motivo = $(m.p + "Motivo");
       if (motivo) { motivo.textContent = motivoParada(estado.motivo); motivo.hidden = false; }
     }
-    var faixa = $(tipo === "apagar" ? "apAndamento" : "loteAndamento");
-    if (faixa) faixa.hidden = true;
+    $(m.faixa).hidden = true;
   }
 
   function abrirProgresso(tipo, total) {
-    var revisar = $(tipo === "apagar" ? "maRevisar" : "mlRevisar");
-    var progresso = $(tipo === "apagar" ? "maProgresso" : "mlProgresso");
-    var modal = $(tipo === "apagar" ? "modalApagar" : "modalLote");
+    var m = maquina(tipo);
+    var revisar = $(m.revisar);
+    var progresso = $(m.progresso);
+    var modal = $(m.modal);
     if (revisar) revisar.hidden = true;
     if (progresso) progresso.hidden = false;
     if (modal) modal.hidden = false;
-    var parar = $(tipo === "apagar" ? "apParar" : "lpParar");
+    var parar = $(m.p + "Parar");
     if (parar) { parar.hidden = false; parar.disabled = false; }
-    var motivo = $(tipo === "apagar" ? "apMotivo" : "lpMotivo");
+    var motivo = $(m.p + "Motivo");
     if (motivo) motivo.hidden = true;
     desenharProgresso(tipo, { total: total, enviados: 0, falhas: 0, erros: [] });
     rodarLote(tipo);
   }
 
   function pararLote(tipo) {
-    var botao = $(tipo === "apagar" ? "apParar" : "lpParar");
+    var m = maquina(tipo);
+    var botao = $(m.p + "Parar");
     if (botao) { botao.disabled = true; botao.textContent = "parando…"; }
     return chamar("lote_parar", { tipo: tipo }, 30).then(function () {
       pararTemporizador();
       lote.rodando = false;
-      if (botao) { botao.disabled = false; botao.textContent = tipo === "apagar" ? "Parar de apagar" : "Parar de enviar"; }
+      if (botao) { botao.disabled = false; botao.textContent = m.parar; }
     });
   }
 
   $("lpParar").addEventListener("click", function () { pararLote("recuperar"); });
   $("apParar").addEventListener("click", function () { pararLote("apagar"); });
+  $("mgParar").addEventListener("click", function () { pararLote("mensagem"); });
 
   function fecharLote(tipo) {
-    var modal = $(tipo === "apagar" ? "modalApagar" : "modalLote");
+    var modal = $(maquina(tipo).modal);
     if (modal) modal.hidden = true;
     if (lote.terminou) {
       lote.terminou = false;
-      if (tipo === "apagar") irPara("#deletar"); else carregarAcessos(acPagina, acBusca);
+      if (tipo === "apagar") irPara("#deletar");
+      else if (tipo === "mensagem") carregarClientes();
+      else carregarAcessos(acPagina, acBusca);
     }
   }
 
@@ -1074,14 +1100,18 @@
   $("mlVoltar").addEventListener("click", function () { $("modalLote").hidden = true; });
   $("apFechar").addEventListener("click", function () { fecharLote("apagar"); });
   $("maVoltar").addEventListener("click", function () { $("modalApagar").hidden = true; });
+  $("mgFechar").addEventListener("click", function () { fecharLote("mensagem"); });
+  $("msVoltar").addEventListener("click", function () { $("modalMensagem").hidden = true; });
   $("btnVerEnvio").addEventListener("click", function () { $("modalLote").hidden = false; });
   $("btnVerExclusao").addEventListener("click", function () { $("modalApagar").hidden = false; });
+  $("btnVerMensagem").addEventListener("click", function () { $("modalMensagem").hidden = false; });
 
   document.addEventListener("keydown", function (evento) {
     if (evento.key !== "Escape") return;
     $("modalMescla").hidden = true;
     if (!$("modalLote").hidden) fecharLote("recuperar");
     if (!$("modalApagar").hidden) fecharLote("apagar");
+    if (!$("modalMensagem").hidden) fecharLote("mensagem");
   });
 
   // ------------------------------------------------------------------ lote RECUPERAR
@@ -1540,11 +1570,134 @@
       });
       tdAccoes.appendChild(recuperar);
     }
+    var mensagem = criar("button", "mini", "mensagem");
+    mensagem.type = "button";
+    mensagem.title = telefoneBr(c.telefone) || "sem telefone cadastrado";
+    mensagem.addEventListener("click", function () { abrirMensagem(c); });
+    tdAccoes.appendChild(mensagem);
     [tdLote, tdNome, tdTel, tdExpira, tdFaltam, tdStatus, tdNota, tdAccoes].forEach(function (c2) {
       linha.appendChild(c2);
     });
     return linha;
   }
+
+  // ---------------------------------------------------------- mensagem avulsa (sem painel MC)
+
+  var msModo = "lote";      // "lote" = a lista da aba; "um" = só o cliente do botão da linha
+  var msAlvo = null;        // a linha da tabela quando msModo === "um"
+  var msEspera = null;      // o tempo entre digitar e contar no servidor
+
+  function msCorpo() { return $("msCorpo").value.trim(); }
+
+  function msAviso(mensagem) {
+    var caixa = $("msAviso");
+    caixa.textContent = mensagem || "";
+    caixa.hidden = !mensagem;
+  }
+
+  function msLimparConta() {
+    ["msAlvos", "msNaLista", "msSemLinha", "msPulados", "msSemTelefone", "msEsperando"].forEach(function (id) {
+      $(id).textContent = "?";
+    });
+    limpar($("msNomes"));
+  }
+
+  function msDesenhar() {
+    var um = msModo === "um";
+    $("msEscolha").hidden = um;
+    $("msNumeros").hidden = um;
+    $("msParNomes").hidden = um;
+    $("msParaUm").hidden = !um;
+    $("msContagem").textContent = $("msCorpo").value.length;
+    if (um) {
+      $("msTitulo").textContent = "Mensagem para " + msAlvo.username;
+      $("msParaUm").textContent = "Vai receber: " + msAlvo.username + " no número " +
+        (telefoneBr(msAlvo.telefone) || "que ainda não está cadastrado");
+      $("msEnviar").disabled = !msCorpo();
+    } else {
+      $("msTitulo").textContent = "Mensagem avulsa pelo WhatsApp";
+      $("msEnviar").textContent = "Sim, enviar";
+    }
+  }
+
+  function msQuemNota() {
+    $("msQuemNota").textContent = $("msQuem").value === "todos"
+      ? "Todo mundo que aparece na aba Clientes com telefone guardado, inclusive quem ainda tem linha no painel MC."
+      : "Só quem aparece na aba Clientes sem linha no painel MC \u2014 a lista dos que foram apagados de lá. " +
+        "O número vem da agenda de telefones, então o painel MC não é consultado em nada.";
+  }
+
+  /** A conta é sempre no servidor, com a lista que a aba Clientes mostra e as marcas "pular"
+   *  deste navegador. Ela também congela o plano do lote, então o texto digitado é o que sai. */
+  function msContar() {
+    if (msEspera) clearTimeout(msEspera);
+    if (msModo === "um") return;
+    var corpo = msCorpo();
+    $("msEnviar").disabled = true;
+    if (!corpo) { msLimparConta(); msAviso(""); return; }
+    msEspera = setTimeout(function () {
+      msEspera = null;
+      chamar("lote_contagem", { tipo: "mensagem", texto: corpo, quem: $("msQuem").value, pular: Array.from(pular) }, 180)
+        .then(function (d) {
+          // Ele pode ter continuado digitando enquanto a conta vinha: resposta velha é jogada fora.
+          if (msCorpo() !== corpo || msModo !== "lote") return;
+          if (!d.ok) { msLimparConta(); msAviso(mensagemDetalhada(d)); return; }
+          $("msAlvos").textContent = d.alvos;
+          $("msNaLista").textContent = d.na_lista;
+          $("msSemLinha").textContent = d.sem_linha_mc;
+          $("msPulados").textContent = d.pulados;
+          $("msSemTelefone").textContent = d.sem_telefone;
+          $("msEsperando").textContent = d.esperando;
+          var nomes = limpar($("msNomes"));
+          (d.primeiros || []).forEach(function (n) { nomes.appendChild(criar("span", "", n)); });
+          var enviar = $("msEnviar");
+          enviar.textContent = "Sim, enviar para " + d.alvos;
+          enviar.disabled = !d.alvos;
+          msAviso(d.alvos ? "" : "Ninguém sobrou para enviar: desmarque alguém na coluna pular ou cadastre o telefone.");
+        });
+    }, 600);
+  }
+
+  function abrirMensagem(alvo) {
+    msAlvo = alvo || null;
+    msModo = alvo ? "um" : "lote";
+    $("mmRevisar").hidden = false;
+    $("mmProgresso").hidden = true;
+    msAviso("");
+    msQuemNota();
+    $("modalMensagem").hidden = false;
+    msDesenhar();
+    msContar();
+  }
+
+  $("btnMensagemLote").addEventListener("click", function () { abrirMensagem(null); });
+  $("msCorpo").addEventListener("input", function () { msDesenhar(); msContar(); });
+  $("msQuem").addEventListener("change", function () { msQuemNota(); msContar(); });
+
+  $("msEnviar").addEventListener("click", function () {
+    var botao = $("msEnviar");
+    var corpo = msCorpo();
+    if (!corpo) { msAviso("Escreva a mensagem antes de enviar."); return; }
+    botao.disabled = true;
+    if (msModo === "um") {
+      botao.textContent = "enviando…";
+      chamar("mensagem_um", {
+        username: msAlvo.username, telefone: texto(msAlvo.telefone), exp_iso: texto(msAlvo.exp_iso), texto: corpo,
+      }, 90).then(function (d) {
+        botao.textContent = "Sim, enviar";
+        if (!d.ok) { botao.disabled = false; msAviso(mensagemDetalhada(d)); return; }
+        $("modalMensagem").hidden = true;
+        recado("mensagem_enviada", telefoneBr(d.telefone) + " · " + d.caracteres + " caracteres");
+      });
+      return;
+    }
+    botao.textContent = "abrindo o envio…";
+    chamar("lote_executar", { tipo: "mensagem", confirmar: "sim" }, 60).then(function (d) {
+      botao.textContent = "Sim, enviar para " + $("msAlvos").textContent;
+      if (!d.ok) { botao.disabled = false; msAviso(mensagemDetalhada(d)); return; }
+      abrirProgresso("mensagem", d.total);
+    });
+  });
 
   $("clSincronizar").addEventListener("click", function () {
     var botao = $("clSincronizar");
@@ -2399,7 +2552,7 @@
       if (!d.ok || !d.estado) return;
       var estado = d.estado;
       if (!estado.rodando) return;
-      var faixa = $(tipo === "apagar" ? "apAndamento" : "loteAndamento");
+      var faixa = $(maquina(tipo).faixa);
       if (faixa) faixa.hidden = false;
       mostrarEstado(tipo, estado);
       lote.tipo = tipo;
@@ -2429,5 +2582,6 @@
     mostrarPainel();
     verificarAndamento("recuperar");
     verificarAndamento("apagar");
+    verificarAndamento("mensagem");
   });
 })();
