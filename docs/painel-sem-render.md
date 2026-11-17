@@ -504,6 +504,8 @@ não cria link de recuperação e não manda foto:
 - As variáveis são as do robô (`{{usuario}}`, `{{pix}}`, `{{site}}`, `{{vence}}`...). Quem não tem data
   recebe `{{vence}}` = **"não está no nosso sistema"** de propósito; quem ainda tem linha recebe a data
   do espelho, porque o item do plano carrega `expira`.
+- As linhas que só existem na agenda também ganham a caixinha **pular** (ela aparece quando o botão
+  "Não recuperados" está ligado), senão não haveria como tirar ninguém da lista de uma mensagem.
 - A prova de entrega é a mesma cadeia do aviso de vencimento: `renovacao_avisos` com
   **`exp_date = ''`** e `via = 'mensagem'`, ligada ao `whatsapp_status` pelo `id_message`. A data vazia
   é o que separa a mensagem comum do aviso de vencimento do mesmo cliente. Cada envio também grava um
@@ -520,6 +522,12 @@ nenhum `painel_links` nasce, e a pausa veio sorteada (65,9 s).
 ⚠️ 962 mensagens com a pausa sorteada entre 4,5 s e 105 s são **de 1 a 5 horas com o navegador aberto**.
 A janela de 15 minutos da conferência vale só para abrir o envio, e na cópia publicada o modo teste está
 **desligado** desde 16/11/2026 — botão apertado nele é WhatsApp de verdade.
+
+Conferido no ar, no painel do Pages com a função já publicada (16/11/2026, nenhuma mensagem saiu): o
+modal abriu em **977** na lista, **963** sem linha no MC, o texto de 39 caracteres liberou o botão com
+"Sim, enviar para 963", e com duas marcas `pular` guardadas no navegador a conta caiu para **961** e o
+botão leu "Sim, enviar para 961". Cada conferência congela o plano em `painel_lote` (chave
+`mensagem_lote`) sem enviar nada — nada sai dali antes do `lote_executar`.
 
 ## O que os logs do MC guardavam
 

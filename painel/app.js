@@ -1508,7 +1508,9 @@
   function linhaCliente(c) {
     var linha = document.createElement("tr");
     var tdLote = criar("td", "lote");
-    if (c.vencido) {
+    // O vencido entra na marcação pelo lote de recuperação; quem só tem telefone na agenda entra
+    // pela mensagem comum — sem essa caixinha ele não teria como ficar de fora.
+    if (c.vencido || !c.linha_id) {
       var pula = document.createElement("input");
       pula.type = "checkbox";
       pula.className = "pula";
