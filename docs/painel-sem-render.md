@@ -686,6 +686,62 @@ painel MC**, cada uma registrada com `exp_date = ''` e `via = 'mensagem'`, nenhu
 os `login_refresh` param em 35 → 35. São **38/38 provas** (eram 40; a que testava o grupo vazio saiu porque
 não há mais para quem mandar).
 
+## A lista colada com CPF (aba Clientes)
+
+O pedido dele, dito em 17/11/2026: *"cria um campo na aba Clientes que eu consiga colar uma lista
+de contatos neste formato, pois o CPF é usado para verificar se o usuario creditou o pix usando a
+conta dele ou nao"*, *"deixo acima do campo Exportar e importar CSV"*, *"também deixa um modal que
+abre e eu posso fechar ele abre mostrando quantos usuarios foram importados sem erro e os que deu
+erro deixe sem importar mesmo, só mostre no modal qual a linha que deu erro"*, e
+*"não quero que seja necessário colar 'Nome Dados Expira Status Telefone Usuário' só estou te explicando"*.
+
+O campo é um `<textarea>` (`#clPixLista`) no card **"Colar lista com CPF"**, logo acima de
+"Exportar e importar CSV", e a action é **`clientes_importar_pix`** (com sessão). O formato é o da
+tabela do painel MC, separado por tab:
+
+```
+Nome	Dados	Expira	Status	Telefone	Usuário
+Aderlane monteiro da Silva	dados+82071527291	15/10/26	23:00	5596992048213	r70000000007
+```
+
+- **Cabeçalho opcional.** `lerCsv` já pulava cabeçalho que começasse em `usuario`; aqui o parser
+  também reconhece a linha que tem `dados` na segunda coluna e a descarta. Colar sem cabeçalho dá
+  o mesmo resultado.
+- **O separador agora procura tab antes de `;` e `,`** (`csv.ts`). Era `;` primeiro, e um nome com
+  vírgula na primeira linha ("Silva, Aderson") faria a lista inteira ser dividida no lugar errado.
+  O CSV de ponto e vírgula continua igual — provado no ar: `n: 1`, `status 1` e a nota gravada.
+- **`Expira` aceita `15/10/26` (ano de dois dígitos)** e `05/12/2026 14:30`; `parseDataBr` ganhou os
+  dois dígitos (2000+aa) e passou a recusar mês fora de 1-12 e dia fora de 1-31, porque
+  `Date.UTC` rolava "32/13/26" sozinho para 2027.
+- **O que entra:** `username`, `telefone` e `exp_date` em `mc_linhas`, o telefone também em
+  `usuarios_criados_ip` (é de lá que o botão recuperar e o lote leem número), e
+  `usuario/cpf/nome` em **`cliente_pix`**.
+- **O `Status` colado NÃO é gravado.** Na tabela do MC aquela coluna é uma hora (`23:00`), não
+  ativo/parado; escrever `parseStatus("23:00")` = 0 marcaria a lista inteira como parada.
+- **O CPF mora fora de `mc_linhas` de propósito:** a varredura do MC reescreve aquela tabela e
+  jogaria o CPF no lixo na primeira sincronização. `cliente_pix` é só daqui. Nada de CPF ou
+  telefone vai para `mcapi_events` — o log guarda só as contagens.
+- **Linha com erro não entra.** Voltam `{linha, texto, motivo}` com `sem usuário na última coluna`,
+  `sem CPF na coluna Dados`, `telefone inválido ("551199")`, `data inválida ("32/13/26")` ou
+  `faltam colunas (...)`. O modal (`#modalPix`, fecha no **Fechar** ou no **Esc**) traz
+  "N usuários importados sem erro." + a lista. Texto colado sem nenhuma linha (ou só o cabeçalho)
+  devolve `csv_vazio` (400).
+- **Usuário repetido na mesma colagem:** vale a última linha (o mapa deduplica antes de gravar).
+- **Velocidade:** a gravação vai em blocos de 200 com `unnest`, não um round-trip por linha — 912
+  linhas coladas entram em **12,1 s** (o botão espera 300 s).
+
+Prova: `npx --yes deno run -A --env-file=../../../.env ../../../tools/_prova_pix.ts` na pasta
+`supabase/functions/peixeiro` — **22/22**, com a parte que escreve dentro de `begin`/`rollback` e a
+conferência final de que não sobrou nenhuma linha `^zz(prova|mass)` em lugar nenhum. Nenhum envio é
+chamado nela. Ao vivo, no painel do Pages com a função publicada (17/11/2026): colar 4 linhas
+(duas boas `zzprova1`/`zzprova7` e duas quebradas) abriu o modal com
+"2 usuários importados sem erro. 2 linha(s) ficaram de fora.", as duas linhas com número e motivo,
+os dois clientes apareceram na tabela, o campo limpou, e Fechar/Esc fecharam o modal sem erro no
+console. As três linhas de prova foram apagadas do banco da cópia depois.
+
+A tabela nasce sozinha do DDL idempotente (`db.ts`), então **na produção não tem nada para criar
+à mão**: o primeiro cold start da função depois do deploy já cria `cliente_pix`.
+
 ## O que os logs do MC guardavam
 
 `mcapi_events` é texto puro e o `login_refresh` gravava o corpo inteiro da chamada — **a senha do MC
