@@ -22,6 +22,9 @@ Arquivos novos:
 - `painel/styles.css` — o CSS do painel antigo, sem dependência de build.
 - `painel/config.js` — **o único arquivo que muda entre a cópia e a produção** (aponta o
   endereço da função).
+- `Chatbot/index.html` — o clone estático do site do cliente (`wplay-teste-4h.onrender.com`),
+  sem Flask e sem Render. Quem aperta "Gerar acesso 4 horas" aqui fala direto com a função.
+- `supabase/functions/peixeiro/site.ts` — o motor do botão do clone (`site_gerar`).
 - `supabase/functions/peixeiro/*.ts` — o motor portado do `painel_web.py` (Deno).
 - `assets/resvg_bg.wasm` e `assets/DejaVuSans-Bold.ttf` — a função baixa estes dois arquivos
   daqui para desenhar a imagem do aviso de vencimento. Sem eles, o aviso sai só com texto.
@@ -230,6 +233,71 @@ tela de sempre, com o campo vazio pedindo o número. A prova roda nos dois sites
 ```bash
 PEIXEIRO_SITE_DIR=../repo python tools/_prova_link.py site
 ```
+
+## O clone do site em `Chatbot/` (o botão sem Render)
+
+`https://kuttenc.github.io/2PEER/Chatbot/` é uma cópia estática do site do cliente
+(`wplay-teste-4h.onrender.com`) — mesmo HTML, mesmo CSS, mesmo texto, sem Flask no meio. O
+motivo é prático: o site do Render demora a acordar e o cliente desiste antes do botão. A página
+aqui já vem pronta do Pages; o que falta de servidor cabe numa chamada.
+
+- **A ação é `site_gerar`** e está em `SEM_SESSAO` (`index.ts`): qualquer um chama, sem token de
+  painel, sem login. Ela faz o que o `gerar()` do `app.py` fazia — `POST /lines/test` no painel
+  MC da conta do revendedor (`criarLinhaTeste` em `mcapi.ts`, pacote P2P/iptv e `testDuration: 4`
+  iguais aos do site), grava o evento, registra em `usuarios_criados_ip` e, se
+  `greenapi_config.send_photo` estiver ligado, manda a foto de geração pelo GreenAPI.
+- **A régua é a mesma de antes, por IP**: reaproveita o acesso ainda ativo do IP → se o IP está
+  em `ip_liberados`, sempre libera → senão no máximo **1 por dia e 2 por semana** contados em
+  Brasília (`limitesDoIp`, mesma janela do `automate_mcapi.py`: `date_trunc` sobre
+  `now() at time zone 'America/Sao_Paulo'`; a semana do Postgres começa segunda). Passou do
+  limite, a resposta é HTTP 429 com o texto exatamente igual ao do site: *"Seu teste ja foi
+  gerado recentemente..."*. Nada de "4 horas" mudou aqui.
+- **O IP não é disfarçável**: o Supabase descarta um `x-forwarded-for` mandado do navegador e a
+  função só enxerga o IP real de saída do cliente. O `dispositivo` (UUID que a página guarda em
+  `localStorage["peixeiro_dispositivo"]`) só vira a chave quando a função não recebeu IP nenhum
+  (`chaveDoIp`), que na prática não acontece.
+- **Tabela nova: `public.site_acessos`** — criada sozinha na primeira chamada (`esquema()`):
+
+  ```sql
+  create table if not exists public.site_acessos (
+    client_ip text primary key, username text not null default '', senha text not null default '',
+    exp_date timestamptz, telefone text not null default '', atualizado_em timestamptz not null default now());
+  ```
+
+  Por que ela existe: no site do Render o "ainda tenho teste aberto?" saía da última resposta de
+  `line_test` em `mcapi_events`, e lá tinha a senha. Aqui a senha **não** vai para o log de
+  eventos (a página é pública, os logs ficam muito tempo), e a linha de teste do MC **não
+  aparece no `GET /lines`** dessa conta (medido: 14 linhas listadas, busca pelo usuário do teste
+  retorna `total 0`). Então o reuso precisa de um registro nosso: uma linha por IP, sobrescrita a
+  cada geração, lida só enquanto `exp_date > now()` — venceu, some da leitura.
+
+- Três desvios deliberados do site do Render, para não abrir um buraco novo:
+  1. `ensure_first_allowed_ip` (o botão que colocava o primeiro visitante em `ip_liberados`) não
+     foi portado. Numa página pública ele liberaria o primeiro cliente que chegar e derrubaria a
+     régua para todos.
+  2. A linha de teste **não** entra em `mc_linhas` (o espelho). Ela não existe no `GET /lines`, e
+     uma linha que a API não devolve polui a contagem da aba Acessos.
+  3. `mascararResposta` passou a recursionar nos objetos aninhados, então `password`/`token`
+     somem do `response_payload` do evento em qualquer profundidade.
+- **Telefone no link**: a página lê `?telefone=` (ou `?tel`) do mesmo jeito do site — aceita só
+  10-13 dígitos, tira o `55` da frente, tranca o campo e grava em `localStorage` por 4 horas. Quem
+  chama `site_gerar` manda o número do link, não o do formulário.
+- **Apontar os links de recuperação para o clone** é uma chamada na aba Configuração (ação
+  `links_padrao_salvar`, sem parâmetro de link = o destino padrão de todos):
+
+  ```bash
+  # destino padrão = o clone (as 42 linhas de painel_links da cópia estão com destino vazio,
+  # então mexer no padrão move todos os links, inclusive os já enviados)
+  curl -s -X POST https://bzgtptbwcvwpgnhbctjn.supabase.co/functions/v1/peixeiro \
+    -H "authorization: Bearer <token de sessao do painel>" -H content-type: application/json \
+    -d '{"action":"links_padrao_salvar","destino":"https://kuttenc.github.io/2PEER/Chatbot/"}'
+  ```
+
+  Voltar atrás é a mesma chamada com `https://wplay-teste-4h.onrender.com/`. O clique (`r/` →
+  `links_destino`) continua colando `?telefone=<dígitos>` no que estiver gravado, então o número
+  chega preenchido nos dois endereços.
+- O que o clone **não** tem: a vitrine (`/api/...` de produtos) e nada de admin. É a tela de
+  geração e o assistente de instalação, iguais.
 
 ## A aba "Não recuperados" (a fila por dentro)
 
