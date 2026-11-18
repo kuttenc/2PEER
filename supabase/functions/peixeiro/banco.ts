@@ -41,6 +41,8 @@ export type Conf = {
   chat_token: string;
   chat_dias: number;
   chat_desconhecido: boolean;
+  /** O que responder quando o cliente diz só "não". Texto vazio é o recurso desligado. */
+  chat_nao_legenda: string;
 };
 
 const COLUNAS_CONF = `api_url, media_url, id_instance, api_token, instance_name, owner_phone, qr_url,
@@ -48,7 +50,7 @@ const COLUNAS_CONF = `api_url, media_url, id_instance, api_token, instance_name,
   aviso_titulo, aviso_rodape, aviso_legenda, aviso_token, painel_token, renova_ativo, renova_dias,
   renova_janela_dias, renova_legenda, recupera_legenda, updated_at, recupera_photo_base64,
   recupera_photo_name, recupera_send_photo, recupera_pausa_min, recupera_pausa_max,
-  chat_ativo, chat_token, chat_dias, chat_desconhecido`;
+  chat_ativo, chat_token, chat_dias, chat_desconhecido, chat_nao_legenda`;
 
 export async function obterConfig(): Promise<Conf | null> {
   const linha = await consultar1(`select ${COLUNAS_CONF} from public.greenapi_config where id = 1`);
@@ -89,6 +91,7 @@ export async function obterConfig(): Promise<Conf | null> {
     chat_token: String(linha.chat_token || ""),
     chat_dias: Number(linha.chat_dias ?? 90),
     chat_desconhecido: Boolean(linha.chat_desconhecido),
+    chat_nao_legenda: String(linha.chat_nao_legenda || ""),
   };
 }
 

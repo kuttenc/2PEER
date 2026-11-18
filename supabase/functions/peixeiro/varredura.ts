@@ -1,11 +1,18 @@
 // A varredura das 6h (vencendo + já vencidos) sem Render: é o mesmo corpo do
 // avisar_vencimentos()/avisar_renovacao() do site, só que lendo e gravando pelo db.ts.
 import { gerarImagemAviso } from "./aviso.ts";
+import { telefonesBloqueados } from "./bloqueados.ts";
 import { obterConfig, sincronizarLinhas, telefonesPorUsuario, dadosDoCliente, type Conf } from "./banco.ts";
 import { consultar } from "./db.ts";
 import { coletarLinhasVencendo, coletarLinhasVencidas, gravarEvento, tokenDoPainel } from "./mcapi.ts";
 import { cotaEsgotada, enviarArquivo, enviarTexto, type ResultadoEnvio } from "./greenapi.ts";
-import { legendaAviso, legendaRenovacao, parseExpDate, type ClienteMensagem } from "./texto.ts";
+import {
+  legendaAviso,
+  legendaRenovacao,
+  normalizarWhatsapp,
+  parseExpDate,
+  type ClienteMensagem,
+} from "./texto.ts";
 
 /** A ficha que as mensagens da agenda usam: o número é o da agenda (é para lá que se manda) e a
  *  data é a que o painel MC acabou de calcular, não a do espelho (que pode estar velha). */
@@ -59,13 +66,18 @@ export async function avisarVencimentos(clientIp: string, forcar = false): Promi
 
   const coleta = await coletarLinhasVencendo(info.token || "", limiteDias * 24);
   const telefones = await telefonesPorUsuario();
+  const bloqueados = await telefonesBloqueados();
   const falhas: { username: string; erro: unknown }[] = [];
-  let enviados = 0, semTelefone = 0, cota = false;
+  let enviados = 0, semTelefone = 0, foraDaBase = 0, cota = false;
 
   for (const linha of coleta.itens) {
     const telefone = telefones[linha.username] || "";
     if (!linha.username || !telefone) {
       semTelefone++;
+      continue;
+    }
+    if (bloqueados.has(normalizarWhatsapp(telefone))) {
+      foraDaBase++;
       continue;
     }
     const primeira = await reivindicarVencimento(linha.username, linha.exp_date, telefone, linha.horas);
@@ -102,6 +114,7 @@ export async function avisarVencimentos(clientIp: string, forcar = false): Promi
     avaliados: coleta.itens.length,
     enviados,
     sem_telefone: semTelefone,
+    bloqueados: foraDaBase,
     falhas: falhas.slice(0, 10),
     lines_status: coleta.status,
   };
@@ -158,14 +171,19 @@ export async function avisarRenovacao(clientIp: string, forcar = false): Promise
 
   const coleta = await coletarLinhasVencidas(info.token || "", janela);
   const telefones = await telefonesPorUsuario();
+  const bloqueados = await telefonesBloqueados();
   const corte = new Date(Date.now() - intervalo * 86_400_000);
   const falhas: { username: string; erro: unknown }[] = [];
-  let enviados = 0, semTelefone = 0, esperando = 0, cota = false;
+  let enviados = 0, semTelefone = 0, esperando = 0, foraDaBase = 0, cota = false;
 
   for (const linha of coleta.itens) {
     const telefone = telefones[linha.username] || "";
     if (!linha.username || !telefone) {
       semTelefone++;
+      continue;
+    }
+    if (bloqueados.has(normalizarWhatsapp(telefone))) {
+      foraDaBase++;
       continue;
     }
     const diasVencido = Math.round((Math.abs(linha.horas) / 24) * 10) / 10;
@@ -205,6 +223,7 @@ export async function avisarRenovacao(clientIp: string, forcar = false): Promise
     enviados,
     sem_telefone: semTelefone,
     esperando,
+    bloqueados: foraDaBase,
     falhas: falhas.slice(0, 10),
     lines_status: coleta.status,
   };

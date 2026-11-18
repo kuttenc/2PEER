@@ -38,6 +38,7 @@
       <a href="#deletar" data-tela="deletar">Deletar</a>
       <a href="#links" data-tela="links">Links</a>
       <a href="#chat" data-tela="chat">Chat</a>
+      <a href="#bloqueados" data-tela="bloqueados">Bloqueados</a>
       <a href="#senha" data-tela="senha">Senha</a>
       <a href="#sair" data-tela="sair">Sair</a>
     </nav>
@@ -254,13 +255,17 @@
         <h2>Acessos do painel MC</h2>
         <div class="erro" id="acErro" hidden></div>
         <div class="linha">
-          <input type="text" id="acBusca" placeholder="buscar usuário ou nota" style="flex:1;min-width:180px"
+          <input type="text" id="acBusca" placeholder="buscar usuário, nome, CPF ou telefone" style="flex:1;min-width:180px"
                  autocomplete="off" autocapitalize="off" spellcheck="false">
           <button type="button" id="acBuscar">Buscar</button>
           <button type="button" class="segundo" id="btnMesclar">Mesclar</button>
           <button type="button" class="segundo" id="btnLote">Não recuperados</button>
         </div>
         <p class="muted" id="acPaginacao" style="margin:8px 0 0"></p>
+        <p class="muted" id="acNotaBusca" style="margin:8px 0 0" hidden>Busca no espelho do banco
+          &mdash; &eacute; onde est&atilde;o o nome, o CPF e o telefone. Por isso ela acha gente que o
+          campo de busca do painel MC n&atilde;o mostra; os dados da linha s&atilde;o os &uacute;ltimos
+          sincronizados.</p>
         <table style="margin-top:10px" id="tabela">
           <thead>
             <tr>
@@ -288,6 +293,13 @@
         <div class="prog"><i id="frBarra"></i></div>
         <p class="muted" id="frVivo" hidden></p>
         <p class="muted" id="frPausa" hidden style="margin-top:0"></p>
+        <div class="linha" id="frPularCaixa" style="margin:10px 0">
+          <label for="frPularQtd" style="margin:0">Pular envios</label>
+          <input type="number" id="frPularQtd" min="1" max="2000" step="1"
+                 inputmode="numeric" autocomplete="off" placeholder="quantos" style="width:120px">
+          <button type="button" class="alerta" id="frPular">Pular agora</button>
+          <span class="muted" id="frPularNota"></span>
+        </div>
         <div class="lista" id="frLista" style="max-height:340px"></div>
         <p class="muted" id="frTopo" hidden></p>
         <p class="muted" id="frVazia" hidden></p>
@@ -333,11 +345,12 @@
             São os mesmos nomes da aba <a href="#chat">Chat</a> e dá para escrever com uma chave
             (&ldquo;{nome}&rdquo;) ou com duas (&ldquo;{{nome}}&rdquo;); o resultado é o mesmo.</p>
           <p class="muted"><b>{nome}</b> é o nome inteiro cadastrado (&ldquo;Aderlane monteiro da
-            Silva&rdquo;) e <b>{primeiro}</b> é só o primeiro (&ldquo;Aderlane&rdquo;). Para quem não
-            está na lista colada da aba Clientes, {nome} cai na nota do painel MC &mdash; que na sua
-            base é telefone mascarado, tipo &ldquo;Simone 129xxxx4466&rdquo;. Aí {primeiro} pega só o
-            que é palavra e, se não sobra nada, escreve &ldquo;amigo(a)&rdquo; em vez de sair o
-            código do usuário.</p>
+            Silva&rdquo;) e <b>{primeiro}</b> é só o primeiro (&ldquo;Aderlane&rdquo;). Não havendo nome
+            &mdash; nem na lista colada da aba Clientes, nem sobrando palavra na nota do painel MC
+            &mdash; <b>não sai nada</b> no lugar da chave, e a frase se ajeita sozinha:
+            &ldquo;Olá! {primeiro}, tem&rdquo; vira &ldquo;Olá! tem&rdquo;. Nota que é só telefone
+            mascarado (&ldquo;Simone 129xxxx4466&rdquo;) ou palavra de situação
+            (&ldquo;ativo&rdquo;, &ldquo;parado&rdquo;, &ldquo;vencido&rdquo;) não vale como nome.</p>
           <p class="muted"><b>{vence}</b> é o que usar na frase: sai &ldquo;vence em 15/11/2026
             18:00&rdquo; para quem está no prazo e &ldquo;venceu em 10/11/2026 18:00&rdquo; para quem
             já perdeu o acesso. <b>{expira}</b> é só a data gravada (vale para os dois) e
@@ -587,6 +600,8 @@
           <tr><th>Webhook instalado</th><td><span class="pill" id="chWebhook">…</span>
             <span class="muted" id="chWebhookDetalhe"></span></td></tr>
           <tr><th>Conversas guardadas</th><td id="chConversas"></td></tr>
+          <tr><th>Bloqueados</th><td><span id="chBloqueados"></span>
+            <a href="#bloqueados">ver a lista</a></td></tr>
         </table>
 
         <label for="chUrl">Endere&ccedil;o do webhook (&eacute; o que vai no campo <code>webhookUrl</code> do GreenAPI)</label>
@@ -600,6 +615,20 @@
 
         <label class="cb"><input type="checkbox" id="chDesconhecido"> responder tamb&eacute;m para quem
           <b>n&atilde;o</b> est&aacute; na base de clientes</label>
+
+        <label for="chNao">Resposta para quem escreve s&oacute; &ldquo;n&atilde;o&rdquo;</label>
+        <p class="muted" style="margin-top:2px">&Eacute; o freio da fila. Na primeira vez que o cliente
+          responde apenas <b>n&atilde;o</b> (ou <b>n</b>), o n&uacute;mero dele entra na aba
+          <a href="#bloqueados">Bloqueados</a> e para de receber mensagem autom&aacute;tica &mdash; sai do
+          <b>N&atilde;o recuperados</b>, do aviso das 6h, da renova&ccedil;&atilde;o e da mensagem avulsa.
+          Se ele responder de novo, o rob&ocirc; fica quieto: j&aacute; foi avisado uma vez.
+          <b>Texto vazio desliga isso.</b> Valem as mesmas chaves dos chats.</p>
+        <textarea id="chNao"></textarea>
+        <div class="linha">
+          <button type="button" id="chNaoSalvar">Salvar a resposta do &ldquo;n&atilde;o&rdquo;</button>
+          <span class="muted" id="chNaoEstado"></span>
+        </div>
+
         <div class="linha">
           <div style="flex:1;min-width:150px">
             <label for="chDias">Guardar a conversa por (dias)</label>
@@ -620,8 +649,10 @@
           <code>{{dias}}</code> <code>{{status}}</code> <code>{{pix}}</code> <code>{{site}}</code>
           <code>{{data}}</code> <code>{{hora}}</code>.</p>
         <p class="muted"><b>{{nome}}</b> &eacute; o nome inteiro cadastrado e <b>{{primeiro}}</b> &eacute;
-          s&oacute; o primeiro nome (&ldquo;Aderlane&rdquo;). Sem nome cadastrado, <b>{{nome}}</b> cai na nota do
-          painel MC e <b>{{primeiro}}</b> escreve &ldquo;amigo(a)&rdquo; em vez do c&oacute;digo do usu&aacute;rio.</p>
+          s&oacute; o primeiro nome (&ldquo;Aderlane&rdquo;). Sem nome cadastrado &mdash; ou com a nota do
+          painel MC dizendo s&oacute; &ldquo;ativo&rdquo; ou um telefone mascarado &mdash; <b>n&atilde;o sai
+          nada</b> no lugar da chave e a frase se fecha sozinha: "Ol&aacute;, {{primeiro}} tem" vira
+          "Ol&aacute;, tem". Nunca entra palavra inventada.</p>
         <p class="muted"><b>{{vence}}</b> &eacute; o que usar na frase: sai "vence em 15/11/2026
           18:00" para quem est&aacute; no prazo e "venceu em 10/11/2026 18:00" para quem j&aacute;
           perdeu o acesso. <b>{{expira}}</b> &eacute; s&oacute; a data gravada (vale para os dois),
@@ -664,6 +695,39 @@
           <button type="button" id="chExportar">Baixar o CSV de treino</button>
           <span class="muted">o que venceu s&atilde;o as conversas; o arquivo de treino fica todo.</span>
         </div>
+      </div>
+    </section>
+
+    <!-- ----------------------------------------------------- BLOQUEADOS -->
+    <section data-pagina="bloqueados" hidden>
+      <div class="card">
+        <h2>Bloqueados</h2>
+        <p class="muted" style="margin-top:0">Quem respondeu <b>n&atilde;o</b> no WhatsApp entra aqui
+          &mdash; e n&atilde;o recebe mais mensagem autom&aacute;tica nenhuma: sai da fila do
+          <b>N&atilde;o recuperados</b>, do aviso das 6h, da renova&ccedil;&atilde;o e da mensagem avulsa,
+          mesmo que a fila j&aacute; esteja andando. &Eacute; o que protege o n&uacute;mero do
+          bloqueio do WhatsApp. Tocar em <b>desbloquear</b> devolve a pessoa para todas as filas.</p>
+        <div class="numeros">
+          <div><span class="rotulo">bloqueados agora</span><b id="blTotal">?</b></div>
+        </div>
+        <div class="linha" style="margin-bottom:10px">
+          <input type="text" id="blBusca" placeholder="pesquisar telefone, nome, usu&aacute;rio ou qualquer palavra"
+                 style="flex:1;min-width:200px" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <button type="button" id="blBuscar">Buscar</button>
+          <button type="button" class="segundo" id="blLimpar">Limpar</button>
+        </div>
+        <table id="tabelaBloqueados">
+          <thead>
+            <tr><th>Telefone</th><th>Quem</th><th>Por que saiu da base</th><th>Desde</th><th></th></tr>
+          </thead>
+          <tbody id="blLinhas"></tbody>
+        </table>
+        <p class="muted" id="blVazio" hidden>Ningu&eacute;m bloqueado. Assim que algu&eacute;m responder
+          <b>n&atilde;o</b> para o rob&ocirc; da aba <a href="#chat">Chat</a>, o n&uacute;mero aparece
+          aqui.</p>
+        <p class="muted" style="margin-bottom:0">A busca &eacute; a mesma da aba Clientes: n&uacute;mero
+          procura o telefone com ponto, tra&ccedil;o ou sem o 55 na frente; palavra procura nome,
+          usu&aacute;rio e o motivo.</p>
       </div>
     </section>
 
@@ -782,6 +846,7 @@
         <div><span class="rotulo">marcados para pular</span><b id="mlPulados">0</b></div>
         <div><span class="rotulo">sem telefone</span><b id="mlSemTelefone">0</b></div>
         <div><span class="rotulo">já receberam nas últimas 3h</span><b id="mlEsperando">0</b></div>
+        <div><span class="rotulo">bloquearam (responderam não)</span><b id="mlBloqueados">0</b></div>
         <div><span class="rotulo" id="mlRotFora">só no espelho, sem linha no MC</span><b id="mlForaMC">0</b></div>
       </div>
       <p class="muted" style="margin:6px 0">Foto junto: <b id="mlFoto">?</b></p>
@@ -888,6 +953,7 @@
         <div><span class="rotulo">marcados para pular</span><b id="msPulados">0</b></div>
         <div><span class="rotulo">sem telefone</span><b id="msSemTelefone">0</b></div>
         <div><span class="rotulo">receberam algo nas últimas 3h</span><b id="msEsperando">0</b></div>
+        <div><span class="rotulo">bloquearam (responderam não)</span><b id="msBloqueados">0</b></div>
       </div>
       <p class="muted" style="margin:6px 0" id="msParNomes">Os primeiros que vão receber: <span class="nomes" id="msNomes"></span></p>
       <p id="msAviso" class="erro" style="margin-top:12px" hidden></p>

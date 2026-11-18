@@ -2,12 +2,16 @@
 // reconhece o telefone na base de clientes, responde pela regra que casar e guarda o par
 // pergunta → resposta — que é, hoje, a base de treino da IA que ainda vai chegar.
 import { obterConfig, type Conf } from "./banco.ts";
+import { MOTIVO_NAO, bloquear } from "./bloqueados.ts";
 import { aleatorio, consultar, consultar1, igual } from "./db.ts";
 import { enviarTexto, setWebhookUrl } from "./greenapi.ts";
+import { gravarEvento } from "./mcapi.ts";
 import { escreverCsv } from "./csv.ts";
 import {
   normalizarWhatsapp,
   parseExpDate,
+  preencherVariaveis,
+  preencherVariaveisDuplas,
   semAcento,
   variaveisMensagem,
 } from "./texto.ts";
@@ -42,6 +46,8 @@ export type Mensagem = {
 };
 
 const DIAS_PADRAO = 90;
+/** O teto do WhatsApp é maior, mas uma frase desse tamanho já é tela cheia no celular. */
+const MAX_NAO_TEXTO = 1200;
 
 // -------------------------------------------------------------------------- configuração
 
@@ -69,13 +75,16 @@ export async function resumoChat(enderecoDaFuncao: string): Promise<Bruto> {
     `select (select count(*) from public.chat_mensagens)::bigint as mensagens,
             (select count(*) from public.chat_mensagens where direcao = 'entrada')::bigint as entradas,
             (select count(*) from public.chat_treino)::bigint as treino,
-            (select count(*) from public.chat_treino where resposta is null)::bigint as sem_resposta`,
+            (select count(*) from public.chat_treino where resposta is null)::bigint as sem_resposta,
+            (select count(*) from public.clientes_bloqueados)::bigint as bloqueados`,
   );
   const contagem = linhas.rows[0] || {};
   return {
     ativo: Boolean(conf?.chat_ativo),
     dias: Number(conf?.chat_dias ?? DIAS_PADRAO),
     desconhecido: Boolean(conf?.chat_desconhecido),
+    nao_legenda: String(conf?.chat_nao_legenda || ""),
+    bloqueados: Number(contagem.bloqueados || 0),
     token,
     webhook: urlWebhook(enderecoDaFuncao, token),
     configurado: Boolean(conf?.api_url && conf?.id_instance && conf?.api_token),
@@ -92,6 +101,7 @@ export async function ajustarChat(campos: {
   ativo?: boolean;
   dias?: number;
   desconhecido?: boolean;
+  nao?: string;
 }): Promise<{ ok: boolean; error?: string }> {
   const partes: string[] = [];
   const valores: unknown[] = [];
@@ -106,6 +116,10 @@ export async function ajustarChat(campos: {
   if (typeof campos.desconhecido === "boolean") {
     partes.push(`chat_desconhecido = $${partes.length + 1}`);
     valores.push(campos.desconhecido);
+  }
+  if (typeof campos.nao === "string") {
+    partes.push(`chat_nao_legenda = $${partes.length + 1}`);
+    valores.push(campos.nao.slice(0, MAX_NAO_TEXTO));
   }
   if (!partes.length) return { ok: false, error: "nada para gravar" };
   partes.push("updated_at = now()");
@@ -304,12 +318,10 @@ export function variaveis(cliente: Cliente | null, conf: Conf, telefone: string)
 }
 
 /** {{nome}} vira o dado do cliente. O que a gente não conhece fica escrito do mesmo jeito,
- *  para ele ver na tela que a variável está errada em vez de sair uma mensagem muda. */
+ *  para ele ver na tela que a variável está errada em vez de sair uma mensagem muda. Sem valor,
+ *  a variável some junto com o espaço dela — "Olá, {{primeiro}}!" sai "Olá!". */
 export function renderizar(modelo: string, v: Record<string, string>): string {
-  return String(modelo || "").replace(/\{\{\s*([a-z0-9_]+)\s*\}\}/gi, (tudo, chave: string) => {
-    const valor = v[String(chave).toLowerCase()];
-    return valor === undefined ? tudo : valor;
-  });
+  return preencherVariaveisDuplas(modelo, v);
 }
 
 function normalizar(bruto: string): string {
@@ -536,6 +548,52 @@ export async function entregasPorUsuario(usuarios: string[]): Promise<Record<str
 
 /** O que o GreenAPI manda a cada mensagem recebida. Responde sempre 200 rápido: erro aqui é
  *  retrabalho na fila dele, e pilha de webhook repetindo resposta para o mesmo cliente. */
+/** O "não" escrito sozinho é um pedido para sair da lista, não uma pergunta. Viene antes das
+ *  regras porque nenhuma resposta de venda serve para quem acabou de dizer não: aqui a gente
+ *  agradece, bloqueia o número (ele sai de toda fila automática) e para de incomodar a pessoa.
+ *  Responder "não" de novo não manda mensagem outra vez — o bloqueio é uma linha só. */
+async function respondeuNao(
+  m: Mensagem,
+  conf: Conf,
+  cliente: Cliente | null,
+  dias: number,
+): Promise<{ status: number; dados: Bruto } | null> {
+  const dito = normalizar(m.texto);
+  if (dito !== "nao" && dito !== "n") return null;
+  const modelo = String(conf.chat_nao_legenda || "").trim();
+  if (!modelo) return null;
+
+  const primeiro = await bloquear(m.telefone, cliente?.usuario || "", cliente?.nota || "", MOTIVO_NAO);
+  if (!primeiro) return { status: 200, dados: { ok: true, bloqueado: true, ignorado: "ja bloqueado" } };
+
+  const resposta = preencherVariaveis(modelo, variaveis(cliente, conf, m.telefone));
+  const envio = await enviarTexto(conf, m.telefone, resposta);
+  if (envio.ok) {
+    const idRecebido = primeira([caminho(envio.response, "messageId", "id"), caminho(envio.response, "idMessage")]);
+    await gravarMensagem(
+      { ...m, chave: idRecebido ? `saida-${idRecebido}` : "" },
+      cliente?.usuario || "", "saida", resposta, null, dias,
+    );
+  }
+  await gravarEvento({
+    event_type: "cliente_bloqueado",
+    status_code: envio.status_code ?? null,
+    request_payload: { telefone: m.telefone, usuario: cliente?.usuario || "", texto: m.texto.slice(0, 120) },
+    response_payload: envio.response || { error: String(envio.error || "") },
+    error_message: envio.ok ? null : "aviso de bloqueio falhou",
+  });
+  return {
+    status: 200,
+    dados: {
+      ok: Boolean(envio.ok),
+      bloqueado: true,
+      respondido: Boolean(envio.ok),
+      simulado: Boolean(envio.simulado),
+      error: envio.ok ? undefined : String(envio.error || `status ${envio.status_code || "?"}`),
+    },
+  };
+}
+
 export async function receberWebhook(
   bruto: Bruto,
   chave: string,
@@ -571,6 +629,9 @@ export async function receberWebhook(
   if (!conf.api_url || !conf.id_instance || !conf.api_token) {
     return { status: 200, dados: { ok: false, error: "sem configuracao", cadastrado: Boolean(cliente) } };
   }
+
+  const nao = await respondeuNao(m, conf, cliente, dias);
+  if (nao) return nao;
 
   const regra = casar(m.texto, await listarRegras());
   if (!regra || !regra.resposta.trim()) {

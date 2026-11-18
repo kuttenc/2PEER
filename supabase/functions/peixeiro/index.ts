@@ -66,6 +66,7 @@ const ACAO: Record<string, Handler> = {
   lote_fila: acoes.loteFila,
   lote_retomar: acoes.loteRetomar,
   lote_tirar: acoes.loteTirar,
+  lote_pular: acoes.lotePular,
 
   apagar_linha_ver: acoes.apagarLinhaVer,
   apagar_linha_fazer: acoes.apagarLinhaFazer,
@@ -88,6 +89,9 @@ const ACAO: Record<string, Handler> = {
   chat_instalar: acoes.chatInstalar,
   chat_conversas: acoes.chatConversas,
   chat_treino_exportar: acoes.chatTreino,
+
+  bloqueados_ver: acoes.bloqueadosVer,
+  bloqueados_desbloquear: acoes.bloqueadosDesbloquear,
 };
 
 function origensPermitidas(): string[] {

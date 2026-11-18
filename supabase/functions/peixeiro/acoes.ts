@@ -21,6 +21,12 @@ import {
 } from "./banco.ts";
 import { consultar, consultar1 } from "./db.ts";
 import {
+  desbloquear,
+  estaBloqueado,
+  listarBloqueados,
+  telefonesBloqueados,
+} from "./bloqueados.ts";
+import {
   apagarLinha,
   coletarLinhasVencendo,
   gravarEvento,
@@ -85,6 +91,7 @@ import {
   gravarPlano,
   iniciarLote,
   pararLote,
+  pularEnvios,
   proximoItem,
   registrarItem,
   resumoLote,
@@ -170,6 +177,15 @@ function tipoLote(valor: unknown): TipoLote {
 function eventoLote(tipo: TipoLote, sufixo: string): string {
   if (tipo === "apagar") return `painel_online_lote_${sufixo}`;
   return `${tipo}_lote_${sufixo}`;
+}
+
+/** Quem está na aba Bloqueados não recebe nada nem pelo botão de um só: a resposta dele foi um
+ *  "não", e insistir é o que leva a instância do WhatsApp a bloqueio. */
+async function travaBloqueado(telefone: string): Promise<Saida | null> {
+  if (telefone && (await estaBloqueado(telefone))) {
+    return falha("bloqueado", 409, { telefone: formatarTelefone(telefone) });
+  }
+  return null;
 }
 
 // ------------------------------------------------------------------ entrar / sair / senha
@@ -418,6 +434,30 @@ export async function acessosVer(dados: Registro, ctx: Contexto): Promise<Saida>
   const pagina = Math.max(1, Math.trunc(Number(dados.pagina || 1)));
   const busca = txt(dados.q);
   const telefones = await telefonesPorUsuario();
+  // Com termo de busca a régua é o espelho da aba Clientes: só ele tem nome, CPF e telefone —
+  // a busca do painel MC alcança no máximo o usuário. Sem termo, a página vem do MC, como sempre.
+  if (busca) {
+    const espelho = await listarClientesPagina(pagina, busca);
+    return ok({
+      linhas: espelho.linhas.map((l) => ({
+        ...l,
+        id: l.linha_id,
+        senha: "",
+      })),
+      telefones,
+      pagina: espelho.info.pagina,
+      info: {
+        pagina: espelho.info.pagina,
+        paginas: espelho.info.paginas,
+        total: espelho.info.encontrados,
+        exato: true,
+      },
+      sem_token: false,
+      fonte: "espelho",
+      na_base: espelho.info.na_base,
+      lines_status: "espelho",
+    });
+  }
   const info = await tokenDoPainel(ctx.ip);
   if (!info.ok) {
     return ok({ linhas: [], telefones, pagina, info: null, sem_token: true, lines_status: info.login_status });
@@ -638,6 +678,8 @@ export async function recuperarUm(dados: Registro, ctx: Contexto): Promise<Saida
   if (!conf) return falha("banco", 500);
   const telefone = (await telefonesPorUsuario())[username] || "";
   if (!telefone) return falha("sem_telefone", 400, { q: username });
+  const travado = await travaBloqueado(telefone);
+  if (travado) return travado;
 
   let expira = parseExpDate(txt(dados.exp_iso));
   let fonte = txt(dados.destino) === "clientes" ? "espelho" : "linha";
@@ -709,9 +751,18 @@ async function telefoneDaMensagem(username: string, bruto: string): Promise<stri
 
 /** `{{usuario}}`, `{{pix}}`, `{{site}}` e o resto das variáveis do robô, com o que a gente sabe
  *  do cliente. Quem não tem data — o apagado do painel MC — recebe `{{vence}}` = "não está no nosso
- *  sistema" de propósito: é melhor o texto honesto do que uma data velha passando por verdade. */
-function corpoMensagem(texto: string, username: string, telefone: string, conf: Conf, expira: Date | null): string {
-  const cliente = { usuario: username, telefone, nota: "", status: 0, expira };
+ *  sistema" de propósito: é melhor o texto honesto do que uma data velha passando por verdade.
+ *  O nome vem da ficha (é a mesma régua das outras abas), porque sem ele o texto mandado em massa
+ *  não teria como dizer "Oi {{primeiro}}". */
+async function corpoMensagem(
+  texto: string,
+  username: string,
+  telefone: string,
+  conf: Conf,
+  expira: Date | null,
+): Promise<string> {
+  const ficha = username ? await dadosDoCliente(username) : null;
+  const cliente = { usuario: username, telefone, nota: ficha?.nome || "", status: Number(ficha?.status ?? 0), expira };
   return renderizar(texto, variaveis(cliente, conf, telefone)).slice(0, 4000);
 }
 
@@ -725,10 +776,12 @@ export async function mensagemUm(dados: Registro, ctx: Contexto): Promise<Saida>
   const username = txt(dados.username);
   const telefone = await telefoneDaMensagem(username, String(dados.telefone || ""));
   if (!telefone) return falha("sem_telefone", 400, { q: username });
+  const travado = await travaBloqueado(telefone);
+  if (travado) return travado;
 
   // A data que a linha tinha na tela: sem ela {{vence}} mentiria para quem ainda tem linha no MC.
   const resultado = await enviarTexto(
-    conf, telefone, corpoMensagem(texto, username, telefone, conf, parseExpDate(txt(dados.exp_iso))),
+    conf, telefone, await corpoMensagem(texto, username, telefone, conf, parseExpDate(txt(dados.exp_iso))),
   );
   await gravarEvento({
     event_type: "mensagem_envio",
@@ -746,18 +799,20 @@ export async function mensagemUm(dados: Registro, ctx: Contexto): Promise<Saida>
 async function itemMensagem(
   item: Item,
   ctx: Contexto,
-): Promise<{ ok: boolean; erro?: string; parar?: string; info: Registro }> {
+): Promise<{ ok: boolean; erro?: string; parar?: string; marca?: string; info: Registro }> {
   const conf = await obterConfig();
   const username = String(item.username || ""), telefone = String(item.telefone || "");
   if (!conf) return { ok: false, erro: `${username}: config ausente`, info: { username } };
   const texto = String(item.texto || "").trim();
   if (!texto) return { ok: false, erro: `${username}: a mensagem sumiu do plano`, parar: "sem_texto", info: { username } };
   if (!telefone) return { ok: false, erro: `${username}: sem telefone`, info: { username } };
+  // A fila é congelada quando ele aperta, e um "não" no meio do caminho também bloqueia.
+  if (await estaBloqueado(telefone)) return { ok: true, marca: "bloqueado", info: { username, bloqueado: true } };
 
   let resultado: ResultadoEnvio;
   try {
     resultado = await enviarTexto(
-      conf, telefone, corpoMensagem(texto, username, telefone, conf, parseExpDate(txt(item.expira))),
+      conf, telefone, await corpoMensagem(texto, username, telefone, conf, parseExpDate(txt(item.expira))),
     );
   } catch (exc) {
     resultado = { ok: false, error: String(exc).slice(0, 160) };
@@ -797,12 +852,13 @@ async function recuperarContagem(dados: Registro, ctx: Contexto): Promise<Saida>
   const conf = await obterConfig();
   if (!conf) return falha("banco", 500);
   const telefones = await telefonesPorUsuario();
+  const bloqueados = await telefonesBloqueados();
   const recentes = new Set(
     (await consultar(`select username from public.renovacao_avisos where updated_at > now() - interval '3 hours'`))
       .rows.map((r: Record<string, unknown>) => String(r.username)),
   );
   // Quem nunca teve linha no painel MC (importado por CSV) só existe no espelho da aba Clientes.
-  if (txt(dados.fonte) === "espelho") return contagemDoEspelho(busca, pular, telefones, recentes, conf);
+  if (txt(dados.fonte) === "espelho") return contagemDoEspelho(busca, pular, telefones, recentes, conf, bloqueados);
 
   const info = await tokenDoPainel(ctx.ip);
   if (!info.ok) return falha("mc_login", 502);
@@ -814,12 +870,14 @@ async function recuperarContagem(dados: Registro, ctx: Contexto): Promise<Saida>
 
   const varrida = await varrerMc(info.token || "", busca, (l) => l.vencido);
   const alvos: Item[] = [];
-  let semTelefone = 0, pulados = 0, esperando = 0;
+  let semTelefone = 0, pulados = 0, esperando = 0, foraDaBase = 0;
   for (const linha of varrida.escolhidas) {
+    const telefone = telefones[linha.username] || "";
     if (pular.has(linha.username)) pulados++;
-    else if (!telefones[linha.username]) semTelefone++;
+    else if (!telefone) semTelefone++;
+    else if (bloqueados.has(normalizarWhatsapp(telefone))) foraDaBase++;
     else if (recentes.has(linha.username)) esperando++;
-    else alvos.push({ username: linha.username, telefone: telefones[linha.username], exp_iso: linha.exp_iso, busca });
+    else alvos.push({ username: linha.username, telefone, exp_iso: linha.exp_iso, busca });
   }
   // Linha que só existe no espelho (apagada do MC depois da última sincronização) fica fora.
   const foraDoMc = varrida.aviso ? [] : [...vencidasNoEspelho].filter((u) => !varrida.todos.has(u)).sort();
@@ -834,6 +892,7 @@ async function recuperarContagem(dados: Registro, ctx: Contexto): Promise<Saida>
     com_linha_mc: varrida.escolhidas.length,
     alvos: alvos.length,
     sem_telefone: semTelefone,
+    bloqueados: foraDaBase,
     pulados,
     esperando,
     busca,
@@ -851,6 +910,7 @@ async function contagemDoEspelho(
   telefones: Record<string, string>,
   recentes: Set<string>,
   conf: Conf,
+  bloqueados: Set<string>,
 ): Promise<Saida> {
   const r = await consultar(
     `select username, telefone, exp_date, linha_id from public.mc_linhas
@@ -860,7 +920,7 @@ async function contagemDoEspelho(
     [busca],
   );
   const alvos: Item[] = [];
-  let semTelefone = 0, pulados = 0, esperando = 0, semLinha = 0;
+  let semTelefone = 0, pulados = 0, esperando = 0, semLinha = 0, foraDaBase = 0;
   for (const linha of r.rows as Record<string, unknown>[]) {
     const username = String(linha.username || "");
     if (!String(linha.linha_id || "")) semLinha++;
@@ -868,6 +928,7 @@ async function contagemDoEspelho(
     else {
       const telefone = telefones[username] || String(linha.telefone || "");
       if (!telefone) semTelefone++;
+      else if (bloqueados.has(normalizarWhatsapp(telefone))) foraDaBase++;
       else if (recentes.has(username)) esperando++;
       else alvos.push({ username, telefone, exp_iso: String(linha.exp_date || ""), busca, fonte: "espelho" });
     }
@@ -883,6 +944,7 @@ async function contagemDoEspelho(
     com_linha_mc: r.rows.length - semLinha,
     alvos: alvos.length,
     sem_telefone: semTelefone,
+    bloqueados: foraDaBase,
     pulados,
     esperando,
     busca,
@@ -904,13 +966,14 @@ async function contagemDeMensagem(dados: Registro): Promise<Saida> {
   // "fora" (o padrão) é quem não tem linha no painel MC; "todos" é a lista inteira com telefone.
   const quem = txt(dados.quem) === "todos" ? "todos" : "fora";
   const linhas = await listarClientes();
+  const bloqueados = await telefonesBloqueados();
   const recentes = new Set(
     (await consultar(`select username from public.renovacao_avisos where updated_at > now() - interval '3 hours'`))
       .rows.map((r: Record<string, unknown>) => String(r.username)),
   );
 
   const alvos: Item[] = [];
-  let semTelefone = 0, pulados = 0, esperando = 0, comLinha = 0, semLinha = 0;
+  let semTelefone = 0, pulados = 0, esperando = 0, comLinha = 0, semLinha = 0, foraDaBase = 0;
   for (const linha of linhas) {
     if (busca && !linha.username.toLowerCase().includes(busca.toLowerCase())) continue;
     if (linha.linha_id) comLinha++;
@@ -918,6 +981,7 @@ async function contagemDeMensagem(dados: Registro): Promise<Saida> {
     if (quem === "fora" && linha.linha_id) continue;
     if (pular.has(linha.username)) pulados++;
     else if (!linha.telefone) semTelefone++;
+    else if (bloqueados.has(normalizarWhatsapp(linha.telefone))) foraDaBase++;
     else if (recentes.has(linha.username)) esperando++;
     else alvos.push({ username: linha.username, telefone: linha.telefone, texto, quem, busca, expira: linha.exp_iso });
   }
@@ -930,6 +994,7 @@ async function contagemDeMensagem(dados: Registro): Promise<Saida> {
     com_linha_mc: comLinha,
     alvos: alvos.length,
     sem_telefone: semTelefone,
+    bloqueados: foraDaBase,
     pulados,
     esperando,
     marcados: pular.size,
@@ -1043,13 +1108,14 @@ export async function loteItem(dados: Registro, ctx: Contexto): Promise<Saida> {
   }
   if (!proximo) return ok({ terminado: true, estado: await resumoLote(tipo) });
 
-  let resultado;
+  let resultado: { ok: boolean; erro?: string; parar?: string; marca?: string; info: Registro };
   if (tipo === "apagar") resultado = await itemApagar(proximo.item, ctx);
   else if (tipo === "mensagem") resultado = await itemMensagem(proximo.item, ctx);
   else resultado = await itemRecuperar(proximo.item, ctx);
   const estado = await registrarItem(tipo, {
     ok: resultado.ok,
     erro: resultado.erro,
+    ...(resultado.marca ? { marca: resultado.marca } : {}),
     ...(resultado.parar ? { parar: resultado.parar } : { limiteSeguidas: PARADA_ERROS }),
   });
   const vaiContinuar = estado.rodando && estado.indice < estado.total;
@@ -1076,10 +1142,16 @@ async function pausaRecuperar(): Promise<number> {
 async function itemRecuperar(
   item: Item,
   ctx: Contexto,
-): Promise<{ ok: boolean; erro?: string; parar?: string; info: Registro }> {
+): Promise<{ ok: boolean; erro?: string; parar?: string; marca?: string; info: Registro }> {
   const conf = await obterConfig();
   const username = String(item.username || ""), telefone = String(item.telefone || "");
   if (!conf) return { ok: false, erro: `${username}: config ausente`, info: { username } };
+
+  // Quem pediu para não receber também está fora da fila que já foi congelada: o "não" dele
+  // pode ter chegado depois de o lote começar.
+  if (telefone && await estaBloqueado(telefone)) {
+    return { ok: true, marca: "bloqueado", info: { username, bloqueado: true } };
+  }
 
   const expira = parseExpDate(String(item.exp_iso || ""));
   const horas = expira ? (expira.getTime() - Date.now()) / 3_600_000 : 0;
@@ -1166,27 +1238,32 @@ export async function loteFila(dados: Registro): Promise<Saida> {
   const tipo = tipoLote(dados.tipo);
   const vista = await verLote(tipo);
   if (!vista || !vista.plano.length) {
-    return ok({ vazia: true, itens: [], estado: estadoVazio(0), na_fila: 0, fora: 0, total: 0 });
+    return ok({ vazia: true, itens: [], estado: estadoVazio(0), na_fila: 0, fora: 0, pulados: 0, bloqueados: 0, total: 0 });
   }
   const { plano, estado } = vista;
   const resultados = estado.resultados || {};
   const entregas = await entregasPorUsuario(plano.map((item) => txt(item.username) || txt(item.usuario)));
-  let naFila = 0, fora = 0;
+  let naFila = 0, fora = 0, foraDaBase = 0, pulados = 0;
   const itens = plano.map((item, i) => {
     const marca = resultados[String(i)];
     const saiu = foraDaFila(item);
+    const pulou = saiu && item.pulado === true;
     const enviando = Boolean(estado.rodando) && estado.enviando === i;
-    if (saiu) fora += 1;
+    if (pulou) pulados += 1;
+    else if (saiu) fora += 1;
     else if (!marca) naFila += 1;
     const nome = txt(item.username) || txt(item.usuario);
+    const bloqueado = marca?.marca === "bloqueado";
+    if (bloqueado) foraDaBase += 1;
     return {
       i,
       usuario: nome,
       telefone: formatarTelefone(txt(item.telefone)),
       vencido: textoDoItem(item) || txt(item.intervalo),
       quem: txt(item.quem),
-      situacao: marca ? (marca.ok ? "enviado" : "falhou") : saiu ? "fora" : enviando ? "enviando" : "fila",
-      erro: marca && !marca.ok ? marca.erro : "",
+      situacao: marca ? (bloqueado ? "bloqueado" : marca.ok ? "enviado" : "falhou")
+        : pulou ? "pulou" : saiu ? "fora" : enviando ? "enviando" : "fila",
+      erro: marca && !marca.ok && !bloqueado ? marca.erro : "",
       entrega: entregas[nome] || "",
     };
   });
@@ -1199,6 +1276,8 @@ export async function loteFila(dados: Registro): Promise<Saida> {
       : (plano.length && plano[0].fonte === "espelho" ? "espelho" : "mc"),
     na_fila: naFila,
     fora,
+    pulados,
+    bloqueados: foraDaBase,
     total: plano.length,
     idade: Number.isFinite(vista.idade) ? Math.round(vista.idade) : null,
     fresco: vista.fresco,
@@ -1237,6 +1316,26 @@ export async function loteTirar(dados: Registro, ctx: Contexto): Promise<Saida> 
     client_ip: ctx.ip,
   });
   return ok({ fora: saida.fora, estado: await resumoLote(tipo) });
+}
+
+/** O campo "pular envios" da tela da fila. Funciona com o lote rodando — é justamente para
+ *  agora: os próximos N que ainda não saíram são pulados de uma vez, sem enviar, sem apagar
+ *  e sem parar o que está no ar. */
+export async function lotePular(dados: Registro, ctx: Contexto): Promise<Saida> {
+  const tipo = tipoLote(dados.tipo);
+  const quantos = Math.trunc(Number(dados.quantos));
+  if (!Number.isFinite(quantos) || quantos < 1) return falha("quantidade_invalida");
+  if (quantos > 2000) return falha("muita_marca");
+  const pulo = await pularEnvios(tipo, quantos);
+  if (!pulo.ok) return falha(pulo.erro || "plano_vazio", 409);
+  await gravarEvento({
+    event_type: eventoLote(tipo, "pular"),
+    status_code: 200,
+    request_payload: { tipo, pediu: quantos },
+    response_payload: { pulados: pulo.pulados },
+    client_ip: ctx.ip,
+  });
+  return ok({ pulados: pulo.pulados, pediu: quantos, estado: await resumoLote(tipo) });
 }
 
 // ------------------------------------------------------------------ apagar uma linha só
@@ -1404,11 +1503,13 @@ export async function chatApagar(dados: Registro): Promise<Saida> {
   return ok({ regras: await listarRegras() });
 }
 
-/** Liga/desliga o robô, muda a retenção das conversas e decide se responde quem não é cliente. */
+/** Liga/desliga o robô, muda a retenção das conversas, decide se responde quem não é cliente e
+ *  grava a resposta de quem diz "não" (texto vazio é o recurso desligado). */
 export async function chatLigar(dados: Registro, ctx: Contexto): Promise<Saida> {
-  const campos: { ativo?: boolean; dias?: number; desconhecido?: boolean } = {};
+  const campos: { ativo?: boolean; dias?: number; desconhecido?: boolean; nao?: string } = {};
   if ("ativo" in dados) campos.ativo = booleano(dados.ativo);
   if ("desconhecido" in dados) campos.desconhecido = booleano(dados.desconhecido);
+  if ("nao" in dados) campos.nao = txt(dados.nao);
   if (txt(dados.dias)) {
     const dias = Number(txt(dados.dias).replace(",", "."));
     if (!Number.isFinite(dias)) return falha("numero");
@@ -1456,4 +1557,28 @@ export async function chatConversas(dados: Registro): Promise<Saida> {
 export async function chatTreino(): Promise<Saida> {
   const arquivo = await exportarTreino();
   return ok({ csv: arquivo.csv, nome: arquivo.nome, n: arquivo.n });
+}
+
+// ------------------------------------------------------------------ bloqueados
+
+/** A lista da aba Bloqueados. `q` é a mesma régua da aba Clientes: letra procura nome/usuário/
+ *  motivo, número procura telefone com ponto, traço ou sem o 55. */
+export async function bloqueadosVer(dados: Registro): Promise<Saida> {
+  return ok(await listarBloqueados(txt(dados.q)));
+}
+
+/** Devolve o número para as filas: o robô volta a responder e o lote "Não recuperados" volta a
+ *  alcançar. Só um DELETE nesta linha, sem tocar em nada do painel MC. */
+export async function bloqueadosDesbloquear(dados: Registro, ctx: Contexto): Promise<Saida> {
+  const telefone = normalizarWhatsapp(txt(dados.telefone));
+  if (telefone.length < 10) return falha("telefone_invalido");
+  if (!(await desbloquear(telefone))) return falha("nao_esta_bloqueado", 409, { telefone: formatarTelefone(telefone) });
+  await gravarEvento({
+    event_type: "cliente_desbloqueado",
+    status_code: 200,
+    request_payload: { telefone },
+    response_payload: {},
+    client_ip: ctx.ip,
+  });
+  return ok({ telefone: formatarTelefone(telefone), ...await listarBloqueados("") });
 }

@@ -87,15 +87,27 @@ export const RECUPERA_LEGENDA_PADRAO =
 
 const PARTICULAS = ["da", "de", "do", "dos", "das", "du", "e"];
 
+/** O que ele cola do painel MC vem com a coluna de situação no lugar do nome: medido na cópia em
+ *  18/11/2026, 907 das 921 notas do espelho são a palavra "ativa" ou "ativo". Palavra de situação
+ *  não é nome de ninguém, e escrever "Olá! ativo, tem interesse" é pior que não escrever nada. */
+const PALAVRAS_DE_SITUACAO = [
+  "ativo", "activa", "ativa", "parado", "parada", "inativo", "inativa", "desativado", "desativada",
+  "suspenso", "suspensa", "vencido", "vencida", "expirado", "teste", "ok", "sim", "nao", "sem nome",
+];
+
+/** O nome que presta, ou vazio. É a única porta de entrada do {nome} e do {primeiro}. */
+export function nomeAproveitavel(nome: string): string {
+  const limpo = String(nome || "").trim();
+  return PALAVRAS_DE_SITUACAO.includes(semAcento(limpo).toLowerCase()) ? "" : limpo;
+}
+
 /** Só o primeiro nome, do jeito que se fala com a pessoa. As notas do painel MC são telefone
  *  mascarado ("Simone 129xxxx4466", "129xxxxxx13"), então token com dígito não é nome, e "da"/"de"
- *  no meio do caminho também não. Sem nada aproveitável, sai "amigo(a)" — nunca o código do
- *  usuário no lugar de um nome. */
+ *  no meio do caminho também não. Sem nada aproveitável sai VAZIO: a mensagem não escreve nada no
+ *  lugar da variável, e o encaixe() fecha o espaço e a vírgula que sobraram. */
 export function primeiroNome(nome: string): string {
-  const partes = String(nome || "").trim().split(/\s+/).filter(Boolean);
-  const achada = partes.find((p) => !/\d/.test(p) && p.length >= 2 &&
-    !PARTICULAS.includes(semAcento(p).toLowerCase()));
-  return achada || "amigo(a)";
+  const partes = nomeAproveitavel(nome).split(/\s+/).filter(Boolean);
+  return partes.find((p) => !/\d/.test(p) && p.length >= 2 && !PARTICULAS.includes(semAcento(p).toLowerCase())) || "";
 }
 
 export type ClienteMensagem = {
@@ -121,9 +133,10 @@ export function variaveisMensagem(
   const venceu = horas !== null && horas <= 0;
   const data = cliente.expira ? formatarBrasilia(cliente.expira) : "não está no nosso sistema";
   const telefone = formatarTelefone(cliente.telefone || "");
+  const nome = nomeAproveitavel(cliente.nome || "");
   return {
-    nome: cliente.nome || cliente.usuario || "amigo(a)",
-    primeiro: primeiroNome(cliente.nome || ""),
+    nome,
+    primeiro: primeiroNome(nome),
     usuario: cliente.usuario || telefone,
     telefone,
     expira: data,
@@ -147,10 +160,44 @@ export function variaveisMensagem(
  *  dois valem. O que não é variável conhecida fica escrito do mesmo jeito no texto, para ele ver
  *  que errou a chave em vez de sair uma mensagem muda. */
 export function preencherVariaveis(modelo: string, v: Record<string, string>): string {
-  return String(modelo || "").replace(/\{\{?\s*([a-z0-9_]+)\s*\}?\}/gi, (tudo, chave: string) => {
-    const valor = v[chave.toLowerCase()];
-    return valor === undefined ? tudo : valor;
+  return trocar(modelo, v, /(\s*)\{\{?\s*([a-z0-9_]+)\s*\}{1,2}(\s*)/gi);
+}
+
+/** Só as chaves duplas, exatamente como a aba Chat sempre funcionou. */
+export function preencherVariaveisDuplas(modelo: string, v: Record<string, string>): string {
+  return trocar(modelo, v, /(\s*)\{\{\s*([a-z0-9_]+)\s*\}\}(\s*)/gi);
+}
+
+// Marcador invisível de uma chave que não tinha o que escrever. Os espaços que estavam colados
+// na chave vêm junto com ele e são as regras abaixo que decidem o que sobra, então nenhuma parte
+// do texto é reescrita duas vezes.
+const MARCADOR = "\u0001";
+
+/** Fecha o buraco de uma variável que não tem valor, sem deixar espaço duplo nem vírgula órfã:
+ *  "Olá, {primeiro} tem" sai "Olá, tem" · "Olá! {primeiro}, tem" sai "Olá! tem" ·
+ *  "Olá, {primeiro}!" sai "Olá!" · a linha em branco que havia antes da chave continua lá. */
+function trocar(modelo: string, v: Record<string, string>, regex: RegExp): string {
+  const marcado = String(modelo || "").replace(regex, (inteiro, antes, chave, depois) => {
+    const valor = v[String(chave).toLowerCase()];
+    if (valor === undefined) return inteiro;
+    return valor === "" ? `${antes}${MARCADOR}${depois}` : `${antes}${valor}${depois}`;
   });
+
+  // Duas chaves vazias coladas são um buraco só. A vírgula que vinha logo depois do nome era a
+  // pausa dele, então some com ele; a vírgula que vinha antes só sobra quando o nome era o
+  // último pedaço da frase ("Olá, {primeiro}!" → "Olá!").
+  let saida = marcado
+    .replace(/\u0001+/g, "\u0001")
+    .replace(/\u0001,/g, "\u0001")
+    .replace(/,[ \t]*\u0001(?=[.,;:!?])/g, "\u0001");
+  // O espaço de cada lado era a separação do nome com as palavras vizinhas: com os dois lados
+  // sobra um espaço só, com um lado não sobra nada. Quebra de linha não entra nessa conta.
+  saida = saida.replace(/([ \t]*)\u0001([ \t]*)/g, (_todo, esquerda, direita) => (esquerda && direita ? " " : ""));
+
+  return saida
+    .replace(/\u0001/g, "")
+    .replace(/[ \t]+$/gm, "")
+    .replace(/\n{3,}/g, "\n\n");
 }
 
 /** O aviso das 6h e a cobrança de renovação conhecem o mesmo cliente que a recuperação. O

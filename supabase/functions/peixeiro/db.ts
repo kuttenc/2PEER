@@ -349,7 +349,11 @@ alter table public.greenapi_config
   add column if not exists chat_ativo boolean not null default false,
   add column if not exists chat_token text not null default '',
   add column if not exists chat_dias numeric not null default 90,
-  add column if not exists chat_desconhecido boolean not null default false;
+  add column if not exists chat_desconhecido boolean not null default false,
+  add column if not exists chat_nao_legenda text not null default
+    'Tudo bem, {primeiro}! Você foi removido da nossa base e não recebe mais nenhuma mensagem nossa.' || E'\n' ||
+    'Obrigado por fazer parte do O Peixeiro.' || E'\n' ||
+    'Qualquer coisa é só chamar aqui neste número que a gente te adiciona de novo.';
 
 -- A conversa em si. expira_em é sempre criado_em + os dias da configuração (90 por padrão):
 -- o chat_webhook apaga o que venceu a cada mensagem, então a tabela não cresce sozinha.
@@ -427,6 +431,19 @@ create table if not exists public.whatsapp_status (
 );
 alter table public.whatsapp_status enable row level security;
 create index if not exists idx_whatsapp_status_telefone on public.whatsapp_status (telefone, atualizado_em desc);
+
+-- Quem pediu para não receber mais. A chave é o número normalizado (55 + DDD + número), porque
+-- é o número que o WhatsApp bloqueia, não o código do painel MC. Enquanto a linha existir, o
+-- número fica de fora de toda fila automática; a aba Bloqueados apaga a linha e ele volta.
+create table if not exists public.clientes_bloqueados (
+  telefone text primary key,
+  usuario text not null default '',
+  nome text not null default '',
+  motivo text not null default '',
+  criado_em timestamptz not null default now()
+);
+alter table public.clientes_bloqueados enable row level security;
+create index if not exists idx_clientes_bloqueados_criado on public.clientes_bloqueados (criado_em desc);
 `;
 
 /** Mesma semente do ensure_schema: um banco zerado ganha a linha 1 e a senha do painel. */

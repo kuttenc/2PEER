@@ -7,7 +7,8 @@
 import { consultar } from "../supabase/functions/peixeiro/db.ts";
 import { dadosDoCliente } from "../supabase/functions/peixeiro/banco.ts";
 import {
-  legendaAviso, legendaRenovacao, legendaRecuperar, normalizarWhatsapp, primeiroNome,
+  legendaAviso, legendaRenovacao, legendaRecuperar, nomeAproveitavel,
+  normalizarWhatsapp, primeiroNome,
   preencherVariaveis, variaveisMensagem,
 } from "../supabase/functions/peixeiro/texto.ts";
 import { fichaPara } from "../supabase/functions/peixeiro/varredura.ts";
@@ -62,9 +63,9 @@ checar("sem data de vencimento não inventa prazo",
   `${s.vence} | ${s.dias}`);
 checar("sem situação diz sem cadastro",
   variaveisMensagem(conf, { ...vencido, status: null }, {}, agora).status === "sem cadastro");
-checar("{nome} sem nome cadastrado cai no usuário e depois em amigo(a)",
-  variaveisMensagem(conf, { ...vencido, nome: "" }, {}, agora).nome === "r7000000007" &&
-    variaveisMensagem(conf, {}, {}, agora).nome === "amigo(a)");
+checar("{nome} sem nome cadastrado não cai mais no usuário",
+  variaveisMensagem(conf, { ...vencido, nome: "" }, {}, agora).nome === "" &&
+    variaveisMensagem(conf, {}, {}, agora).nome === "");
 checar("sem chave PIX cadastrada não sai mensagem muda",
   variaveisMensagem({}, vencido, {}, agora).pix.includes("não cadastrada"),
   variaveisMensagem({}, vencido, {}, agora).pix);
@@ -172,14 +173,46 @@ if (comTelefone) {
 } else checar("achado um cliente com nome e telefone na cópia", false, "nenhum");
 
 // ---------------------------------------------------------------- {primeiro}
+checar("nome aproveitado é o cadastrado, não a palavra de situação",
+  nomeAproveitavel("ativo") === "" && nomeAproveitavel("Ativa") === "" &&
+    nomeAproveitavel("parado") === "" && nomeAproveitavel("vencido") === "" &&
+    nomeAproveitavel("sim") === "" && nomeAproveitavel("ok") === "" &&
+    nomeAproveitavel("Sem Nome") === "" && nomeAproveitavel("Aderlane") === "Aderlane");
 checar("{primeiro} é só o primeiro nome", primeiroNome("Aderlane monteiro da Silva") === "Aderlane");
 checar("{primeiro} ignora o telefone mascarado da nota", primeiroNome("Simone 129xxxx4466") === "Simone");
-checar("nota que é só número não vira nome", primeiroNome("129xxxxxx13") === "amigo(a)");
+checar("nota que é só número não vira nome", primeiroNome("129xxxxxx13") === "");
+checar("nota que é palavra de situação não vira nome", primeiroNome("ativo") === "");
 checar("{primeiro} não pega letra sozinha nem partida do meio",
   primeiroNome("A da Silva") === "Silva" && primeiroNome("da Silva") === "Silva");
 checar("nome com espaço sobrando funciona", primeiroNome("  Maria das Dores  ") === "Maria");
-checar("sem nome cadastrado, {primeiro} diz amigo(a) e não o código",
-  variaveisMensagem(conf, { usuario: "r7000000007", nome: "" }, {}, agora).primeiro === "amigo(a)");
+checar("sem nome cadastrado, {primeiro} fica vazio (não escreve nada)",
+  variaveisMensagem(conf, { usuario: "r7000000007", nome: "" }, {}, agora).primeiro === "");
+
+// ------------------------------------------------ o buraco que a variável vazia deixa
+const semNome = variaveisMensagem(conf, { usuario: "r566062", nome: "" }, {}, agora);
+checar("a frase que ele reclamou fecha o buraco em vez de mandar a chave",
+  preencherVariaveis("Olá! {primeiro}, tem interesse em aumentar sua,", semNome) ===
+    "Olá! tem interesse em aumentar sua,",
+  preencherVariaveis("Olá! {primeiro}, tem interesse em aumentar sua,", semNome));
+checar("com vírgula antes, a vírgula fica (o exemplo que ele escreveu)",
+  preencherVariaveis("Olá, {primeiro} tem", semNome) === "Olá, tem",
+  preencherVariaveis("Olá, {primeiro} tem", semNome));
+checar("variável no fim da frase não deixa espaço sobrando",
+  preencherVariaveis("Bom dia, {primeiro}   ", semNome) === "Bom dia,");
+checar("exclusivo: {nome} no fim não deixa a palavra sozinha",
+  preencherVariaveis("exclusivo: {nome}", semNome) === "exclusivo:");
+checar("quebra de linha entre o texto e a chave não vira linha em branco",
+  preencherVariaveis("Oi!\n\n{primeiro}, temos uma oferta", semNome) === "Oi!\n\ntemos uma oferta",
+  JSON.stringify(preencherVariaveis("Oi!\n\n{primeiro}, temos uma oferta", semNome)));
+checar("duas chaves vazias seguidas não colam as palavras",
+  preencherVariaveis("{primeiro} {nome} {usuario}", semNome) === "r566062",
+  preencherVariaveis("{primeiro} {nome} {usuario}", semNome));
+checar("no chat (duas chaves) o buraco fecha igual",
+  renderizar("Olá! {{primeiro}}, tem", semNome) === "Olá! tem",
+  renderizar("Olá! {{primeiro}}, tem", semNome));
+checar("com nome preenchido nada muda",
+  preencherVariaveis("Olá! {primeiro}, tem", cheio) === "Olá! Maria, tem",
+  preencherVariaveis("Olá! {primeiro}, tem", cheio));
 checar("a frase com {primeiro} sai curta",
   preencherVariaveis("Oi {primeiro}, tudo bem?", cheio) === "Oi Maria, tudo bem?");
 checar("no chat {{primeiro}} funciona igual", renderizar("Oi {{primeiro}}", cheio) === "Oi Maria");
@@ -225,6 +258,29 @@ if (linhaReal) {
   checar("o número da agenda manda no telefone da ficha",
     (await fichaPara(linhaReal.username, String(linhaReal.exp_date), "5511999990000")).telefone === "5511999990000");
 } else checar("achado uma linha real com nome e data na cópia", false, "nenhuma");
+
+// -------------------------------------------- o número que ele apontou na fila (55 15 99620-1142)
+const citado = (await com(`select m.username, m.notes, coalesce(nullif(trim(p.nome),''),'') as nome_pix,
+                                  u.telefone
+                             from public.mc_linhas m
+                             left join public.cliente_pix p on p.usuario = m.username
+                             left join public.usuarios_criados_ip u on u.username = m.username
+                            where m.username = 'r566062' or $1 in (m.telefone, u.telefone)
+                            limit 1`, ["5515996201142"]))[0];
+if (citado) {
+  const ficha = await dadosDoCliente(String(citado.username));
+  const sua = await consultar("select recupera_legenda from public.greenapi_config where id = 1");
+  const modeloSalvo = String((sua.rows[0] as Record<string, string> | undefined)?.recupera_legenda || "");
+  const mensagem = legendaRecuperar({ recupera_legenda: modeloSalvo }, ficha, "https://x/r/abc", new Date());
+  checar("o número da reclamação não tem nome aproveitável na ficha",
+    nomeAproveitavel(ficha.nome) === "" && !citado.nome_pix,
+    `${citado.username} · nota="${citado.notes}" · nome="${ficha.nome}"`);
+  checar("a mensagem salva dele não deixa a chave nem a palavra da situação no ar",
+    !/\{\s*(primeiro|nome)\s*\}/i.test(mensagem) && !/(^|\s)ativo(\s|[,.;:!?])/i.test(mensagem),
+    mensagem.replace(/\n/g, " ⏎ ").slice(0, 200));
+  checar("e o primeiro nome não foi substituído por nada inventado",
+    !/amigo\(?a?\)?/i.test(mensagem), mensagem.slice(0, 120));
+} else checar("achado o cliente da reclamação na cópia", false, "r566062 não está no espelho");
 
 console.log(`\n${falhas ? falhas + " FALHA(S)" : "todas as provas passaram"}`);
 Deno.exit(falhas ? 1 : 0);

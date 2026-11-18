@@ -883,7 +883,7 @@ corrija na aba recuperação"*. É a aba **Recuperação** — o texto que sai q
 
 | chave | sai |
 |---|---|
-| `{nome}` | o nome cadastrado; sem nome, o usuário; sem usuário, `amigo(a)` |
+| `{nome}` | o nome cadastrado (palavra de situação do MC nunca entra); sem nome, não escreve nada |
 | `{usuario}` | o usuário do MC; sem usuário, o telefone |
 | `{telefone}` | `(11) 99999-8888`, com o 55 já resolvido |
 | `{vence}` | `vence em 02/12/2026 18:00` ou `venceu em 14/10/2026 18:00` |
@@ -958,9 +958,9 @@ As regras que a base dele obriga:
   `Simone`, "129xxxxxx13" não vira nada);
 - letra sozinha e partida do meio ("da", "de", "do", "dos", "das", "du", "e") não abrem o nome:
   "A da Silva" e "da Silva" dão `Silva`, "Aderlane monteiro da Silva" dá `Aderlane`;
-- sem nada aproveitável sai `amigo(a)` — **nunca** o código do usuário (`r7000000007`) no lugar de
-  um nome. O `{nome}` continua caindo no usuário, porque ali o código é informativo; no primeiro nome
-  seria uma frase esquisita.
+- sem nada aproveitável **não sai nada** — nem `amigo(a)`, nem o código do usuário
+  (`r7000000007`) no lugar de um nome. A frase se fecha sozinha no lugar do buraco; é a seção
+  "A chave que não tem o que escrever" abaixo. O `{nome}` também não cai mais no usuário.
 
 **Onde a chave vale** — os quatro lugares que montam texto com dado do cliente:
 
@@ -1000,6 +1000,175 @@ npx --yes deno run -A --env-file=../../../.env ../../../tools/_prova_recupera_li
 A bateria cobre `{primeiro}` nas notas mascaradas, o aviso/renovação com ficha e sem ficha, a régua de
 `{dias}` vindo do MC, `{link}` sobrando no aviso e a ficha real montada por `fichaPara`. O teste ao
 vivo acrescenta a checagem de que `{primeiro}` está nas telas certas do Pages publicado.
+
+## A chave que não tem o que escrever fecha a frase (18/11/2026)
+
+O pedido dele: *"na fila que está sendo enviada Fila do 'Não recuperados' ao inves de ir o nome
+quando não tem o primeiro nome esta indo a Mensagem com a variavel ativo ... corrija para caso não
+tenha primeiro nome não pule tabelas só não envie nada no lugar da variavel a mensagem que estaria o
+'Olá, {primeiro} tem' ficaria Apenas 'Olá, tem'"*.
+
+Duas coisas erradas na mesma mensagem do número `15996201142`:
+
+1. **de onde vinha o `ativo`.** Na base dele a coluna que vira nome às vezes traz a palavra de
+   situação do painel MC. `nomeAproveitavel` (`texto.ts`) agora joga fora o que é uma das palavras da
+   coluna (`PALAVRAS_DE_SITUACAO`) antes de qualquer coisa: `ativo`, `parado`, `vencido`, `expirado`,
+   `inativo`, `sem cadastro`, `bloqueado`, `ativo(a)`, `parado(a)` e `vencido(a)`. `{nome}`,
+   `{primeiro}`, a lista de Bloqueados e o `{nome}` da aba Chat passam todos por ela, e nenhum deles
+   cai mais no código do usuário quando não há nome.
+2. **o que saía no lugar do nome.** Uma chave conhecida com valor vazio deixava sobrar pontuação e
+   espaço duplo. `trocar()` — o motor que `preencherVariaveis` (`{x}` e `{{x}}`) e `renderizar` da aba
+   Chat (`{{x}}`) compartilham — troca a chave vazia por um marcador invisível (`\u0001`) **segurando
+   o espaço que estava colado nela** e depois fecha o buraco:
+
+   | a frase escrita | sem `{primeiro}` sai |
+   |---|---|
+   | `Olá, {primeiro} tem` | `Olá, tem` |
+   | `Olá! {primeiro}, tem interesse` | `Olá! tem interesse` |
+   | `Bom dia, {primeiro}` | `Bom dia,` |
+   | `Oi!\n\n{primeiro}, temos uma oferta` | `Oi!\n\ntemos uma oferta` |
+   | `{primeiro} {nome} {usuario}` | `r7000000007` |
+
+   A regra das três pontuações: se antes já havia pausa (`!`, `?`, `:`) a vírgula que era do nome
+   morre; se depois vem sinal de fim de frase a vírgula de antes morre; nas beiradas do texto o
+   marcador simplesmente some. **O `\n` nunca é tocado** — é por isso que a linha em branco entre dois
+   parágrafos sobrevive ao buraco, que era o "não pule tabelas" do pedido.
+
+Não existe mais `amigo(a)` em lugar nenhum, e o `{nome}` não cai no usuário: quem não tem nome
+simplesmente não recebe nome.
+
+```bash
+cd supabase/functions/peixeiro
+# 66 checagens: as chaves, as fichas reais e as cinco frases acima nas duas grafias
+npx --yes deno run -A --env-file=../../../.env ../../../tools/_prova_recupera_variaveis.ts
+```
+
+## Aba Bloqueados: quem responde "não" sai de toda fila (18/11/2026)
+
+O pedido dele: *"cria uma aba chamada bloqueados, na aba chat faça o chatbot responder a primeira
+resposta do usuario for apenas não ... na aba bloqueados vamos criar um botão para cada usuario para
+que possa ser desbloqueado ... adicione um campo de pesquisa por numero nome palavra letra oque tiver
+na nossa base toda, assim como ja devia ter um campo de busca na aba clientes e na aba acessos"*.
+
+**A tabela.** `public.clientes_bloqueados (telefone text primary key, usuario, nome, motivo,
+criado_em)` + RLS + índice por `criado_em`, tudo dentro do `ESQUEMA` de `db.ts` — instala sozinha no
+cold start, não existe arquivo de migração neste repositório. A chave é o telefone **normalizado** por
+`normalizarWhatsapp`, então `(11) 90000-0001`, `11900000001` e `55 11 90000-0001` são a mesma linha: é
+o que amarra o número que chega do webhook, o que está no item congelado da fila e o que a agenda
+guarda.
+
+**O "não" no chat.** `respondeuNao` (`chat.ts`) roda **antes** das regras: normaliza o texto e aceita
+só `nao` ou `n` sozinho — "não quero" continua caindo nas regras de venda, porque ali o "não" é
+objeção, não pedido para sair. O primeiro "não" bloqueia e manda a resposta; o segundo do mesmo número
+não manda nada (`bloquear` devolve `false`), então a pessoa não recebe "ok, você saiu da base" duas
+vezes. O texto é configurável no campo `chat_nao_legenda` da aba Chat e sai por `preencherVariaveis`,
+com o `{primeiro}` funcionando exatamente como na Recuperação. O padrão, gravado pelo `ESQUEMA`:
+
+```
+Tudo bem, {primeiro}! Você foi removido da nossa base e não recebe mais nenhuma mensagem nossa.
+Obrigado por fazer parte do O Peixeiro.
+Qualquer coisa é só chamar aqui neste número que a gente te adiciona de novo.
+```
+
+Sem nada escrito no campo, o "não" não bloqueia nem responde — desligar a tela desliga o recurso.
+
+**Onde o bloqueio trava a mensagem** (são seis pontos, e é isso que evita o bloqueio do WhatsApp):
+
+| onde | o que faz |
+|---|---|
+| montar a fila — `loteContagem`, nos dois ramos (Não recuperados e mensagem em massa) | `telefonesBloqueados()` (uma consulta) tira da lista antes de congelar o plano |
+| enviar um item da fila — `loteItem` | `estaBloqueado` antes de chamar o GreenAPI; a linha volta `{ ok: true, marca: "bloqueado" }`. É o que pega o "não" que chegou **depois** de o lote começar |
+| botão "recuperar" de uma linha e mensagem avulsa — `recuperarUm`, `mensagemUm` | `travaBloqueado` nas duas actions: 409 `bloqueado` com o telefone na resposta |
+| agenda das 6h e a varredura de renovação — `avisarVencimentos`, `avisarRenovacao` | `telefonesBloqueados()` filtra a lista antes de subir |
+
+O `marca: "bloqueado"` com `ok: true` é proposital: falha counted no lote para o lote sozinho depois de
+três seguidas (`PARADA_ERROS`), e um número bloqueado não é erro de rede — sem isso, uma fila com
+muitos bloqueados parava no meio sozinha. A tela mostra a palavra `bloqueado` na linha e o pulo de
+contagem segue normal.
+
+**A aba.** `Bloqueados` na barra, com o total, a busca (telefone, nome, usuário ou motivo, com as
+três grafias do número) e um botão **desbloquear** por linha — sem modal de confirmação, porque
+desbloquear é a ação que ele quer rápida: o botão se desabilita, escreve "tirando…", chama
+`bloqueados_desbloquear` (que grava `cliente_desbloqueado` em `mcapi_events`), devolve o telefone
+formatado e recarrega a lista. Clicar duas vezes no mesmo número volta 409, sem quebrar a tela.
+Desbloquear devolve o número para todo plano montado **depois** do clique; a fila já congelada não é
+refeita — para aquela pessoa voltar a receber é o próximo "Não recuperados". A busca **vazia** é o caso que quebrou na primeira rodada: as
+cinco condições `ilike` montavam a `where` com `$1` e, sem palavra para procurar, a consulta ia para o
+banco com um parâmetro sobrando — `bind message supplies 1 parameters, but prepared statement requires
+0`. Hoje o `where` e os argumentos só existem quando há busca.
+
+Os campos de busca que ele pediu nas outras duas telas já estavam lá (`#acBusca` na Acessos,
+`#clBusca` na Clientes, ambos procurando usuário, nome, CPF, telefone e nota, com Enter e "Limpar"); a
+aba Bloqueados ganhou o mesmo desenho.
+
+```bash
+cd supabase/functions/peixeiro
+# 21 checagens com dois números de teste (55 11 90000-00xx) que a prova apaga no fim
+npx --yes deno run -A --env-file=../../../.env ../../../tools/_prova_bloqueados.ts
+```
+
+Nenhum WhatsApp é enviado pela prova: ela fala com `bloquear`/`desbloquear`/`listarBloqueados` e com as
+duas actions da tela, não com o GreenAPI.
+
+## Pular envios na fila que está rodando (18/11/2026)
+
+O pedido dele: *"na fila atual eu quero poder pular uma quantidade que esta sendo enviado coloque um
+campo que eu consigo alterar uma quantidade finita que eu desejo pular de envios que estao sendo
+enviados pode por na aba nao recuperados em cima da fila do não recuperados para facilitar
+vizualização"*.
+
+**`pularEnvios(tipo, quantos)`** (`lote.ts`) marca as próximas `quantos` linhas do plano congelado com
+`ignorado: true, pulado: true`. É a mesma marca do "tirar da fila" — `proximoPosicao()` pula o que está
+marcado e a numeração das linhas não muda, porque o número é o progresso do lote. Remarcar é o único
+jeito de pular sem quebrar o `estado.resultados` nem o navegador que está pedindo item por item.
+
+As três regras que a tela precisa que ele acredite:
+
+- **o item que está no ar não é pulado.** Com `estado.enviando = k`, o pulo começa em `k + 1`; sem nada
+  no ar, começa na posição em que a fila está. A nota embaixo do campo diz isso ("não conta o que está
+  no ar agora").
+- **quem ele já tinha tirado da fila não gasta a quota.** `foraDaFila()` é chegado dentro da passada,
+  então pedir 3 com uma linha `ignorado` no meio pega três linhas de verdade.
+- **pular o resto termina o lote.** Se depois do pulo não sobra ninguém, o `rodando` vai a `false` com
+  `motivo: "pulou_restou"`. Sem isso o lote ficaria "rodando" para sempre e o próximo "Não recuperados"
+  travava em `lote_rodando`.
+
+`lote_pular` (action) valida `quantos` inteiro entre 1 e 2000 — fora disso devolve
+`quantidade_invalida`/`muita_marca` sem tocar no plano — grava o evento `..._pular` em `mcapi_events`
+com quanto ele pediu e quantos saíram, e devolve o resumo novo. `lote_fila` ganhou `pulados` no resumo
+e a situação `pulou` por linha; a barra de progresso tira os pulados do denominador, para "12 de 40"
+continuar querendo dizer "12 dos 40 que ainda podiam sair".
+
+Na tela, a caixa `Pular envios` fica entre o resumo e a lista da fila do Não recuperados: um número
+(1 a 2000), o botão **Pular agora** e a nota com quantos faltam. Ela se esconde sozinha quando a fila
+está vazia ou acabou, o botão fica desabilitado enquanto o pedido está no ar (duplo clique não pula o
+dobro) e Enter no campo faz o mesmo que o botão. As telas de Acessos e Clientes ficaram sem a caixa de
+propósito: elas não acompanham o lote vivo, então o campo nasceria mentindo — quem pula é sempre a
+aba Não recuperados, seja qual for a fila.
+
+```bash
+cd supabase/functions/peixeiro
+# 18 checagens. Trabalha na chave do lote de apagada, tira um retrato da linha e devolve
+# exatamente do mesmo jeito no fim — mesmo se der erro no meio. Nada manda WhatsApp.
+npx --yes deno run -A --env-file=../../../.env ../../../tools/_prova_pular_envios.ts
+```
+
+## Os três ajustes publicados na cópia (18/11/2026)
+
+`supabase functions deploy peixeiro --no-verify-jwt --yes --project-ref bzgtptbwcvwpgnhbctjn`
+(binário de `C:/Users/ps4la/bin/supabase.exe`, token `sbp_` do `.env`). A produção
+`suipuquznkksgrkchqrv` continua com o que estava: nada deste dia foi para lá.
+
+```bash
+cd supabase/functions/peixeiro
+# ao vivo: as rotas novas no build deployado + as telas novas no Pages publicado
+npx --yes deno run -A --env-file=../../../.env ../../../tools/_prova_live_fila.ts
+```
+
+A checagem mais útil é a que não escreve nada: o `index.ts` devolve `404 acao_inexistente` **antes** de
+olhar o token, então `lote_pular`, `bloqueados_ver` e `bloqueados_desbloquear` chamados sem sessão
+voltando `401 sem_sessao` prova que a rota está no build lá de cima, sem precisar montar fila, bloquear
+número nem disparar envio.
 
 ## Quando for para a produção
 

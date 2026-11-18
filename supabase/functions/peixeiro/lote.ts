@@ -7,7 +7,7 @@ export type TipoLote = "recuperar" | "apagar" | "mensagem";
 export type Item = Record<string, unknown>;
 
 /** O que aconteceu com cada posição da fila, guardado pelo número dela no plano. */
-export type MarcaLote = { ok: boolean; erro: string };
+export type MarcaLote = { ok: boolean; erro: string; marca?: string };
 
 export type EstadoLote = {
   rodando: boolean;
@@ -143,6 +143,8 @@ export type ResultadoItem = {
   ok: boolean;
   erro?: string;
   parar?: string;
+  /** O que a tela da fila escreve no lugar de "enviado" quando nada saiu: hoje só "bloqueado". */
+  marca?: string;
   /** Com N falhas em fila o lote para sozinho ("seguidas" em estado.motivo). */
   limiteSeguidas?: number;
 };
@@ -157,11 +159,13 @@ export async function registrarItem(tipo: TipoLote, resultado: ResultadoItem): P
   estado.resultados[String(tentativa)] = {
     ok: resultado.ok,
     erro: resultado.erro ? String(resultado.erro).slice(0, 160) : "",
+    ...(resultado.marca ? { marca: String(resultado.marca).slice(0, 40) } : {}),
   };
-  if (resultado.ok) {
+  // Um item bloqueado não é envio: ele passou pela fila sem ninguém receber.
+  if (resultado.ok && resultado.marca !== "bloqueado") {
     estado.enviados += 1;
     estado.seguidas = 0;
-  } else {
+  } else if (!resultado.ok) {
     estado.falhas += 1;
     estado.seguidas = (estado.seguidas || 0) + 1;
     if (resultado.erro && estado.erros.length < 20) estado.erros.push(String(resultado.erro).slice(0, 160));
@@ -246,4 +250,47 @@ export async function resumoLote(tipo: TipoLote): Promise<EstadoLote & { total: 
   const vista = await verLote(tipo);
   if (!vista) return { ...estadoVazio(0) };
   return { ...vista.estado, total: vista.plano.length };
+}
+
+/** Pulo de envios com a fila andando. Vale para o "Não recuperados" e para a mensagem em massa:
+ *  a tela diz "pula 20" e os próximos vinte que ainda não saíram são pulados de uma vez, sem
+ *  apagar ninguém e sem recontar nada. O item que está no ar não entra na conta — esse já foi.
+ *  Pulado é diferente de "tirado da fila": a linha fica marcada como pulou, não como erro, e
+ *  na próxima conferência (contagem nova) ela volta para a fila normal do lote. */
+export async function pularEnvios(
+  tipo: TipoLote,
+  quantos: number,
+): Promise<{ ok: boolean; pulados: number; erro?: string; estado?: EstadoLote }> {
+  const vista = await verLote(tipo);
+  if (!vista || !vista.plano.length) return { ok: false, pulados: 0, erro: "plano_vazio" };
+  const { plano, estado } = vista;
+  if (!Number.isFinite(quantos) || quantos < 1) return { ok: false, pulados: 0, erro: "quantidade_invalida" };
+
+  const noAr = typeof estado.enviando === "number" ? estado.enviando : null;
+  const inicio = noAr === null ? proximoPosicao(plano, estado.indice) : noAr + 1;
+  let quero = Math.trunc(quantos);
+  let pulados = 0;
+  const novo = plano.map((item, i) => {
+    if (i < inicio || foraDaFila(item) || quero <= 0) return item;
+    quero -= 1;
+    pulados += 1;
+    return { ...item, ignorado: true, pulado: true };
+  });
+  if (!pulados) return { ok: true, pulados: 0, estado };
+
+  await consultar(
+    "update public.painel_lote set plano = $2::jsonb, atualizado_em = now() where chave = $1",
+    [CHAVE[tipo], JSON.stringify(novo)],
+  );
+
+  // Nada em mãos e ninguém depois do pulo: o lote se encerra aqui, senão ficaria "rodando"
+  // para sempre e o próximo "Não recuperados" travaria em lote_rodando.
+  const estadoFinal = { ...estado, resultados: { ...(estado.resultados || {}) } };
+  if (noAr === null && proximoPosicao(novo, inicio) >= novo.length) {
+    estadoFinal.indice = novo.length;
+    estadoFinal.rodando = false;
+    estadoFinal.motivo = "pulou_restou";
+    await salvarEstado(tipo, estadoFinal);
+  }
+  return { ok: true, pulados, estado: estadoFinal };
 }

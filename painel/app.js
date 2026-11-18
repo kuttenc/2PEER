@@ -31,6 +31,7 @@
     link_destino: "Endereço salvo para este link. Quem clicar já cai no novo, mesmo em mensagem antiga.",
     lote_terminado: "Lote terminado.",
     fila_tirar: "Tirados da fila: nada foi apagado no painel MC e nada do que já saiu mudou.",
+    fila_pulou: "Envios pulados: ninguém recebeu mensagem e a fila continua no próximo que falta.",
     fila_retomou: "O envio voltou do ponto em que parou.",
     fila_montada: "Fila nova montada com a varredura do painel MC. Nada foi enviado.",
     chat_gravado: "Chat gravado. A próxima mensagem com essas palavras sai com essa resposta.",
@@ -43,6 +44,9 @@
     chat_instalado: "Webhook instalado: o GreenAPI agora manda para cá o que chega e o que foi entregue.",
     chat_exportado: "Arquivo de treino baixado.",
     mensagem_enviada: "Mensagem enviada pelo WhatsApp (sem link e sem painel MC no meio).",
+    chat_nao_salvo: "Resposta do \u201cnão\u201d salva. Na primeira vez que o cliente escrever só isso, ele sai das filas.",
+    chat_nao_desligado: "Resposta do \u201cnão\u201d desligada. Ninguém mais é bloqueado por responder isso.",
+    desbloqueado: "Desbloqueado: o número volta para a fila do Não recuperados, para o aviso das 6h e para a renovação.",
   };
 
   var MSG_ERRO = {
@@ -80,7 +84,8 @@
     fila_no_fim: "A fila já terminou: não sobrou ninguém para retomar.",
     plano_vazio: "Ainda não há fila montada. Abra o Não recuperados na aba Acessos e revise a contagem.",
     sem_marca: "Ninguém marcado: toque Selecionar e marque as linhas da fila.",
-    muita_marca: "Marque até 2000 linhas por vez.",
+    quantidade_invalida: "Escreva na caixinha quantos envios você quer pular (1 ou mais).",
+    muita_marca: "São no máximo 2.000 por vez — pule em duas tacadas.",
     prefixo_ruim: "Prefixo demais: até 24 letras, sem espaço.",
     intervalo_obrigatorio: "Preencha o de e o até com números.",
     intervalo_invertido: "O \u201caté\u201d precisa ser maior que o \u201cde\u201d.",
@@ -97,6 +102,8 @@
     webhook: "A instância recusou o webhook. Confira a chave na Configuração e tente de novo.",
     sem_texto: "Escreva a mensagem antes de contar ou enviar.",
     texto_grande: "Texto grande demais: são até 1200 caracteres.",
+    bloqueado: "Este número está na aba Bloqueados (respondeu \u201cnão\u201d). Desbloqueie lá para mandar de novo.",
+    nao_esta_bloqueado: "Este número já não estava bloqueado.",
   };
 
   // ------------------------------------------------------------------ utilidades
@@ -255,7 +262,7 @@
 
   // ------------------------------------------------------------------ rotas
 
-  var TELAS = ["inicio", "config", "avisos", "acessos", "fila", "recuperacao", "clientes", "deletar", "links", "chat", "senha", "apagar"];
+  var TELAS = ["inicio", "config", "avisos", "acessos", "fila", "recuperacao", "clientes", "deletar", "links", "chat", "bloqueados", "senha", "apagar"];
   var CARREGA = {};
   var TELA_ATUAL = "inicio";
 
@@ -618,6 +625,7 @@
       erro.hidden = !d.sem_token;
       if (d.sem_token) erro.textContent = "O site não conseguiu logar no painel MC.";
       acTelefones = d.telefones || {};
+      $("acNotaBusca").hidden = d.fonte !== "espelho";
       var corpo = limpar($("acLinhas"));
       (d.linhas || []).forEach(function (l) { corpo.appendChild(linhaAcesso(l)); });
 
@@ -950,6 +958,7 @@
       sem_texto: "A mensagem sumiu da lista congelada: o lote parou.",
       seguidas: "Três falhas seguidas: o lote parou para você conferir.",
       parou_manual: "Você parou o lote.",
+      pulou_restou: "Você pulou o que faltava: a fila terminou sem enviar mais nada.",
     }[codigo] || "";
   }
 
@@ -1246,6 +1255,7 @@
       $("mlPulados").textContent = d.pulados;
       $("mlSemTelefone").textContent = d.sem_telefone;
       $("mlEsperando").textContent = d.esperando;
+      $("mlBloqueados").textContent = d.bloqueados || 0;
       $("mlForaMC").textContent = espelho ? d.com_linha_mc : d.so_no_espelho;
       $("mlFoto").textContent = d.foto ? "sim, a foto da aba Recuperação" : "não — vai só o texto";
       $("mlBusca").textContent = (d.busca
@@ -1306,6 +1316,7 @@
   var frSelecionando = false;
   var frArmado = false;        // "tirar da fila" precisa de dois toques
   var frSoErro = false;
+  var frPulando = false;       // um "pular agora" por vez
   var frTemporizador = null;
   var FR_TOPO = 200;           // lista longa demais travaria o celular no meio do envio
 
@@ -1320,6 +1331,8 @@
     if (situacao === "falhou") return criar("span", "pill", "falhou");
     if (situacao === "enviando") return criar("span", "pill", "enviando…");
     if (situacao === "fora") return criar("span", "muted", "fora da fila");
+    if (situacao === "pulou") return criar("span", "muted", "pulou (você mandou pular)");
+    if (situacao === "bloqueado") return criar("span", "muted", "bloqueou (respondeu não)");
     return criar("span", "muted", "na fila");
   }
 
@@ -1348,9 +1361,9 @@
     var d = frDados;
     if (!d) return;
     var estado = d.estado || {}, itens = d.itens || [];
-    var total = Number(d.total || 0), fora = Number(d.fora || 0);
+    var total = Number(d.total || 0), fora = Number(d.fora || 0), pulados = Number(d.pulados || 0);
     var feitos = (estado.enviados || 0) + (estado.falhas || 0);
-    var alvo = Math.round(100 * feitos / Math.max(1, total - fora));
+    var alvo = Math.round(100 * feitos / Math.max(1, total - fora - pulados));
     $("frBarra").style.width = Math.min(100, Math.max(0, alvo)) + "%";
 
     var partes = [];
@@ -1360,6 +1373,8 @@
       partes.push((estado.enviados || 0) + " enviados");
       partes.push((estado.falhas || 0) + " com erro");
       if (fora) partes.push(fora + " fora da fila");
+      if (pulados) partes.push(pulados + " pulados por você");
+      if (d.bloqueados) partes.push(d.bloqueados + " bloquearam (responderam não)");
       partes.push(total + " no total");
     }
     $("frResumo").textContent = d.vazia ? "nenhuma fila montada ainda" : partes.join(" · ");
@@ -1381,7 +1396,8 @@
     var mostrados = frSoErro ? itens.filter(function (i) { return i.situacao === "falhou"; }) : itens;
     var caixa = limpar($("frLista"));
     mostrados.slice(0, FR_TOPO).forEach(function (item) {
-      var linha = criar("label", "item" + (item.situacao === "fora" ? " fora" : ""));
+      var linha = criar("label", "item" +
+        (item.situacao === "fora" || item.situacao === "pulou" || item.situacao === "bloqueado" ? " fora" : ""));
       if (frEscolhido(item)) {
         var marca = document.createElement("input");
         marca.type = "checkbox";
@@ -1426,6 +1442,7 @@
     }
 
     $("frBarraAccoes").hidden = Boolean(d.vazia);
+    frPularEstado();
     $("frParar").hidden = !estado.rodando;
     $("frRetomar").hidden = Boolean(estado.rodando) || !d.na_fila;
     $("frSelecionar").hidden = Boolean(estado.rodando);
@@ -1446,6 +1463,21 @@
     }
     var botao = $("frTirar");
     if (!frArmado) botao.textContent = "Tirar da fila";
+  }
+
+  /** O campo "pular envios" mora acima da fila, justamente para não precisar rolar a tela no
+   *  celular no meio do envio. Ele só existe enquanto há alguém para sair, e o número vale para
+   *  os próximos: quem está no ar neste instante já saiu e não entra na conta. */
+  function frPularEstado() {
+    var d = frDados;
+    var restam = d ? Number(d.na_fila || 0) : 0;
+    var botao = $("frPular");
+    $("frPularCaixa").hidden = !d || Boolean(d.vazia) || restam <= 0;
+    botao.disabled = frPulando || restam <= 0;
+    botao.textContent = frPulando ? "pulando…" : "Pular agora";
+    $("frPularNota").textContent = restam && !frPulando
+      ? "faltam " + restam + " para sair · não conta o que está no ar agora"
+      : "";
   }
 
   function frLimparSelecao() {
@@ -1541,6 +1573,28 @@
       frMarcados = [];
       carregarFila(false);
     });
+  });
+
+  function pularEnviosDaFila() {
+    if (frPulando) return;
+    var quantos = Math.trunc(Number($("frPularQtd").value));
+    if (!quantos || quantos < 1) { recado("quantidade_invalida"); return; }
+    frPulando = true;
+    frPularEstado();
+    chamar("lote_pular", { tipo: "recuperar", quantos: quantos }, 45).then(function (d) {
+      frPulando = false;
+      if (!d.ok) { recado(d.erro, d.detalhe); frPularEstado(); return; }
+      recado("fila_pulou", d.pulados + " de " + quantos + " pulados.");
+      $("frPularQtd").value = "";
+      carregarFila(false);
+    });
+  }
+
+  $("frPular").addEventListener("click", pularEnviosDaFila);
+  $("frPularQtd").addEventListener("keydown", function (e) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    pularEnviosDaFila();
   });
 
   $("frMontar").addEventListener("click", function () {
@@ -1727,7 +1781,7 @@
   }
 
   function msLimparConta() {
-    ["msAlvos", "msNaLista", "msSemLinha", "msPulados", "msSemTelefone", "msEsperando"].forEach(function (id) {
+    ["msAlvos", "msNaLista", "msSemLinha", "msPulados", "msSemTelefone", "msEsperando", "msBloqueados"].forEach(function (id) {
       $(id).textContent = "?";
     });
     limpar($("msNomes"));
@@ -1779,6 +1833,7 @@
           $("msPulados").textContent = d.pulados;
           $("msSemTelefone").textContent = d.sem_telefone;
           $("msEsperando").textContent = d.esperando;
+          $("msBloqueados").textContent = d.bloqueados || 0;
           // Os dois grupos da lista aparecem no seletor já com o tamanho de cada um.
           var opcoes = $("msQuem").options;
           opcoes[0].textContent = "só quem NÃO está no painel MC (" + d.sem_linha_mc + " na lista)";
@@ -2311,7 +2366,7 @@
 
   // ------------------------------------------------------------------ CHAT (robô do WhatsApp)
 
-  var CHAT = { ativo: false, dias: 90, desconhecido: false, regras: [] };
+  var CHAT = { ativo: false, dias: 90, desconhecido: false, regras: [], nao: "", bloqueados: 0 };
   // Quantas gravações de chat estão no ar: o refresco da tela espera, para não mostrar o banco
   // no meio de um Salvar e desfazer o que ele acabou de escrever.
   var CHAT_GRAVANDO = 0;
@@ -2327,6 +2382,20 @@
     botao.className = CHAT.ativo ? "verm" : "verde";
   }
 
+  /** A caixa da resposta do "não". O refresco da tela viva nunca toca aqui: é texto dele. */
+  function desenharRespostaNao() {
+    $("chNao").value = CHAT.nao;
+    $("chNaoEstado").textContent = CHAT.nao
+      ? "ligada (" + CHAT.nao.length + " caracteres)"
+      : "desligada: responder \u201cnão\u201d não tira ninguém da base";
+  }
+
+  function desenharContadorBloqueados() {
+    $("chBloqueados").textContent = CHAT.bloqueados
+      ? CHAT.bloqueados + " número(s) fora de toda fila"
+      : "ninguém";
+  }
+
   function carregarChat() {
     $("chRegrasEstado").textContent = "carregando…";
     chamar("chat_ver", {}, 45).then(function (d) {
@@ -2335,6 +2404,8 @@
       CHAT.ativo = Boolean(d.ativo);
       CHAT.dias = Number(d.dias || 90);
       CHAT.desconhecido = Boolean(d.desconhecido);
+      CHAT.nao = texto(d.nao_legenda);
+      CHAT.bloqueados = Number(d.bloqueados || 0);
       CHAT.regras = d.regras || [];
 
       desenharPillRobo();
@@ -2350,6 +2421,8 @@
                    : "hoje o GreenAPI manda para " + (inst.webhook_url || "nada"));
       $("chUrl").value = d.webhook || "";
       $("chDesconhecido").checked = CHAT.desconhecido;
+      desenharRespostaNao();
+      desenharContadorBloqueados();
       $("chDias").value = CHAT.dias;
       $("chRetencao").textContent = CHAT.dias;
       $("chConversas").textContent = Number(d.mensagens || 0) + " mensagens (" +
@@ -2638,6 +2711,8 @@
 
   function atualizarChatVivo(d) {
     CHAT.regras = d.regras || CHAT.regras;
+    CHAT.bloqueados = Number(d.bloqueados || 0);
+    desenharContadorBloqueados();
 
     var ligado = Boolean(d.ativo);
     if (ligado !== CHAT.ativo && !$("chLigar").disabled) {
@@ -2691,6 +2766,86 @@
       document.body.removeChild(a);
       recado("chat_exportado", "(" + Number(d.n || 0) + " pares)");
     });
+  });
+
+  $("chNaoSalvar").addEventListener("click", function () {
+    var botao = $("chNaoSalvar");
+    var corpo = $("chNao").value.trim();
+    if (corpo === CHAT.nao) { recado("chat_nao_salvo"); return; }
+    botao.disabled = true;
+    CHAT_GRAVANDO++;
+    chamar("chat_ligar", { nao: corpo }, 30).then(function (d) {
+      CHAT_GRAVANDO--;
+      botao.disabled = false;
+      if (!d.ok) { recado(d.erro, d.detalhe); return; }
+      CHAT.nao = corpo;
+      desenharRespostaNao();
+      recado(corpo ? "chat_nao_salvo" : "chat_nao_desligado");
+    });
+  });
+
+  // ------------------------------------------------------------------ BLOQUEADOS
+
+  CARREGA.bloqueados = function () { carregarBloqueados(); };
+  var blBusca = "";
+
+  function carregarBloqueados() {
+    chamar("bloqueados_ver", { q: blBusca }, 60).then(function (d) {
+      if (!d.ok) { recado(d.erro, d.detalhe); return; }
+      desenharBloqueados(d.itens || [], Number(d.total || 0));
+    });
+  }
+
+  function desenharBloqueados(itens, total) {
+    $("blTotal").textContent = total;
+    var vazio = $("blVazio");
+    vazio.hidden = itens.length > 0;
+    vazio.textContent = blBusca
+      ? "Nenhum bloqueado bate com \u201c" + blBusca + "\u201d \u2014 o campo procura telefone, nome, usuário e motivo."
+      : "Ninguém bloqueado. Assim que alguém responder \u201cnão\u201d para o robô da aba Chat, o número aparece aqui.";
+    var corpo = limpar($("blLinhas"));
+    itens.forEach(function (b) { corpo.appendChild(linhaBloqueado(b)); });
+  }
+
+  function linhaBloqueado(b) {
+    var linha = document.createElement("tr");
+    var quem = [texto(b.nome), texto(b.usuario)].filter(Boolean).join(" · ");
+    linha.appendChild(criar("td", "", b.telefone));
+    linha.appendChild(criar("td", "", quem || "—"));
+    linha.appendChild(criar("td", "muted", texto(b.motivo) || "—"));
+    linha.appendChild(criar("td", "muted", texto(b.criado_em) || "—"));
+
+    var celula = criar("td", "linha");
+    var botao = criar("button", "verde", "desbloquear");
+    botao.type = "button";
+    botao.title = "devolver " + b.telefone + " para as filas";
+    botao.addEventListener("click", function () {
+      botao.disabled = true;
+      botao.textContent = "tirando…";
+      chamar("bloqueados_desbloquear", { telefone: b.telefone }, 45).then(function (d) {
+        botao.disabled = false;
+        botao.textContent = "desbloquear";
+        if (!d.ok) { recado(d.erro, d.detalhe); return; }
+        recado("desbloqueado", b.telefone);
+        carregarBloqueados();
+      });
+    });
+    celula.appendChild(botao);
+    linha.appendChild(celula);
+    return linha;
+  }
+
+  $("blBuscar").addEventListener("click", function () { blBusca = $("blBusca").value.trim(); carregarBloqueados(); });
+  $("blBusca").addEventListener("keydown", function (e) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    blBusca = $("blBusca").value.trim();
+    carregarBloqueados();
+  });
+  $("blLimpar").addEventListener("click", function () {
+    blBusca = "";
+    $("blBusca").value = "";
+    carregarBloqueados();
   });
 
   // ------------------------------------------------------------------ SENHA
