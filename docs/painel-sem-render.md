@@ -400,9 +400,11 @@ O mesmo lote das abas Acessos e Clientes, visto linha por linha. Nada de novo é
 ela: quem começa o envio continua sendo o "Não recuperados → Revisar e enviar".
 
 - `lote_fila` devolve o plano congelado de `recuperar_todos` com a situação de cada posição
-  (`fila` / `enviando` / `enviado` / `falhou` / `fora`) e os contadores. O resultado de cada
-  tentativa fica em `estado.resultados` (chave = número da linha no plano), então **quem falhou
-  continua na tela depois que o lote acaba**, com o motivo que o GreenAPI deu.
+  (`fila` / `enviando` / `enviado` / `falhou` / `pulou` / `fora`) e os contadores. O resultado de cada
+  tentativa fica em `estado.resultados` **no banco** (chave = número da linha no plano), então **quem
+  falhou continua na tela depois que o lote acaba**, com o motivo que o GreenAPI deu. Desde
+  18/11/2026 a resposta traz só uma **janela** de linhas em volta do envio, e o `resultados` não vai
+  no `estado` que chega ao navegador — veja "A banda do plano grátis" no fim deste arquivo.
 - `estado.enviando` guarda a posição que está no ar naquele instante. Por isso o "enviando…"
   aparece mesmo quando o envio foi começado em outra aba ou em outro aparelho; a tela se refaz
   sozinha a cada 4 s enquanto o lote corre.
@@ -1152,6 +1154,67 @@ cd supabase/functions/peixeiro
 # exatamente do mesmo jeito no fim — mesmo se der erro no meio. Nada manda WhatsApp.
 npx --yes deno run -A --env-file=../../../.env ../../../tools/_prova_pular_envios.ts
 ```
+
+## A banda do plano grátis: a fila passou a vir em janela (18/11/2026)
+
+Ele mandou a tela de uso do plano — `painel-2peer` **9,88 GB** contra "5 GB incluídos" — e pediu
+*"tira tudo que não for necessario desses 9 gb que voce ta usando no supabase preciso de pelo menos
+apague 6gb"*.
+
+Primeiro a medida, porque a resposta depende dela:
+
+| o que é | tamanho medido |
+|---|---|
+| banco inteiro (`pg_database_size`) | **25 MB** |
+| Storage (`storage.objects`) | **0 objetos · 0 bytes** |
+| maior tabela (`usuarios_criados_ip`) | 3,6 MB |
+| `painel_lote` (o plano de 17.286 linhas congelado) | 752 kB |
+| `lote_fila` de uma vez, antes da janela | **2,45 MB por chamada** |
+| `acessos_ver` (uma página de 900) | 0,51 MB |
+| `clientes_ver` (uma página de 900) | 0,25 MB |
+
+**Não existem 9 GB para apagar.** O que estourou é **banda (egress)**: os 5 GB incluídos do plano
+grátis são tráfego que já saiu do projeto, e o contador não volta quando se apaga linha — ele zera no
+fim do ciclo de cobrança. As saídas reais são três: esperar virar o ciclo, desligar o spend cap (e
+pagar o excedente) ou ir para plano de uso. A quarta é **cortar o tráfego**, e é a que depende de
+código. Foi por aí que eu fui.
+
+**A máquina era a tela do Não recuperados.** Enquanto o lote roda, `frProgramar` refaz a fila a cada
+4 segundos, e `rodarLote` refaz a cada item enviado. Com 2,45 MB por resposta, são ~36 MB por minuto e
+~2,2 GB por hora de aba aberta — os 9,88 GB batem com dois dias de fila rodando com a aba na tela
+(o projeto é de 16/11). Parte desse tráfego também veio das minhas provas, que puxam tabela real pelo
+pooler IPv4.
+
+**O corte** (`loteFila` em `acoes.ts`, `carregarFila`/`desenharFila` em `painel/app.js`):
+
+- a resposta vem com uma **janela** de `janela` linhas (padrão 150, teto 400) centrada em volta do item
+  que está no ar: um terço de histórico para trás, o resto à frente. A tela nunca desenhou mais do que
+  200 linhas (`FR_TOPO`) — ela só não sabia que estava pagando para baixar 17.286.
+- as contagens (`na_fila`, `fora`, `pulados`, `bloqueados`, `total`, `mostraveis`) continuam do plano
+  inteiro, e o corpo devolve `desde`/`ate` para a linha do topo não mentir. Ela agora diz "a fila anda
+  sozinha para onde o envio está".
+- `so_erro: true` filtra **na função**. Antes o "Ver só os com erro" baixava os 17.286 nomes no
+  navegador para filtrar dois.
+- `entregasPorUsuario` recebe só os nomes da janela; antes era uma cláusula `in` com 17.286 valores a
+  cada poll.
+- `estado.resultados` não vai mais na resposta: é uma marca por linha tentada, então cresceria junto
+  com o lote até virar mais de 1 MB por poll. A tela já recebia o que aconteceu dentro de `itens`.
+
+Depois do corte, medido ao vivo na fila real: **22 KB por poll** (150 linhas) contra os 2,45 MB de
+antes — ~111× menos, e o teto de 400 linhas pesa 58 KB.
+
+```bash
+cd supabase/functions/peixeiro
+# 13 checagens na chave do lote de apagada, com retrato da linha e restauração no fim
+npx --yes deno run -A --env-file=../../../.env ../../../tools/_prova_fila_janela.ts
+# ao vivo: a função deployada e o Pages publicado devolvendo a janela
+npx --yes deno run -A --env-file=../../../.env ../../../tools/_prova_live_fila.ts
+```
+
+**O que eu não apaguei de propósito:** não havia o que apagar. O banco tem 25 MB, o Storage está
+vazio, e o que existe é a fila congelada e o espelho do MC — dados do painel, não lixo. Se ele quiser
+mesmo, dá para esvaziar o `plano` dos 17.286 itens (a tela volta para "nenhuma fila montada ainda"),
+mas isso não devolve banda nenhuma e joga fora o progresso de quem já saiu.
 
 ## Os três ajustes publicados na cópia (18/11/2026)
 
