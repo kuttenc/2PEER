@@ -1,11 +1,12 @@
-// Prova ao vivo dos três últimos ajustes na cópia: o texto sem primeiro nome, a aba Bloqueados
-// e o campo de pular envios.
+// Prova ao vivo dos últimos ajustes na cópia: o texto sem primeiro nome, a aba Bloqueados, o
+// campo de pular envios e a janela que parou de baixar a fila inteira.
 //
 //   npx --yes deno run -A --env-file=../../../.env ../../../tools/_prova_live_fila.ts
 //
 // Nada aqui manda WhatsApp, bloqueia número nem mexe na fila: as rotas novas são chamadas com
-// entrada inválida ou sem sessão. A ordem do index.ts — rota desconhecida devolve 404 antes de
-// olhar o token — é o que prova, sem escrever nada, que a action nova está no build deployado.
+// entrada inválida ou sem sessão, e o lote_fila é leitura pura. A ordem do index.ts — rota
+// desconhecida devolve 404 antes de olhar o token — é o que prova, sem escrever nada, que a action
+// nova está no build deployado.
 import { hashCacheado, novoToken } from "../supabase/functions/peixeiro/sessao.ts";
 
 const FUNCAO = "https://bzgtptbwcvwpgnhbctjn.supabase.co/functions/v1/peixeiro";
@@ -23,7 +24,12 @@ async function chamar(corpo: Record<string, unknown>, token = "") {
     headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify(corpo),
   });
-  return { status: r.status, corpo: await r.json() as Record<string, unknown> };
+  const buf = await r.arrayBuffer();
+  return {
+    status: r.status,
+    bytes: buf.byteLength,
+    corpo: JSON.parse(new TextDecoder().decode(buf)) as Record<string, unknown>,
+  };
 }
 
 const ping = await chamar({ action: "ping" });
@@ -63,20 +69,30 @@ if (!hash) {
     demais.status === 400 && demais.corpo.erro === "muita_marca",
     `${demais.status} ${JSON.stringify(demais.corpo)}`);
 
-  const fila = await chamar({ action: "lote_fila", tipo: "recuperar" }, token);
-  checar("a fila viva devolve a conta dos pulados",
-    fila.status === 200 && Object.hasOwn(fila.corpo, "pulados"),
-    `status ${fila.status} · chaves: ${Object.keys(fila.corpo).join(" ")}`);
-  const itens = (fila.corpo.itens || []) as Record<string, unknown>[];
-  const sobras = itens.filter((i) => /\{\{?[a-z_]+\}?\}/i.test(String(i.exemplo || "")));
-  checar("nenhuma mensagem da fila sai com chave no lugar do nome",
-    sobras.length === 0, `${itens.length} linhas · ${sobras.length} com sobra`);
-  const marcas = itens.reduce<Record<string, number>>((acc, i) => {
-    const s = String(i.situacao || "?");
-    acc[s] = (acc[s] || 0) + 1;
-    return acc;
-  }, {});
-  console.log(`     a fila da cópia agora: ${JSON.stringify(marcas)}`);
+  // ---------------------------------------------------------- a janela que corta a banda
+  const total = Number((await chamar({ action: "lote_fila", tipo: "recuperar", janela: 1 }, token)).corpo.total || 0);
+  checar("a fila da cópia está congelada com o plano inteiro dentro", total > 1000, `${total} linhas`);
+
+  const teto = await chamar({ action: "lote_fila", tipo: "recuperar", janela: 400 }, token);
+  const janela = await chamar({ action: "lote_fila", tipo: "recuperar", janela: 150 }, token);
+  const itens = (janela.corpo.itens || []) as Record<string, unknown>[];
+  checar("a tela não baixa mais o plano inteiro: 150 linhas e não as " + total,
+    janela.status === 200 && itens.length === 150 && Number(janela.corpo.total) === total,
+    `${itens.length} linhas · ${(janela.bytes / 1024).toFixed(0)} KB (o teto de 400 pesa ${(teto.bytes / 1024).toFixed(0)} KB)`);
+  checar("as contagens continuam do plano todo, com a janela pequena",
+    Number(janela.corpo.na_fila) > 1000 && Object.hasOwn(janela.corpo, "pulados") &&
+      Number(janela.corpo.mostraveis) === total,
+    JSON.stringify({ na_fila: janela.corpo.na_fila, mostraveis: janela.corpo.mostraveis }));
+  const estado = (janela.corpo.estado || {}) as Record<string, unknown>;
+  checar("o resultado linha por linha saiu do estado (era ele que incha com o lote)",
+    estado.resultados === undefined && Object.hasOwn(estado, "enviando"), Object.keys(estado).join(" "));
+  const erros = await chamar({ action: "lote_fila", tipo: "recuperar", so_erro: true }, token);
+  const itensErro = (erros.corpo.itens || []) as Record<string, unknown>[];
+  checar("o filtro de erros é feito na função, não no navegador",
+    erros.status === 200 && itensErro.every((i) => i.situacao === "falhou") &&
+      Number(erros.corpo.mostraveis) === itensErro.length,
+    `${itensErro.length} com erro`);
+  console.log(`     antes, cada poll da fila descia ${total} linhas; agora descem 150.`);
 
   const bl = await chamar({ action: "bloqueados_ver", q: "" }, token);
   checar("a tela de bloqueados abre com a busca vazia (foi o erro que a prova pegou)",
@@ -102,6 +118,8 @@ checar("o app.js publicado cuida da aba Bloqueados",
   js.includes('"bloqueados_ver"') && js.includes('"bloqueados_desbloquear"') && js.includes("carregarBloqueados"));
 checar("o app.js publicado conhece a linha que ele mandou pular",
   js.includes("pulou") && js.includes("pulados por você"));
+checar("o app.js publicado pede a janela, não a fila inteira",
+  js.includes("so_erro: frSoErro") && js.includes("janela: FR_TOPO"));
 
 console.log(`\n${falhas ? falhas + " FALHA(S)" : "todas as provas passaram"}`);
 Deno.exit(falhas ? 1 : 0);

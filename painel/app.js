@@ -1380,7 +1380,7 @@
     $("frResumo").textContent = d.vazia ? "nenhuma fila montada ainda" : partes.join(" · ");
 
     var vivo = $("frVivo"), atual = estado.enviando === null || estado.enviando === undefined
-      ? null : itens[estado.enviando];
+      ? null : itens.find(function (i) { return Number(i.i) === estado.enviando; });
     vivo.hidden = true;
     if (estado.rodando && atual) {
       vivo.hidden = false;
@@ -1393,9 +1393,9 @@
       vivo.textContent = motivoParada(estado.motivo) || "o lote está parado.";
     }
 
-    var mostrados = frSoErro ? itens.filter(function (i) { return i.situacao === "falhou"; }) : itens;
+    // A função já devolve a janela certa (com os erros, quando ele pede só eles): aqui é só desenho.
     var caixa = limpar($("frLista"));
-    mostrados.slice(0, FR_TOPO).forEach(function (item) {
+    itens.slice(0, FR_TOPO).forEach(function (item) {
       var linha = criar("label", "item" +
         (item.situacao === "fora" || item.situacao === "pulou" || item.situacao === "bloqueado" ? " fora" : ""));
       if (frEscolhido(item)) {
@@ -1425,11 +1425,13 @@
       caixa.appendChild(linha);
     });
 
-    var topo = $("frTopo");
-    topo.hidden = mostrados.length <= FR_TOPO;
+    var topo = $("frTopo"), visiveis = Number(d.mostraveis || 0);
+    topo.hidden = itens.length >= visiveis;
     if (!topo.hidden) {
-      topo.textContent = "mostrando os primeiros " + FR_TOPO + " de " + mostrados.length +
-        (frSoErro ? " com erro" : " da fila") + " — o resto continua no mesmo lugar.";
+      topo.textContent = frSoErro
+        ? "mostrando " + itens.length + " dos " + visiveis + " com erro — os outros continuam no mesmo lugar."
+        : "mostrando as linhas " + (Number(d.desde || 0) + 1) + " a " + d.ate + " de " + total +
+          " — a fila anda sozinha para onde o envio está.";
     }
     var vazia = $("frVazia");
     vazia.hidden = !d.vazia;
@@ -1437,7 +1439,7 @@
       vazia.textContent = "A fila aparece aqui depois que você aperta Não recuperados na aba Acessos " +
         "ou Clientes e revise a contagem. Ela é a mesma lista, vista por dentro.";
     }
-    if (frSoErro && !d.vazia && !mostrados.length) {
+    if (frSoErro && !d.vazia && !itens.length) {
       limpar(caixa).appendChild(criar("p", "muted", "ninguém com erro até agora — todo envio conseguiu."));
     }
 
@@ -1488,7 +1490,7 @@
   }
 
   function carregarFila(mostrarErro) {
-    return chamar("lote_fila", { tipo: "recuperar" }, 60).then(function (d) {
+    return chamar("lote_fila", { tipo: "recuperar", so_erro: frSoErro, janela: FR_TOPO }, 60).then(function (d) {
       if (!d.ok) {
         if (mostrarErro) recado(d.erro, d.detalhe);
         return;
@@ -1519,7 +1521,9 @@
 
   $("frFiltro").addEventListener("click", function () {
     frSoErro = !frSoErro;
-    desenharFila();
+    // Quem procura os erros agora é a função, para a tela não ter de baixar a fila inteira
+    // só para filtrar: sem isso o "Ver só os com erro" continuaria pedindo os 17.000 nomes.
+    carregarFila(false);
   });
 
   $("frSelecionar").addEventListener("click", function () {

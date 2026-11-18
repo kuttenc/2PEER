@@ -1233,44 +1233,85 @@ function textoDoItem(item: Item): string {
 }
 
 /** A fila congelada do lote, linha por linha, com o que aconteceu em cada uma. É a tela
- *  "Não recuperados": quem falhou continua visível mesmo depois que o envio acaba. */
+ *  "Não recuperados": quem falhou continua visível mesmo depois que o envio acaba.
+ *
+ *  Vem uma JANELA, não o plano inteiro. Com 17.286 linhas na fila a lista inteira pesava 2,45 MB e
+ *  a tela pedia isso a cada 4 segundos enquanto o lote corria — sozinho, isso estourou os 5 GB de
+ *  banda do plano grátis do Supabase. As contagens continuam sendo do plano todo. */
+const JANELA_PADRAO = 150;
+const JANELA_MAXIMA = 400;
+
 export async function loteFila(dados: Registro): Promise<Saida> {
   const tipo = tipoLote(dados.tipo);
   const vista = await verLote(tipo);
   if (!vista || !vista.plano.length) {
-    return ok({ vazia: true, itens: [], estado: estadoVazio(0), na_fila: 0, fora: 0, pulados: 0, bloqueados: 0, total: 0 });
+    return ok({
+      vazia: true, itens: [], estado: estadoVazio(0), na_fila: 0, fora: 0, pulados: 0,
+      bloqueados: 0, total: 0, mostraveis: 0, desde: 0, ate: 0,
+    });
   }
   const { plano, estado } = vista;
   const resultados = estado.resultados || {};
-  const entregas = await entregasPorUsuario(plano.map((item) => txt(item.username) || txt(item.usuario)));
+  const soErro = dados.so_erro === true || dados.so_erro === "true";
+  const janela = Math.min(JANELA_MAXIMA, Math.max(JANELA_PADRAO, Math.trunc(Number(dados.janela) || JANELA_PADRAO)));
+  const noAr = typeof estado.enviando === "number" ? estado.enviando : estado.indice;
   let naFila = 0, fora = 0, foraDaBase = 0, pulados = 0;
-  const itens = plano.map((item, i) => {
+  // Primeira passada: só a situação de cada linha, sem montar texto nenhum. É ela que conta o
+  // plano inteiro; o que sai para o navegador é só o recorte de baixo.
+  const linhas = plano.map((item, i) => {
     const marca = resultados[String(i)];
     const saiu = foraDaFila(item);
     const pulou = saiu && item.pulado === true;
-    const enviando = Boolean(estado.rodando) && estado.enviando === i;
     if (pulou) pulados += 1;
     else if (saiu) fora += 1;
     else if (!marca) naFila += 1;
-    const nome = txt(item.username) || txt(item.usuario);
     const bloqueado = marca?.marca === "bloqueado";
     if (bloqueado) foraDaBase += 1;
     return {
       i,
-      usuario: nome,
+      situacao: marca ? (bloqueado ? "bloqueado" : marca.ok ? "enviado" : "falhou")
+        : pulou ? "pulou" : saiu ? "fora" : (estado.rodando && noAr === i) ? "enviando" : "fila",
+      erro: marca && !marca.ok && !bloqueado ? String(marca.erro || "") : "",
+    };
+  });
+  const candidatas = soErro ? linhas.filter((l) => l.situacao === "falhou") : linhas;
+  // A janela anda com o envio: um terço de histórico para trás e o resto à frente, para ele ver o
+  // que acabou de sair e o que vem. Nos erros a lista já é curta e começa do mesmo jeito de antes.
+  const inicio = soErro || candidatas.length <= janela
+    ? 0
+    : Math.max(0, Math.min(noAr - Math.floor(janela / 3), candidatas.length - janela));
+  const recorte = candidatas.slice(inicio, inicio + janela);
+  const nomes = recorte.map((l) => txt(plano[l.i].username) || txt(plano[l.i].usuario));
+  const entregas = await entregasPorUsuario(nomes);
+  const itens = recorte.map((l, pos) => {
+    const item = plano[l.i];
+    return {
+      i: l.i,
+      usuario: nomes[pos],
       telefone: formatarTelefone(txt(item.telefone)),
       vencido: textoDoItem(item) || txt(item.intervalo),
       quem: txt(item.quem),
-      situacao: marca ? (bloqueado ? "bloqueado" : marca.ok ? "enviado" : "falhou")
-        : pulou ? "pulou" : saiu ? "fora" : enviando ? "enviando" : "fila",
-      erro: marca && !marca.ok && !bloqueado ? marca.erro : "",
-      entrega: entregas[nome] || "",
+      situacao: l.situacao,
+      erro: l.erro,
+      entrega: entregas[nomes[pos]] || "",
     };
   });
   return ok({
     vazia: false,
     itens,
-    estado,
+    // O `resultados` fica em casa: com o lote todo percorrido ele é 17.000 marcas, e a tela já
+    // recebeu o que aconteceu de cada linha dentro de `itens`.
+    estado: {
+      rodando: estado.rodando,
+      enviados: estado.enviados,
+      falhas: estado.falhas,
+      erros: estado.erros,
+      indice: estado.indice,
+      total: estado.total,
+      seguidas: estado.seguidas,
+      enviando: estado.enviando,
+      motivo: estado.motivo,
+    },
     fonte: tipo === "mensagem"
       ? (plano.length && plano[0].quem === "todos" ? "todos" : "fora")
       : (plano.length && plano[0].fonte === "espelho" ? "espelho" : "mc"),
@@ -1279,6 +1320,9 @@ export async function loteFila(dados: Registro): Promise<Saida> {
     pulados,
     bloqueados: foraDaBase,
     total: plano.length,
+    mostraveis: candidatas.length,
+    desde: recorte.length ? recorte[0].i : 0,
+    ate: recorte.length ? recorte[recorte.length - 1].i + 1 : 0,
     idade: Number.isFinite(vista.idade) ? Math.round(vista.idade) : null,
     fresco: vista.fresco,
     aviso: vista.aviso,
