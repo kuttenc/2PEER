@@ -6,8 +6,8 @@
 // recuperar, nem o lote — quem aperta isso é ele, na tela.
 import { consultar } from "../supabase/functions/peixeiro/db.ts";
 import { dadosDoCliente } from "../supabase/functions/peixeiro/banco.ts";
-import { legendaRecuperar, preencherVariaveis, variaveisMensagem } from "../supabase/functions/peixeiro/texto.ts";
-import { renderizar } from "../supabase/functions/peixeiro/chat.ts";
+import { legendaRecuperar, normalizarWhatsapp, preencherVariaveis, variaveisMensagem } from "../supabase/functions/peixeiro/texto.ts";
+import { clientePorTelefone, renderizar, variaveis } from "../supabase/functions/peixeiro/chat.ts";
 
 let falhas = 0;
 function checar(rotulo: string, verdadeiro: unknown, detalhe = "") {
@@ -144,6 +144,28 @@ checar("usuário em branco tem a mesma forma e não consulta o banco",
 const tempo = Date.now();
 await dadosDoCliente(doPix ? doPix.username : "r7000000007");
 checar("a ficha não atrasa o envio de cada linha", Date.now() - tempo < 1500, `${Date.now() - tempo}ms`);
+
+// ---------------------------------------------------------------- as duas abas dizem o mesmo
+const comTelefone = (await com(`select m.telefone, m.username from public.mc_linhas m
+  join public.cliente_pix p on p.usuario = m.username
+  where coalesce(nullif(trim(p.nome),''),'') <> '' and coalesce(nullif(m.telefone,''),'') <> ''
+  limit 1`))[0];
+if (comTelefone) {
+  const cliente = await clientePorTelefone(normalizarWhatsapp(comTelefone.telefone));
+  const doChat = variaveis(cliente, conf as never, comTelefone.telefone);
+  const daRecuperacao = variaveisMensagem(conf, await dadosDoCliente(comTelefone.username), {}, new Date());
+  const nomes = ["nome", "usuario", "telefone", "status", "pix", "site"];
+  checar("a aba Chat e a Recuperação usam os mesmos nomes e os mesmos valores",
+    Boolean(cliente) && nomes.every((k) => doChat[k] === daRecuperacao[k]),
+    nomes.map((k) => `${k}: ${doChat[k]} | ${daRecuperacao[k]}`).join(" · "));
+  const vencimento = ["vence", "expira", "expirou", "dias"];
+  checar("as quatro de vencimento batem nas duas abas",
+    vencimento.every((k) => doChat[k] === daRecuperacao[k]),
+    vencimento.map((k) => `${k}: ${doChat[k]}`).join(" · "));
+  checar("o {nome} do chat sai do cadastro e não do usuário",
+    Boolean(cliente) && cliente!.nota !== cliente!.usuario && doChat.nome === cliente!.nota,
+    `${doChat.nome} (${cliente ? cliente.usuario : "-"})`);
+} else checar("achado um cliente com nome e telefone na cópia", false, "nenhum");
 
 console.log(`\n${falhas ? falhas + " FALHA(S)" : "todas as provas passaram"}`);
 Deno.exit(falhas ? 1 : 0);

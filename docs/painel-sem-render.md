@@ -927,8 +927,9 @@ corrija na aba recuperação"*. É a aba **Recuperação** — o texto que sai q
 Prova (nada saiu do banco da cópia, nenhum WhatsApp foi enviado):
 
 ```bash
-# 34 checagens: as chaves, os três jeitos de falar do vencimento, as duas grafias,
-# as fichas reais (nome do PIX, nota do MC, só-agenda, inexistente)
+# 37 checagens: as chaves, os três jeitos de falar do vencimento, as duas grafias,
+# as fichas reais (nome do PIX, nota do MC, só-agenda, inexistente) e a prova de que
+# a aba Chat e a Recuperação dizem exatamente a mesma coisa para o mesmo cliente
 cd supabase/functions/peixeiro
 npx --yes deno run -A --env-file=../../../.env ../../../tools/_prova_recupera_variaveis.ts
 
