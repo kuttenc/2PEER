@@ -944,6 +944,63 @@ checagens que falharam na primeira rodada e foram corrigidas antes de publicar: 
 com uma chave só (o colapso das duas grafias antes da substituição) e a ficha de usuário inexistente
 vinha sem `status`/`expira`.
 
+## `{primeiro}` e as variáveis do cliente também no aviso e na renovação (18/11/2026)
+
+Ele perguntou se `{nome}` saía só com o primeiro nome; não sai (é o nome inteiro cadastrado). Ofereci
+uma chave só para isso e ele respondeu *"pode criar essa variavel? em abas as abas que voce tinha
+criado as demais?"* — ou seja: `{primeiro}` em **todas** as telas que montam mensagem, não só na
+Recuperação.
+
+**`{primeiro}`** (`primeiroNome` em `texto.ts`): pega a primeira palavra do nome e descarta o resto.
+As regras que a base dele obriga:
+
+- token com dígito não é nome — as notas do MC são telefone mascarado ("Simone 129xxxx4466" vira
+  `Simone`, "129xxxxxx13" não vira nada);
+- letra sozinha e partida do meio ("da", "de", "do", "dos", "das", "du", "e") não abrem o nome:
+  "A da Silva" e "da Silva" dão `Silva`, "Aderlane monteiro da Silva" dá `Aderlane`;
+- sem nada aproveitável sai `amigo(a)` — **nunca** o código do usuário (`r7000000007`) no lugar de
+  um nome. O `{nome}` continua caindo no usuário, porque ali o código é informativo; no primeiro nome
+  seria uma frase esquisita.
+
+**Onde a chave vale** — os quatro lugares que montam texto com dado do cliente:
+
+| onde | como escreve | o que mudou |
+|---|---|---|
+| aba Recuperação (botão e lote) | `{x}` ou `{{x}}` | + `{primeiro}` |
+| aba Chat (regras) | `{{x}}` | + `{{primeiro}}` |
+| modal "Mensagem avulsa" (aba Clientes) | `{{x}}` | + `{{primeiro}}` |
+| aviso das 6h + renovação (Configuração, itens 3 e 4) | `{x}` ou `{{x}}` | antes só `{dias}` e `{pix}`; agora a ficha inteira |
+
+- **A agenda das 6h passou a conhecer o cliente.** `legendaAviso`/`legendaRenovacao` ganharam o
+  terceiro argumento (`cliente`) e hoje passam pelo mesmo `preencherVariaveis` da Recuperação; o
+  `preencher` velho, que só trocava três chaves, foi apagado. `{dias}` continua sendo **o texto que o
+  painel MC calcula** (`linha.texto_dias`), porque é ele que aparece na tela Avisos — as outras chaves
+  vêm da ficha. Custo: uma consulta por envio, 10 ms com a conexão aquecida, na mesma fila que já
+  escreve em `vencimentos_avisos`.
+- **`fichaPara(username, exp_date, telefone)`** (`varredura.ts`) é o ponto único: telefone = o da
+  agenda (é para lá que se manda, não o do espelho), data = a que o MC acabou de calcular (a do
+  espelho pode estar velha), nome/situação = `dadosDoCliente`. A prévia da tela Avisos usa o primeiro
+  da lista, então o nome que ele vê na prévia é o que sairia de verdade.
+- **Duas mudanças de comportamento que ele precisa saber:**
+  1. `{link}` no aviso e na renovação **não existe** (link curto só nasce no "recuperar"). Fica
+     escrito na mensagem, para ele ver o erro em vez de sair um buraco — a ajuda da tela diz isso.
+  2. Sem chave PIX cadastrada, `{pix}` agora escreve `(chave ainda não cadastrada)` em vez de vazio.
+- **O que a aba Chat e o modal continuam de duas chaves só** (`renderizar`): quem escrever `{nome}`
+  numa regra de chat vê a chave escrita, não trocada. A Recuperação, o aviso e a renovação aceitam as
+  duas grafias. É a única diferença entre as telas, e está escrita em cada uma delas.
+
+Prova (53 checagens, banco da cópia, nada enviado):
+
+```bash
+cd supabase/functions/peixeiro
+npx --yes deno run -A --env-file=../../../.env ../../../tools/_prova_recupera_variaveis.ts
+npx --yes deno run -A --env-file=../../../.env ../../../tools/_prova_recupera_live.ts
+```
+
+A bateria cobre `{primeiro}` nas notas mascaradas, o aviso/renovação com ficha e sem ficha, a régua de
+`{dias}` vindo do MC, `{link}` sobrando no aviso e a ficha real montada por `fichaPara`. O teste ao
+vivo acrescenta a checagem de que `{primeiro}` está nas telas certas do Pages publicado.
+
 ## Quando for para a produção
 
 Nada aqui está pronto para produção enquanto você não decidir. A ordem segura é:

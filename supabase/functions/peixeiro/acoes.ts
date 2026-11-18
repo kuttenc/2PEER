@@ -94,7 +94,7 @@ import {
   type Item,
   type TipoLote,
 } from "./lote.ts";
-import { avisarRenovacao, avisarVencimentos } from "./varredura.ts";
+import { avisarRenovacao, avisarVencimentos, fichaPara } from "./varredura.ts";
 import { escreverCsv, lerCsv } from "./csv.ts";
 import { gravarPix, parsearPix } from "./pix.ts";
 import {
@@ -328,6 +328,10 @@ export async function avisosVer(dados: Registro, ctx: Contexto): Promise<Saida> 
     if (!mostrarTodos) itens = itens.filter((i) => !i.ja_enviado);
   }
   const textoDias = itens.length ? String(itens[0].texto_dias) : textoDiasRestantes(limite * 24);
+  // A prévia é do primeiro da lista, para ele ver o nome que realmente sairia.
+  const prever = itens.length
+    ? await fichaPara(String(itens[0].username), String(itens[0].exp_date), String(itens[0].telefone || ""))
+    : {};
   return ok({
     itens,
     limite,
@@ -336,7 +340,7 @@ export async function avisosVer(dados: Registro, ctx: Contexto): Promise<Saida> 
     previa: await previaAvisoEmB64(conf, textoDias),
     // A legenda já sai montada daqui: a tela mostra exatamente o texto que o envio usaria,
     // sem precisar conhecer aviso_legenda e aviso_pix_key por fora.
-    previa_legenda: legendaAviso(conf, textoDias),
+    previa_legenda: legendaAviso(conf, textoDias, prever),
     com_telefone: itens.filter((i) => i.telefone).length,
     sem_token: !info.ok,
     lines_status: status,
@@ -367,7 +371,8 @@ export async function avisosEnviar(dados: Registro, ctx: Contexto): Promise<Said
     const telefone = telefones[username] || "";
     if (!linha || !telefone) continue;
     const imagem = await gerarImagemAviso(conf, linha.texto_dias);
-    ultimo = await enviarArquivo(conf, telefone, imagem, "aviso-vencimento.png", legendaAviso(conf, linha.texto_dias));
+    ultimo = await enviarArquivo(conf, telefone, imagem, "aviso-vencimento.png",
+      legendaAviso(conf, linha.texto_dias, await fichaPara(linha.username, linha.exp_date, telefone)));
     if (ultimo.ok) {
       enviados++;
       await registrarAviso(username, linha.exp_date, telefone, linha.horas, ultimo);

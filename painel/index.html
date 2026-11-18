@@ -162,8 +162,12 @@
           <input type="text" name="aviso_titulo" id="cfTitulo">
           <label>Frase antes do PIX na imagem</label>
           <input type="text" name="aviso_rodape" id="cfRodape">
-          <label>Mensagem enviada junto da imagem (use {dias} e {pix})</label>
+          <label>Mensagem enviada junto da imagem (as mesmas variáveis da aba <a href="#recuperacao">Recuperação</a>)</label>
           <textarea name="aviso_legenda" id="cfLegendaAviso"></textarea>
+          <p class="muted" style="margin-top:2px">Aqui <b>{dias}</b> é o que o painel MC calcula (&ldquo;em 23 horas&rdquo;,
+            &ldquo;em 1 dia&rdquo;) e o resto ({nome}, {primeiro}, {vence}, {status}...) vale do mesmo jeito.
+            <b>{link}</b> não existe no aviso: se você escrever, sai escrito na mensagem &mdash; link curto
+            só no &ldquo;recuperar&rdquo;.</p>
           <label>Token da agenda</label>
           <input type="text" name="aviso_token" id="cfTokenAgenda" autocapitalize="off" autocorrect="off">
         </div>
@@ -178,8 +182,11 @@
           <input type="number" name="renova_dias" id="cfRenovaDias" step="1" min="1" max="30" inputmode="decimal">
           <label>Só avisar quem venceu nos últimos (dias)</label>
           <input type="number" name="renova_janela_dias" id="cfRenovaJanela" step="1" min="1" max="365" inputmode="decimal">
-          <label>Mensagem automática de renovação (use {pix})</label>
+          <label>Mensagem automática de renovação (as mesmas variáveis da aba <a href="#recuperacao">Recuperação</a>)</label>
           <textarea name="renova_legenda" id="cfRenovaLegenda"></textarea>
+          <p class="muted" style="margin-top:2px">{dias} é o tempo que já faz (&ldquo;há 4 dias&rdquo;) e vale o
+            resto todo, inclusive {nome} e {primeiro}. <b>{link}</b> não existe aqui: se escrever, sai
+            escrito na mensagem &mdash; link curto só no &ldquo;recuperar&rdquo;.</p>
           <label>Mensagem do botão &ldquo;recuperar&rdquo; (as mesmas variáveis da aba <a href="#recuperacao">Recuperação</a>)</label>
           <textarea name="recupera_legenda" id="cfRecuperaLegenda"></textarea>
           <p class="muted">{dias} vira &ldquo;há 1 mês e 4 dias&rdquo;, do jeito que aparece na tela Acessos.
@@ -319,12 +326,18 @@
         <form id="formRecuperacao">
           <label for="rcLegenda">Mensagem</label>
           <p class="muted" style="margin-top:0">Campos que viram dado do cliente na hora do envio:
-            <code>{nome}</code> <code>{usuario}</code> <code>{telefone}</code>
+            <code>{nome}</code> <code>{primeiro}</code> <code>{usuario}</code> <code>{telefone}</code>
             <code>{vence}</code> <code>{expira}</code> <code>{expirou}</code>
             <code>{dias}</code> <code>{status}</code> <code>{pix}</code>
             <code>{site}</code> <code>{data}</code> <code>{hora}</code> <code>{link}</code>.
             São os mesmos nomes da aba <a href="#chat">Chat</a> e dá para escrever com uma chave
             (&ldquo;{nome}&rdquo;) ou com duas (&ldquo;{{nome}}&rdquo;); o resultado é o mesmo.</p>
+          <p class="muted"><b>{nome}</b> é o nome inteiro cadastrado (&ldquo;Aderlane monteiro da
+            Silva&rdquo;) e <b>{primeiro}</b> é só o primeiro (&ldquo;Aderlane&rdquo;). Para quem não
+            está na lista colada da aba Clientes, {nome} cai na nota do painel MC &mdash; que na sua
+            base é telefone mascarado, tipo &ldquo;Simone 129xxxx4466&rdquo;. Aí {primeiro} pega só o
+            que é palavra e, se não sobra nada, escreve &ldquo;amigo(a)&rdquo; em vez de sair o
+            código do usuário.</p>
           <p class="muted"><b>{vence}</b> é o que usar na frase: sai &ldquo;vence em 15/11/2026
             18:00&rdquo; para quem está no prazo e &ldquo;venceu em 10/11/2026 18:00&rdquo; para quem
             já perdeu o acesso. <b>{expira}</b> é só a data gravada (vale para os dois) e
@@ -602,10 +615,13 @@
           (separadas por v&iacute;rgula) e o que responder. O que estiver na frase do cliente vale,
           e a de menor n&uacute;mero ganha quando duas casam.</p>
         <p class="muted">Campos que viram dado do cliente na hora:
-          <code>{{nome}}</code> <code>{{usuario}}</code> <code>{{telefone}}</code>
+          <code>{{nome}}</code> <code>{{primeiro}}</code> <code>{{usuario}}</code> <code>{{telefone}}</code>
           <code>{{vence}}</code> <code>{{expira}}</code> <code>{{expirou}}</code>
-          <code>{{dias}}</code> <code>{{status}}</code>
-          <code>{{pix}}</code> <code>{{data}}</code> <code>{{hora}}</code>.</p>
+          <code>{{dias}}</code> <code>{{status}}</code> <code>{{pix}}</code> <code>{{site}}</code>
+          <code>{{data}}</code> <code>{{hora}}</code>.</p>
+        <p class="muted"><b>{{nome}}</b> &eacute; o nome inteiro cadastrado e <b>{{primeiro}}</b> &eacute;
+          s&oacute; o primeiro nome (&ldquo;Aderlane&rdquo;). Sem nome cadastrado, <b>{{nome}}</b> cai na nota do
+          painel MC e <b>{{primeiro}}</b> escreve &ldquo;amigo(a)&rdquo; em vez do c&oacute;digo do usu&aacute;rio.</p>
         <p class="muted"><b>{{vence}}</b> &eacute; o que usar na frase: sai "vence em 15/11/2026
           18:00" para quem est&aacute; no prazo e "venceu em 10/11/2026 18:00" para quem j&aacute;
           perdeu o acesso. <b>{{expira}}</b> &eacute; s&oacute; a data gravada (vale para os dois),
@@ -853,8 +869,9 @@
       <textarea id="msCorpo" rows="6" maxlength="1200" spellcheck="false"
                 placeholder="Oi {{usuario}}, seu acesso está parado. Responda aqui que eu mando o novo."></textarea>
       <p class="muted" style="margin:4px 0 0"><b id="msContagem">0</b> caracteres &middot; você pode usar
-        <code>{{usuario}}</code> <code>{{nome}}</code> <code>{{telefone}}</code> <code>{{pix}}</code>
-        <code>{{site}}</code> <code>{{vence}}</code> <code>{{dias}}</code> <code>{{data}}</code>.</p>
+        <code>{{usuario}}</code> <code>{{nome}}</code> <code>{{primeiro}}</code> <code>{{telefone}}</code> <code>{{pix}}</code>
+        <code>{{site}}</code> <code>{{vence}}</code> <code>{{dias}}</code> <code>{{data}}</code>
+        <code>{{expirou}}</code> <code>{{status}}</code> <code>{{hora}}</code>.</p>
       <div id="msEscolha">
         <label class="rotulo" for="msQuem">para quem vai</label>
         <select id="msQuem">

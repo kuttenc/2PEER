@@ -6,7 +6,11 @@
 // recuperar, nem o lote — quem aperta isso é ele, na tela.
 import { consultar } from "../supabase/functions/peixeiro/db.ts";
 import { dadosDoCliente } from "../supabase/functions/peixeiro/banco.ts";
-import { legendaRecuperar, normalizarWhatsapp, preencherVariaveis, variaveisMensagem } from "../supabase/functions/peixeiro/texto.ts";
+import {
+  legendaAviso, legendaRenovacao, legendaRecuperar, normalizarWhatsapp, primeiroNome,
+  preencherVariaveis, variaveisMensagem,
+} from "../supabase/functions/peixeiro/texto.ts";
+import { fichaPara } from "../supabase/functions/peixeiro/varredura.ts";
 import { clientePorTelefone, renderizar, variaveis } from "../supabase/functions/peixeiro/chat.ts";
 
 let falhas = 0;
@@ -28,7 +32,7 @@ const semData = { ...vencido, expira: null };
 
 // ---------------------------------------------------------------- os nomes
 const v = variaveisMensagem(conf, vencido, { link: "https://x/r/abc" }, agora);
-const esperadas = ["nome", "usuario", "telefone", "vence", "expira", "expirou", "dias", "status",
+const esperadas = ["nome", "primeiro", "usuario", "telefone", "vence", "expira", "expirou", "dias", "status",
   "pix", "site", "data", "hora", "link"];
 checar("a Recuperação conhece exatamente os nomes da aba Chat",
   esperadas.every((k) => k in v) && Object.keys(v).filter((k) => !esperadas.includes(k)).length === 0,
@@ -154,7 +158,7 @@ if (comTelefone) {
   const cliente = await clientePorTelefone(normalizarWhatsapp(comTelefone.telefone));
   const doChat = variaveis(cliente, conf as never, comTelefone.telefone);
   const daRecuperacao = variaveisMensagem(conf, await dadosDoCliente(comTelefone.username), {}, new Date());
-  const nomes = ["nome", "usuario", "telefone", "status", "pix", "site"];
+  const nomes = ["nome", "primeiro", "usuario", "telefone", "status", "pix", "site"];
   checar("a aba Chat e a Recuperação usam os mesmos nomes e os mesmos valores",
     Boolean(cliente) && nomes.every((k) => doChat[k] === daRecuperacao[k]),
     nomes.map((k) => `${k}: ${doChat[k]} | ${daRecuperacao[k]}`).join(" · "));
@@ -166,6 +170,61 @@ if (comTelefone) {
     Boolean(cliente) && cliente!.nota !== cliente!.usuario && doChat.nome === cliente!.nota,
     `${doChat.nome} (${cliente ? cliente.usuario : "-"})`);
 } else checar("achado um cliente com nome e telefone na cópia", false, "nenhum");
+
+// ---------------------------------------------------------------- {primeiro}
+checar("{primeiro} é só o primeiro nome", primeiroNome("Aderlane monteiro da Silva") === "Aderlane");
+checar("{primeiro} ignora o telefone mascarado da nota", primeiroNome("Simone 129xxxx4466") === "Simone");
+checar("nota que é só número não vira nome", primeiroNome("129xxxxxx13") === "amigo(a)");
+checar("{primeiro} não pega letra sozinha nem partida do meio",
+  primeiroNome("A da Silva") === "Silva" && primeiroNome("da Silva") === "Silva");
+checar("nome com espaço sobrando funciona", primeiroNome("  Maria das Dores  ") === "Maria");
+checar("sem nome cadastrado, {primeiro} diz amigo(a) e não o código",
+  variaveisMensagem(conf, { usuario: "r7000000007", nome: "" }, {}, agora).primeiro === "amigo(a)");
+checar("a frase com {primeiro} sai curta",
+  preencherVariaveis("Oi {primeiro}, tudo bem?", cheio) === "Oi Maria, tudo bem?");
+checar("no chat {{primeiro}} funciona igual", renderizar("Oi {{primeiro}}", cheio) === "Oi Maria");
+
+// ---------------------------------------------------------------- aviso e renovação das 6h
+const avisoCom = legendaAviso({ aviso_legenda: "{primeiro}, seu plano {vence} e você está {status}." },
+  "em 23 horas",
+  { nome: "Aderlane monteiro da Silva", usuario: "r7000000007", telefone: "11999998888", status: 1, expira: dias(15) },
+  agora);
+checar("o aviso das 6h conhece o cliente inteiro",
+  avisoCom === "Aderlane, seu plano vence em 02/12/2026 15:00 e você está ativo.", avisoCom);
+checar("no aviso, {dias} continua sendo o texto que o painel MC calcula",
+  legendaAviso({ aviso_legenda: "Faltam {dias} para expirar." }, "em 23 horas", vencido, agora) ===
+    "Faltam em 23 horas para expirar.");
+checar("a renovação usa as mesmas chaves",
+  legendaRenovacao({ renova_legenda: "{primeiro}, {dias} sem acesso, PIX: {pix}", aviso_pix_key: conf.aviso_pix_key },
+    "há 4 dias", { ...vencido, nome: "Simone da Silva" }, agora) ===
+    "Simone, há 4 dias sem acesso, PIX: 12.345.678/0001-99");
+checar("sem ficha, o aviso antigo continua funcionando (só {dias} e {pix})",
+  legendaAviso({ aviso_legenda: "Faltam {dias}, chave {pix}", aviso_pix_key: conf.aviso_pix_key },
+    "em 1 dia", {}, agora) === "Faltam em 1 dia, chave 12.345.678/0001-99");
+checar("com o PIX vazio, o aviso diz que falta cadastrar em vez de sair em branco",
+  legendaAviso({ aviso_legenda: "chave {pix}" }, "em 1 dia", {}, agora).includes("não cadastrada"),
+  legendaAviso({ aviso_legenda: "chave {pix}" }, "em 1 dia", {}, agora));
+checar("as legendas padrão do aviso e da renovação saem sem sobra de chave",
+  !/\{[a-z_]+\}/i.test(legendaAviso({}, "em 2 dias", vencido, agora)) &&
+    !/\{[a-z_]+\}/i.test(legendaRenovacao({}, "há 9 dias", vencido, agora)));
+checar("{link} no aviso fica escrito, para ele ver que ali não tem link",
+  legendaAviso({ aviso_legenda: "clique {link}" }, "em 1 dia", vencido, agora) === "clique {link}");
+
+// ---------------------------------------------------------------- a ficha da agenda (só leitura)
+const linhaReal = (await com(`select m.username, m.exp_date, m.telefone from public.mc_linhas m
+  join public.cliente_pix p on p.usuario = m.username
+  where coalesce(nullif(trim(p.nome),''),'') <> '' and m.exp_date is not null
+    and coalesce(nullif(m.telefone,''),'') <> ''
+  limit 1`))[0];
+if (linhaReal) {
+  const ficha = await fichaPara(linhaReal.username, String(linhaReal.exp_date), linhaReal.telefone);
+  const v = variaveisMensagem(conf, ficha, {}, agora);
+  checar("a ficha da agenda traz nome, primeiro nome e a data que o MC calculou",
+    ficha.nome !== "" && v.primeiro === primeiroNome(ficha.nome || "") && ficha.expira !== null,
+    `${JSON.stringify(ficha).slice(0, 130)} · {primeiro}=${v.primeiro}`);
+  checar("o número da agenda manda no telefone da ficha",
+    (await fichaPara(linhaReal.username, String(linhaReal.exp_date), "5511999990000")).telefone === "5511999990000");
+} else checar("achado uma linha real com nome e data na cópia", false, "nenhuma");
 
 console.log(`\n${falhas ? falhas + " FALHA(S)" : "todas as provas passaram"}`);
 Deno.exit(falhas ? 1 : 0);

@@ -1,11 +1,26 @@
 // A varredura das 6h (vencendo + já vencidos) sem Render: é o mesmo corpo do
 // avisar_vencimentos()/avisar_renovacao() do site, só que lendo e gravando pelo db.ts.
 import { gerarImagemAviso } from "./aviso.ts";
-import { obterConfig, sincronizarLinhas, telefonesPorUsuario, type Conf } from "./banco.ts";
+import { obterConfig, sincronizarLinhas, telefonesPorUsuario, dadosDoCliente, type Conf } from "./banco.ts";
 import { consultar } from "./db.ts";
 import { coletarLinhasVencendo, coletarLinhasVencidas, gravarEvento, tokenDoPainel } from "./mcapi.ts";
 import { cotaEsgotada, enviarArquivo, enviarTexto, type ResultadoEnvio } from "./greenapi.ts";
-import { legendaAviso, legendaRenovacao } from "./texto.ts";
+import { legendaAviso, legendaRenovacao, parseExpDate, type ClienteMensagem } from "./texto.ts";
+
+/** A ficha que as mensagens da agenda usam: o número é o da agenda (é para lá que se manda) e a
+ *  data é a que o painel MC acabou de calcular, não a do espelho (que pode estar velha). */
+export async function fichaPara(
+  username: string,
+  expDate: string,
+  telefone: string,
+): Promise<ClienteMensagem> {
+  const ficha = await dadosDoCliente(username);
+  return {
+    ...ficha,
+    telefone: telefone || ficha.telefone,
+    expira: parseExpDate(expDate) || ficha.expira || null,
+  };
+}
 
 export type ResultadoVarredura = Record<string, unknown>;
 
@@ -57,7 +72,9 @@ export async function avisarVencimentos(clientIp: string, forcar = false): Promi
     if (!primeira && !forcar) continue;
 
     const imagem = await gerarImagemAviso(conf, linha.texto_dias);
-    const resultado = await enviarArquivo(conf, telefone, imagem, "aviso-vencimento.png", legendaAviso(conf, linha.texto_dias));
+    const cliente = await fichaPara(linha.username, linha.exp_date, telefone);
+    const resultado = await enviarArquivo(conf, telefone, imagem, "aviso-vencimento.png",
+      legendaAviso(conf, linha.texto_dias, cliente));
     await finalizarVencimento(linha.username, linha.exp_date, resultado);
     if (resultado.ok) enviados++;
     else falhas.push({ username: linha.username, erro: resultado.error || resultado.response });
@@ -157,7 +174,8 @@ export async function avisarRenovacao(clientIp: string, forcar = false): Promise
       continue;
     }
 
-    const resultado = await enviarTexto(conf, telefone, legendaRenovacao(conf, linha.texto_dias));
+    const resultado = await enviarTexto(conf, telefone,
+      legendaRenovacao(conf, linha.texto_dias, await fichaPara(linha.username, linha.exp_date, telefone)));
     await finalizarRenovacao(linha.username, linha.exp_date, resultado);
     if (resultado.ok) enviados++;
     else falhas.push({ username: linha.username, erro: resultado.error || resultado.response });

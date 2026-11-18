@@ -85,23 +85,17 @@ export const RECUPERA_LEGENDA_PADRAO =
   "Olá, vi que {dias} que está sem acesso, Vamos ativa-lo agora mesmo, efetue o pix na chave:\n{pix}\n" +
   "Indique agora mesmo e ganhe desconto dois acessos por um:\n{link}";
 
-/** Troca {dias}, {pix} e {link} sem quebrar se o texto tiver outra chave entre chaves. */
-function preencher(
-  modelo: string,
-  conf: Record<string, unknown>,
-  textoDias: string,
-  extras: Record<string, string> = {},
-): string {
-  const dados: Record<string, string> = {
-    dias: textoDias,
-    pix: String(conf.aviso_pix_key || ""),
-    ...extras,
-  };
-  let saida = modelo;
-  for (const [chave, valor] of Object.entries(dados)) {
-    saida = saida.replaceAll(`{${chave}}`, valor);
-  }
-  return saida;
+const PARTICULAS = ["da", "de", "do", "dos", "das", "du", "e"];
+
+/** Só o primeiro nome, do jeito que se fala com a pessoa. As notas do painel MC são telefone
+ *  mascarado ("Simone 129xxxx4466", "129xxxxxx13"), então token com dígito não é nome, e "da"/"de"
+ *  no meio do caminho também não. Sem nada aproveitável, sai "amigo(a)" — nunca o código do
+ *  usuário no lugar de um nome. */
+export function primeiroNome(nome: string): string {
+  const partes = String(nome || "").trim().split(/\s+/).filter(Boolean);
+  const achada = partes.find((p) => !/\d/.test(p) && p.length >= 2 &&
+    !PARTICULAS.includes(semAcento(p).toLowerCase()));
+  return achada || "amigo(a)";
 }
 
 export type ClienteMensagem = {
@@ -129,6 +123,7 @@ export function variaveisMensagem(
   const telefone = formatarTelefone(cliente.telefone || "");
   return {
     nome: cliente.nome || cliente.usuario || "amigo(a)",
+    primeiro: primeiroNome(cliente.nome || ""),
     usuario: cliente.usuario || telefone,
     telefone,
     expira: data,
@@ -158,12 +153,35 @@ export function preencherVariaveis(modelo: string, v: Record<string, string>): s
   });
 }
 
-export function legendaAviso(conf: Record<string, unknown>, textoDias: string): string {
-  return preencher(String(conf.aviso_legenda || AVISO_LEGENDA_PADRAO), conf, textoDias);
+/** O aviso das 6h e a cobrança de renovação conhecem o mesmo cliente que a recuperação. O
+ *  `{dias}` continua sendo o texto que o próprio painel MC calcula (é ele que aparece na tela
+ *  Avisos), tudo o mais vem da ficha. Sem ficha, só {dias} e {pix} respondem — igual a antes. */
+function legendaAgenda(
+  modelo: string,
+  conf: Record<string, unknown>,
+  textoDias: string,
+  cliente: ClienteMensagem = {},
+  agora: Date = new Date(),
+): string {
+  return preencherVariaveis(modelo, { ...variaveisMensagem(conf, cliente, {}, agora), dias: textoDias });
 }
 
-export function legendaRenovacao(conf: Record<string, unknown>, textoDias: string): string {
-  return preencher(String(conf.renova_legenda || RENOVA_LEGENDA_PADRAO), conf, textoDias);
+export function legendaAviso(
+  conf: Record<string, unknown>,
+  textoDias: string,
+  cliente?: ClienteMensagem,
+  agora: Date = new Date(),
+): string {
+  return legendaAgenda(String(conf.aviso_legenda || AVISO_LEGENDA_PADRAO), conf, textoDias, cliente, agora);
+}
+
+export function legendaRenovacao(
+  conf: Record<string, unknown>,
+  textoDias: string,
+  cliente?: ClienteMensagem,
+  agora: Date = new Date(),
+): string {
+  return legendaAgenda(String(conf.renova_legenda || RENOVA_LEGENDA_PADRAO), conf, textoDias, cliente, agora);
 }
 
 /** A mensagem do "recuperar" (botão da linha e lote) é a única que conhece o cliente inteiro:

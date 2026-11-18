@@ -24,6 +24,14 @@ checar("o Pages publicado traz a lista nova de variáveis",
   html.includes("<code>{nome}</code>") && html.includes("<code>{vence}</code>") &&
     html.includes("<code>{expirou}</code>") && html.includes("<code>{status}</code>") &&
     html.includes("<code>{site}</code>") && html.includes("<code>{link}</code>"));
+checar("{primeiro} aparece nas telas que montam mensagem",
+  html.includes("<code>{primeiro}</code>") && // aba Recuperação
+    html.includes("<code>{{primeiro}}</code>") && // aba Chat e o modal de mensagem avulsa
+    (html.match(/\{\{primeiro\}\}/g) || []).length >= 3 &&
+    (html.match(/as mesmas variáveis da aba/g) || []).length === 3, // aviso, renovação e recuperar na Configuração
+  `${(html.match(/primeiro/g) || []).length} vezes na página`);
+checar("a ajuda avisa que {link} não existe no aviso e na renovação",
+  html.includes("sai escrito na mensagem") && html.includes("link curto só no"));
 checar("a ajuda antiga, que só falava de {dias}, {pix} e {link}, saiu da tela",
   !html.includes("Mensagem ({dias} vira"), html.slice(html.indexOf("rcLegenda"), html.indexOf("rcLegenda") + 90));
 checar("a legenda da Configuração aponta para a mesma lista",
