@@ -872,6 +872,77 @@ update public.mcapi_events
 
 Rodar no banco da cópia já foi feito (34 linhas limpas, 0 sobras). Na produção é com ele.
 
+## A mensagem do recuperar aceita as variáveis da aba Chat (18/11/2026)
+
+O pedido dele: *"na aba não recuperados adicione as novas variaveis no texto que é enviado como
+{nome} ... que voce adicionou da outra aba chat do chatbot"*, corrigido em seguida por *"perdão
+corrija na aba recuperação"*. É a aba **Recuperação** — o texto que sai quando ele aperta
+"recuperar" numa linha vencida, e o lote "Não recuperados".
+
+**O que a mensagem conhece agora** (`variaveisMensagem` em `texto.ts`, os mesmos nomes da aba Chat):
+
+| chave | sai |
+|---|---|
+| `{nome}` | o nome cadastrado; sem nome, o usuário; sem usuário, `amigo(a)` |
+| `{usuario}` | o usuário do MC; sem usuário, o telefone |
+| `{telefone}` | `(11) 99999-8888`, com o 55 já resolvido |
+| `{vence}` | `vence em 02/12/2026 18:00` ou `venceu em 14/10/2026 18:00` |
+| `{expira}` | só a data gravada |
+| `{expirou}` | `há 1 mês e 4 dias` ou `ainda não venceu (em 15 dias)` |
+| `{dias}` | o mesmo texto da tela Acessos |
+| `{status}` | `ativo`, `parado` ou `sem cadastro` |
+| `{pix}` | a chave da Configuração, ou `(chave ainda não cadastrada)` |
+| `{site}` | o endereço do painel |
+| `{data}` / `{hora}` | o agora em Brasília |
+| `{link}` | o link curto daquele cliente (só existe no envio de verdade) |
+
+- **Duas grafias, um resultado.** A aba Chat escreve `{{nome}}` e as mensagens do painel sempre
+  escreveram `{nome}`. `preencherVariaveis` casa `\{\{?chave\}?\}` na mesma passada, então as duas
+  valem nos dois lugares e `{{ nome }}` com espaço também. O que **não** é chave conhecida fica
+  escrito no texto — ele vê o erro em vez de receber uma mensagem muda. `renderizar` da aba Chat
+  continua igual a antes (só a dupla grafia), porque as regras de lá já foram provadas assim.
+- **Avisos e renovação não mudaram.** `legendaAviso`/`legendaRenovacao` seguem no `preencher`
+  velho, com `{dias}`, `{pix}` e `{link}` e uma chave só. Ele pediu a Recuperação; mexer na agenda
+  das 6h sem pedido não.
+- **De onde vem o `{nome}`.** Consulta nova `dadosDoCliente(username)` em `banco.ts`: primeiro o
+  espelho do MC com `coalesce(nullif(trim(cliente_pix.nome),''), nullif(trim(mc_linhas.notes),''), '')`,
+  e, para quem não está no espelho, o telefone da agenda (`usuarios_criados_ip`) sem data nem
+  situação. A ordem nome-antes-de-nota é medida, não palpite: na cópia em 17/11/2026,
+  **16.382** linhas têm nome em `cliente_pix`, **921** têm nota no espelho e **nenhuma** tem os
+  dois — as notas são telefone mascarado (`Simone 129xxxx4466`), não nome. O mesmo `coalesce` foi
+  levado para `clientePorTelefone` (`chat.ts`), assim o `{nome}` da aba Chat também passou a sair
+  certo para essa multidão em vez de cair no usuário.
+- **A forma da ficha nunca muda.** Quem não é encontrado recebe os cinco campos vazios
+  (`nome: ""`, `status: null`, `expira: null`) e não faz consulta com string em branco. Com `status`
+  nulo a mensagem diz `sem cadastro` e com `expira` nulo diz `não está no nosso sistema` — não
+  inventa prazo.
+- **O número para onde se manda não mudou.** Continua sendo o da agenda (`telefonesPorUsuario()`
+  no botão de uma linha, o telefone do item na fila do lote); a ficha só entra no texto. O custo é
+  uma consulta pelo `username` por envio: 11 ms com a conexão aquecida.
+- **A tela explica na própria aba.** O campo da mensagem ganhou a lista de chaves, o aviso de que
+  `vence` é a única que nunca mente para um vencido (não escrever `vence em {expira}`) e a nota de
+  que o exemplo é um cliente de mentira — Maria da Silva, `r7000000007`, vencida há 1 mês e 4 dias.
+  A Configuração (item 4) aponta para a mesma lista em vez de repetir a explicação.
+
+Prova (nada saiu do banco da cópia, nenhum WhatsApp foi enviado):
+
+```bash
+# 34 checagens: as chaves, os três jeitos de falar do vencimento, as duas grafias,
+# as fichas reais (nome do PIX, nota do MC, só-agenda, inexistente)
+cd supabase/functions/peixeiro
+npx --yes deno run -A --env-file=../../../.env ../../../tools/_prova_recupera_variaveis.ts
+
+# ao vivo: o Pages com a ajuda nova e a função deployada respondendo recuperacao_ver
+npx --yes deno run -A --env-file=../../../.env ../../../tools/_prova_recupera_live.ts
+```
+
+O `_prova_recupera_live.ts` assina um token de sessão em memória (o mesmo HMAC do painel, sem
+imprimir nada) só para abrir a rota `recuperacao_ver` na cópia — a rota é leitura pura: o cliente do
+exemplo é de mentira e o link também, então nenhum encurtador é chamado e nenhuma mensagem sai. Duas
+checagens que falharam na primeira rodada e foram corrigidas antes de publicar: `{{banana}}` saía
+com uma chave só (o colapso das duas grafias antes da substituição) e a ficha de usuário inexistente
+vinha sem `status`/`expira`.
+
 ## Quando for para a produção
 
 Nada aqui está pronto para produção enquanto você não decidir. A ordem segura é:
