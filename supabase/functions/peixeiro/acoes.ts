@@ -2,6 +2,7 @@
 // para o Pages. As frases em português ficam no front; daqui só saem os códigos.
 import {
   chaveAvisadas,
+  dadosDoCliente,
   espelharLinhas,
   listarClientes,
   listarClientesPagina,
@@ -99,6 +100,7 @@ import { gravarPix, parsearPix } from "./pix.ts";
 import {
   b64ParaBytes,
   bytesParaB64,
+  type ClienteMensagem,
   formatarBrasilia,
   formatarTelefone,
   legendaAviso,
@@ -551,12 +553,21 @@ export async function telefonesMesclar(dados: Registro, ctx: Contexto): Promise<
 export async function recuperacaoVer(): Promise<Saida> {
   const conf = await obterConfig();
   if (!conf) return falha("banco", 500);
+  // O cliente do exemplo é de mentira de propósito: é ele que mostra o {nome}, o {vence} e o
+  // {link} trocados sem depender de existir alguém vencido na base. O {link} também é falso —
+  // criar link de verdade a cada abertura da aba loteria o encurtador. No envio, quem põe o
+  // link real é linkRecuperacao().
+  const exemplo = {
+    usuario: "r7000000007",
+    nome: "Maria da Silva",
+    telefone: "11999998888",
+    status: 0,
+    expira: new Date(Date.now() - 34 * 86_400_000),
+  };
   return ok({
     conf: resumoConfig(conf),
-    // O {link} do exemplo é de mentira de propósito: criar link de verdade a cada abertura da
-    // aba loteria o encurtador. No envio, quem põe o link real é linkRecuperacao().
-    exemplo: legendaRecuperar(conf, "há 1 mês e 4 dias",
-      `${baseEncurtador()}/${slugRecuperacao("usuario", "11999998888")}`),
+    exemplo: legendaRecuperar(conf, exemplo,
+      `${baseEncurtador()}/${slugRecuperacao(exemplo.usuario, exemplo.telefone)}`),
     tem_foto: Boolean(conf.recupera_photo_base64),
     foto_kb: Math.round((conf.recupera_photo_base64 || "").length / 1024),
     foto_nome: conf.recupera_photo_name,
@@ -631,9 +642,19 @@ export async function recuperarUm(dados: Registro, ctx: Contexto): Promise<Saida
   }
   const horas = expira ? (expira.getTime() - Date.now()) / 3_600_000 : 0;
   const dias = textoVencido(horas);
+  // O número continua sendo o da agenda (é dele que o botão sempre dependeu); a ficha só entra
+  // para dar nome, situação e a data gravada ao texto.
+  const ficha = await dadosDoCliente(username);
+  const cliente: ClienteMensagem = {
+    usuario: username,
+    nome: ficha.nome || "",
+    telefone,
+    status: ficha.status ?? null,
+    expira: expira || ficha.expira || null,
+  };
   const link = await linkRecuperacao(username, telefone);
   await registrarLink(link.slug, username, telefone);
-  const resultado = await enviarRecuperacao(conf, telefone, legendaRecuperar(conf, dias, link.url));
+  const resultado = await enviarRecuperacao(conf, telefone, legendaRecuperar(conf, cliente, link.url));
   if (!resultado.ok) {
     return falha(cotaEsgotada(resultado) ? "cota" : "enviar", 502, { detalhe: falhaGreenApi(resultado).slice(0, 220) });
   }
@@ -1058,11 +1079,19 @@ async function itemRecuperar(
   const expira = parseExpDate(String(item.exp_iso || ""));
   const horas = expira ? (expira.getTime() - Date.now()) / 3_600_000 : 0;
   const dias = textoVencido(horas);
+  const ficha = await dadosDoCliente(username);
+  const cliente: ClienteMensagem = {
+    usuario: username,
+    nome: ficha.nome || "",
+    telefone,
+    status: ficha.status ?? null,
+    expira: expira || ficha.expira || null,
+  };
   const link = await linkRecuperacao(username, telefone);
   await registrarLink(link.slug, username, telefone);
   let resultado: ResultadoEnvio;
   try {
-    resultado = await enviarRecuperacao(conf, telefone, legendaRecuperar(conf, dias, link.url));
+    resultado = await enviarRecuperacao(conf, telefone, legendaRecuperar(conf, cliente, link.url));
   } catch (exc) {
     resultado = { ok: false, error: String(exc).slice(0, 160) };
   }

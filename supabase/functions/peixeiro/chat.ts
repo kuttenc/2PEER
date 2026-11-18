@@ -5,14 +5,11 @@ import { obterConfig, type Conf } from "./banco.ts";
 import { aleatorio, consultar, consultar1, igual } from "./db.ts";
 import { enviarTexto, setWebhookUrl } from "./greenapi.ts";
 import { escreverCsv } from "./csv.ts";
-import { painelBase } from "./encurtador.ts";
 import {
-  formatarBrasilia,
-  formatarTelefone,
   normalizarWhatsapp,
   parseExpDate,
   semAcento,
-  textoVencido,
+  variaveisMensagem,
 } from "./texto.ts";
 
 type Bruto = Record<string, unknown>;
@@ -266,13 +263,17 @@ export async function exportarTreino(limite = 5000): Promise<{ csv: string; nome
 // ------------------------------------------------------------------- reconhecer o cliente
 
 /** O telefone é cliente nosso? mc_linhas (o espelho do painel MC) primeiro, e depois a lista
- *  de envios — o mesmo caminho que o botão recuperar usa. */
+ *  de envios — o mesmo caminho que o botão recuperar usa. O nome vem da lista colada na aba
+ *  Clientes quando ela existe (16.382 na cópia) e da nota do MC nos outros casos (921). */
 export async function clientePorTelefone(digitos: string): Promise<Cliente | null> {
   if (digitos.length < 10) return null;
   const linha = await consultar1(
     `select usuario, telefone, exp_date, status, nota from (
-       select username as usuario, telefone, exp_date, status, notes as nota, 1 as origem
-         from public.mc_linhas where telefone = $1
+       select m.username as usuario, m.telefone, m.exp_date, m.status,
+              coalesce(nullif(trim(p.nome), ''), nullif(trim(m.notes), ''), '') as nota, 1 as origem
+         from public.mc_linhas m
+         left join public.cliente_pix p on p.usuario = m.username
+        where m.telefone = $1
        union all
        select username, telefone, exp_date, null::integer, null::text, 2
          from public.usuarios_criados_ip where telefone = $1 and username <> ''
@@ -289,36 +290,17 @@ export async function clientePorTelefone(digitos: string): Promise<Cliente | nul
   };
 }
 
-/** As três maneiras de falar do vencimento, porque "{{expira}}" sozinho já enganou:
- *  `expira` é a DATA (vale para quem está no prazo e para quem venceu — é sempre o dia gravado),
- *  `expirou` é o TEMPO QUE PASSOU desde aquela data, e `vence` é a FRASE INTEIRA, que troca o
- *  verbo sozinha ("vence em ..."/"venceu em ..."). Quem escreve uma resposta deve usar `vence`;
- *  é a única que nunca fica mentindo para um cliente que já perdeu o acesso. */
+/** As variáveis da resposta do robô são as mesmas da mensagem de recuperação — quem escreve
+ *  uma regra e quem escreve a mensagem do "recuperar" usam os mesmos nomes. A régua das três
+ *  maneiras de falar do vencimento (`expira` / `expirou` / `vence`) está em `variaveisMensagem`. */
 export function variaveis(cliente: Cliente | null, conf: Conf, telefone: string): Record<string, string> {
-  const agora = new Date();
-  const horas = cliente?.expira ? (cliente.expira.getTime() - agora.getTime()) / 3_600_000 : null;
-  const data = cliente?.expira ? formatarBrasilia(cliente.expira) : "não está no nosso sistema";
-  const venceu = horas !== null && horas <= 0;
-  return {
-    nome: cliente?.nota || cliente?.usuario || "amigo(a)",
-    usuario: cliente?.usuario || formatarTelefone(telefone),
-    telefone: formatarTelefone(telefone),
-    expira: data,
-    expirou: horas === null
-      ? "não está no nosso sistema"
-      : venceu
-      ? textoVencido(horas)
-      : "ainda não venceu (" + textoVencido(horas) + ")",
-    vence: horas === null
-      ? "não está no nosso sistema"
-      : `${venceu ? "venceu" : "vence"} em ${data}`,
-    dias: horas === null ? "sem data de vencimento" : textoVencido(horas),
-    status: cliente ? (cliente.status === 1 ? "ativo" : "parado") : "sem cadastro",
-    pix: String(conf.aviso_pix_key || "").trim() || "(chave ainda não cadastrada)",
-    site: painelBase(),
-    data: formatarBrasilia(agora).split(" ")[0],
-    hora: formatarBrasilia(agora).split(" ")[1],
-  };
+  return variaveisMensagem(conf, {
+    nome: cliente?.nota || "",
+    usuario: cliente?.usuario || "",
+    telefone: cliente?.telefone || telefone,
+    status: cliente ? cliente.status : null,
+    expira: cliente?.expira ?? null,
+  });
 }
 
 /** {{nome}} vira o dado do cliente. O que a gente não conhece fica escrito do mesmo jeito,

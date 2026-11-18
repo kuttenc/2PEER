@@ -180,9 +180,11 @@
           <input type="number" name="renova_janela_dias" id="cfRenovaJanela" step="1" min="1" max="365" inputmode="decimal">
           <label>Mensagem automática de renovação (use {pix})</label>
           <textarea name="renova_legenda" id="cfRenovaLegenda"></textarea>
-          <label>Mensagem do botão &ldquo;recuperar&rdquo; (use {dias}, {pix} e {link})</label>
+          <label>Mensagem do botão &ldquo;recuperar&rdquo; (as mesmas variáveis da aba <a href="#recuperacao">Recuperação</a>)</label>
           <textarea name="recupera_legenda" id="cfRecuperaLegenda"></textarea>
-          <p class="muted">{dias} vira &ldquo;há 1 mês e 4 dias&rdquo;, do jeito que aparece na tela Acessos.</p>
+          <p class="muted">{dias} vira &ldquo;há 1 mês e 4 dias&rdquo;, do jeito que aparece na tela Acessos.
+            Ali também valem {nome}, {usuario}, {telefone}, {vence}, {expira}, {expirou}, {status}, {pix},
+            {site}, {data}, {hora} e {link} &mdash; a lista explicada está na aba Recuperação.</p>
         </div>
 
         <div class="card">
@@ -315,7 +317,20 @@
         <p class="muted">O botão fica na aba <a href="#acessos">Acessos</a>, nas linhas vencidas.
           Tudo aqui vale para todo clique, sem precisar mexer em mais nada.</p>
         <form id="formRecuperacao">
-          <label for="rcLegenda">Mensagem ({dias} vira &ldquo;há 1 mês e 4 dias&rdquo;, {pix} vira a chave PIX da Configuração, {link} vira o link curto com o usuário e o telefone daquele cliente)</label>
+          <label for="rcLegenda">Mensagem</label>
+          <p class="muted" style="margin-top:0">Campos que viram dado do cliente na hora do envio:
+            <code>{nome}</code> <code>{usuario}</code> <code>{telefone}</code>
+            <code>{vence}</code> <code>{expira}</code> <code>{expirou}</code>
+            <code>{dias}</code> <code>{status}</code> <code>{pix}</code>
+            <code>{site}</code> <code>{data}</code> <code>{hora}</code> <code>{link}</code>.
+            São os mesmos nomes da aba <a href="#chat">Chat</a> e dá para escrever com uma chave
+            (&ldquo;{nome}&rdquo;) ou com duas (&ldquo;{{nome}}&rdquo;); o resultado é o mesmo.</p>
+          <p class="muted"><b>{vence}</b> é o que usar na frase: sai &ldquo;vence em 15/11/2026
+            18:00&rdquo; para quem está no prazo e &ldquo;venceu em 10/11/2026 18:00&rdquo; para quem
+            já perdeu o acesso. <b>{expira}</b> é só a data gravada (vale para os dois) e
+            <b>{expirou}</b> é quanto tempo faz (&ldquo;há 2 dias&rdquo;, ou &ldquo;ainda não
+            venceu&rdquo;). Não escreva &ldquo;vence em {expira}&rdquo; &mdash; para o vencido a frase
+            fica mentindo. <b>{link}</b> é o link curto com o usuário e o telefone daquele cliente.</p>
           <textarea id="rcLegenda" name="recupera_legenda" rows="4"></textarea>
           <label for="rcFoto">Foto que vai sempre junto (jpg ou png, até 1,5 MB) &mdash; escolher o arquivo já liga o envio</label>
           <input type="file" id="rcFoto" name="foto" accept="image/*">
@@ -348,7 +363,9 @@
 
       <div class="card">
         <h2>Assim o cliente vai receber</h2>
-        <p class="muted">Texto de exemplo, com {dias} trocado por &ldquo;há 1 mês e 4 dias&rdquo;:</p>
+        <p class="muted">Exemplo com um cliente de mentira &mdash; Maria da Silva, <code>r7000000007</code>,
+          vencida h&aacute; 1 m&ecirc;s e 4 dias, PIX da Configura&ccedil;&atilde;o. O link aqui &eacute;
+          de demonstra&ccedil;&atilde;o: no envio sai o link curto real daquele cliente.</p>
         <pre class="exemplo" id="rcExemplo"></pre>
       </div>
     </section>

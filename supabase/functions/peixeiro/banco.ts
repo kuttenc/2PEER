@@ -1,7 +1,7 @@
 // Leitura e escrita das tabelas do painel: configuração, telefones, espelho do MC e os
 // registros de "já avisei". É o que o automate_mcapi.py fazia com psycopg, agora em SQL puro.
 import { aleatorio, confereSenha, consultar, consultar1, hashSenha, igual } from "./db.ts";
-import { formatarBrasilia, isoUtc, normalizarWhatsapp, parseExpDate, telefoneValido, textoVencido } from "./texto.ts";
+import { formatarBrasilia, isoUtc, normalizarWhatsapp, parseExpDate, telefoneValido, textoVencido, type ClienteMensagem } from "./texto.ts";
 import { getLinhas, tokenDoPainel } from "./mcapi.ts";
 
 export type Conf = {
@@ -210,6 +210,45 @@ export async function telefonesPorUsuario(): Promise<Record<string, string>> {
     if (nome && !(nome in saida)) saida[nome] = String(linha.telefone || "").trim();
   }
   return saida;
+}
+
+/** O que a mensagem do "recuperar" sabe daquele cliente. O nome vem da lista colada na aba
+ *  Clientes (`cliente_pix`) e, quando não existe, da nota do espelho do MC. Medido na cópia em
+ *  17/11/2026: 16.382 linhas têm nome em `cliente_pix`, 921 têm nota no espelho e nenhuma tem os
+ *  dois — por isso essa é a ordem, e não o contrário. Quem não está no espelho ainda tem o
+ *  telefone da agenda, mas fica sem data e sem situação (a mensagem usa o fallback). */
+export async function dadosDoCliente(username: string): Promise<ClienteMensagem & { usuario: string }> {
+  const nome = (username || "").trim();
+  // Sempre a mesma forma, com ou sem consulta: quem monta a mensagem lê os cinco campos.
+  const vazio: ClienteMensagem & { usuario: string } = { usuario: nome, nome: "", telefone: "", status: null, expira: null };
+  if (!nome) return vazio;
+  const linha = await consultar1(
+    `with q as (
+       select 1 as origem,
+              coalesce(nullif(trim(p.nome), ''), nullif(trim(m.notes), ''), '') as nome,
+              coalesce(nullif(m.telefone, ''), '') as telefone,
+              m.status, m.exp_date
+         from public.mc_linhas m
+         left join public.cliente_pix p on p.usuario = m.username
+        where m.username = $1
+       union all
+       select 2, coalesce(nullif(trim(p.nome), ''), ''), coalesce(nullif(u.telefone, ''), ''), null, null
+         from (select username, telefone from public.usuarios_criados_ip
+                where username = $1 and coalesce(telefone, '') <> ''
+                order by updated_at desc limit 1) u
+         left join public.cliente_pix p on p.usuario = u.username
+     )
+     select nome, telefone, status, exp_date from q order by origem limit 1`,
+    [nome],
+  );
+  if (!linha) return vazio;
+  return {
+    usuario: nome,
+    nome: String(linha.nome || ""),
+    telefone: String(linha.telefone || ""),
+    status: linha.status === null || linha.status === undefined ? null : Number(linha.status),
+    expira: linha.exp_date ? parseExpDate(String(linha.exp_date)) : null,
+  };
 }
 
 export type TelefoneResultado = {

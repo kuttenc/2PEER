@@ -1,6 +1,7 @@
 // Datas, textos de dias e telefone: as mesmas regras do automate_mcapi.py, sem fuso surprises.
 // Brasília não tem horário de verão desde 2019, então o deslocamento fixo -03:00 bate com o
 // ZoneInfo("America/Sao_Paulo") que o site usa hoje.
+import { painelBase } from "./encurtador.ts";
 
 const enc = new TextEncoder();
 
@@ -103,6 +104,60 @@ function preencher(
   return saida;
 }
 
+export type ClienteMensagem = {
+  nome?: string;
+  usuario?: string;
+  telefone?: string;
+  status?: number | null;
+  expira?: Date | null;
+};
+
+/** O que uma mensagem pode usar no lugar de um dado do cliente. Os nomes são os mesmos da aba
+ *  Chat, para ele escrever uma vez e valer nos dois lugares. As três maneiras de falar do
+ *  vencimento existem porque `{{expira}}` sozinho já enganou: `expira` é a DATA gravada (vale
+ *  para quem está no prazo e para quem venceu), `expirou` é o TEMPO QUE PASSOU, e `vence` é a
+ *  FRASE INTEIRA, que troca o verbo sozinha — é a única que nunca mente para um vencido. */
+export function variaveisMensagem(
+  conf: Record<string, unknown>,
+  cliente: ClienteMensagem,
+  extras: Record<string, string> = {},
+  agora: Date = new Date(),
+): Record<string, string> {
+  const horas = cliente.expira ? (cliente.expira.getTime() - agora.getTime()) / 3_600_000 : null;
+  const venceu = horas !== null && horas <= 0;
+  const data = cliente.expira ? formatarBrasilia(cliente.expira) : "não está no nosso sistema";
+  const telefone = formatarTelefone(cliente.telefone || "");
+  return {
+    nome: cliente.nome || cliente.usuario || "amigo(a)",
+    usuario: cliente.usuario || telefone,
+    telefone,
+    expira: data,
+    expirou: horas === null
+      ? "não está no nosso sistema"
+      : venceu ? textoVencido(horas) : `ainda não venceu (${textoVencido(horas)})`,
+    vence: horas === null ? "não está no nosso sistema" : `${venceu ? "venceu" : "vence"} em ${data}`,
+    dias: horas === null ? "sem data de vencimento" : textoVencido(horas),
+    status: cliente.status === null || cliente.status === undefined
+      ? "sem cadastro"
+      : Number(cliente.status) === 1 ? "ativo" : "parado",
+    pix: String(conf.aviso_pix_key || "").trim() || "(chave ainda não cadastrada)",
+    site: painelBase(),
+    data: formatarBrasilia(agora).split(" ")[0],
+    hora: formatarBrasilia(agora).split(" ")[1],
+    ...extras,
+  };
+}
+
+/** A aba Chat escreve `{{nome}}` e as mensagens do painel sempre escreveram `{nome}`: aqui os
+ *  dois valem. O que não é variável conhecida fica escrito do mesmo jeito no texto, para ele ver
+ *  que errou a chave em vez de sair uma mensagem muda. */
+export function preencherVariaveis(modelo: string, v: Record<string, string>): string {
+  return String(modelo || "").replace(/\{\{?\s*([a-z0-9_]+)\s*\}?\}/gi, (tudo, chave: string) => {
+    const valor = v[chave.toLowerCase()];
+    return valor === undefined ? tudo : valor;
+  });
+}
+
 export function legendaAviso(conf: Record<string, unknown>, textoDias: string): string {
   return preencher(String(conf.aviso_legenda || AVISO_LEGENDA_PADRAO), conf, textoDias);
 }
@@ -111,8 +166,18 @@ export function legendaRenovacao(conf: Record<string, unknown>, textoDias: strin
   return preencher(String(conf.renova_legenda || RENOVA_LEGENDA_PADRAO), conf, textoDias);
 }
 
-export function legendaRecuperar(conf: Record<string, unknown>, textoDias: string, link = ""): string {
-  return preencher(String(conf.recupera_legenda || RECUPERA_LEGENDA_PADRAO), conf, textoDias, { link });
+/** A mensagem do "recuperar" (botão da linha e lote) é a única que conhece o cliente inteiro:
+ *  ela sai com nome, usuário, telefone, situação e o link curto daquele cliente. */
+export function legendaRecuperar(
+  conf: Record<string, unknown>,
+  cliente: ClienteMensagem,
+  link = "",
+  agora: Date = new Date(),
+): string {
+  return preencherVariaveis(
+    String(conf.recupera_legenda || RECUPERA_LEGENDA_PADRAO),
+    variaveisMensagem(conf, cliente, { link }, agora),
+  );
 }
 
 /** dd/mm/aa ou dd/mm/aaaa no horário de Brasília, com ou sem hora. O CSV dele e a tabela
