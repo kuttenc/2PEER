@@ -1,8 +1,10 @@
 # Painel sem Render: Pages + Edge Function
 
-Este documento cobre a cópia de testes (`kuttenc.github.io/2PEER`). Nada aqui mexe no
-serviço do Render nem no banco de produção: enquanto você não trocar o `config.js` e os
-secrets da função, o site principal continua exatamente como está hoje.
+Este documento cobre o painel de `kuttenc.github.io/2PEER`, que desde 18/11/2026 roda no
+projeto `ggufcvrwctieacvbbwim` (o mesmo do Urtador) em vez da cópia `bzgtptbwcvwpgnhbctjn`.
+Nada aqui mexe no serviço do Render nem no banco de produção: o site principal continua
+exatamente como está hoje. Veja "Onde cada projeto está hoje" e "A virada para o projeto do
+Urtador".
 
 ## O que mudou de arquitetura
 
@@ -29,11 +31,44 @@ Arquivos novos:
 - `assets/resvg_bg.wasm` e `assets/DejaVuSans-Bold.ttf` — a função baixa estes dois arquivos
   daqui para desenhar a imagem do aviso de vencimento. Sem eles, o aviso sai só com texto.
 
-## Como publicar de novo (cópia)
+## Onde cada projeto está hoje
+
+| Projeto Supabase | Ref | O que roda nele |
+| --- | --- | --- |
+| **`ggufcvrwctieacvbbwim`** (kuttenc's Project, us-east-2) | o do painel desde 18/11/2026 | `peixeiro` (este painel) **e** `kutt-short-links` (o Urtador) |
+| `bzgtptbwcvwpgnhbctjn` ("painel-2peer", sa-east-1) | a cópia antiga, ainda no ar | backup/rollback: função e banco intocados |
+| `suipuquznkksgrkchqrv` ("wolverineifix") | produção do site do Render | não mexe neste painel |
+
+O painel usa o projeto do Urtador porque os dois são seus e o free resetou a conta de banda
+lá (a cópia tinha comido os 9,88 GB de egress — ver a seção do lote). As tabelas do painel
+não se misturam com as do Urtador: as 20 tabelas do painel pertencem ao papel
+**`peixeiro_2peer`**, e o `kutt_*`/`rental_*` continua do `postgres` do Urtador. O banco do
+painel fala com essa função pela string `DATABASE_URL = postgres://peixeiro_2peer.ggufcvrwctieacvbbwim:***@aws-0-us-east-2.pooler.supabase.com:5432/postgres?sslmode=require`, que é um secret.
+
+A senha do papel está em `.env` (`PEIXEIRO_2PEER_DB_SENHA`), arquivo que nunca vai para o git.
+
+## Como publicar de novo (projeto do painel)
 
 ```bash
 cd 2peer
-# o token (sbp_...) fica no .env como SUPABASE_PROJECT_2peer; o CLI só aceita no formato sbp_
+# o token (sbp_...) fica no .env como SUPABASE_TOKEN_NOVO; o CLI só aceita no formato sbp_
+export SUPABASE_ACCESS_TOKEN=$(grep -oE 'SUPABASE_TOKEN_NOVO=.*' .env | cut -d= -f2 | tr -d '\r')
+# só quando os endereços mudam:
+npx supabase secrets set \
+  PAINEL_ORIGENS=https://kuttenc.github.io \
+  PAINEL_ASSETS_URL=https://kuttenc.github.io/2PEER/assets \
+  --project-ref ggufcvrwctieacvbbwim
+npx supabase functions deploy peixeiro \
+  --no-verify-jwt --yes --project-ref ggufcvrwctieacvbbwim
+```
+
+`supabase.exe` em `C:/Users/ps4la/bin` funciona no lugar do `npx` e não baixa nada (a máquina
+dele é apertada). O CLI desta versão não tem `--remote=`.
+
+## Como publicar de novo (cópia, se precisar voltar atrás)
+
+```bash
+cd 2peer
 export SUPABASE_ACCESS_TOKEN=$(grep -oE 'SUPABASE_PROJECT_2peer=.*' .env | cut -d= -f2 | tr -d '\r')
 # só quando os endereços mudam (a cópia hoje já tem estes dois gravados):
 npx supabase secrets set \
@@ -1232,6 +1267,82 @@ A checagem mais útil é a que não escreve nada: o `index.ts` devolve `404 acao
 olhar o token, então `lote_pular`, `bloqueados_ver` e `bloqueados_desbloquear` chamados sem sessão
 voltando `401 sem_sessao` prova que a rota está no build lá de cima, sem precisar montar fila, bloquear
 número nem disparar envio.
+
+## A virada para o projeto do Urtador (18/11/2026)
+
+O painel saiu do projeto `bzgtptbwcvwpgnhbctjn` (a cópia, que comeu os 9,88 GB de banda) e
+passou a rodar em `ggufcvrwctieacvbbwim`. Feito tudo no servidor, sem baixar dump nenhum na
+máquina dele (900 MB livres): uma ponte `postgres_fdw` dentro do projeto novo lê o banco da
+cópia, e o `insert ... select` atravessa os dados por lá.
+
+Os arquivos do caminho, todos em `tools/`, são a receita completa:
+
+1. `_novo_role.sql` — cria o papel `peixeiro_2peer` (dono das 20 tabelas do painel) e dá
+   `grant peixeiro_2peer to postgres` para conseguir fazer `set role` dentro de uma chamada.
+   Criar papel em vez de resetar a senha do `postgres` de propósito: o `kutt-short-links` do
+   Urtador usa a senha antiga, e resetar quebraria o encurtador dele.
+2. `_novo_fdw.sql` — sobe o `postgres_fdw`, o server `copia_2peer` apontando para o pooler da
+   cópia (`aws-0-sa-east-1.pooler.supabase.com:5432`, `sslmode require`) e o schema `mig` com
+   `import foreign schema public`. A senha da ponte vem do `DATABASE_URL` do `.env`; user
+   mapping para `postgres` **e** para `peixeiro_2peer`.
+3. `_novo_esquema.sql` (gerado, não guardado) — o `ESQUEMA` de
+   `supabase/functions/peixeiro/db.ts` executado como `peixeiro_2peer`:
+   `{ printf 'set role peixeiro_2peer;\n'; sed -n '118,446p' supabase/functions/peixeiro/db.ts; } > tools/_novo_esquema.sql`
+   (as linhas exatas mudam quando o `ESQUEMA` cresce — confira onde começa e termina o
+   template literal). Mais o `create table if not exists site_acessos`, que o `site.ts` já
+   cria sozinho na primeira chamada.
+4. `_novo_diff.sql` — compara **coluna por coluna** `information_schema.columns` de `public`
+   com `mig` (as 20 tabelas). Tem que voltar `[]`. Se a cópia tiver coluna que o esquema do
+   arquivo não cria, é aqui que aparece.
+5. `_novo_reload.sql` — a carga: `truncate` das 20 tabelas + `insert into public.X select *
+   from mig.X` + o `setval` de toda sequência acima do maior id copiado. **Rode de novo
+   imediatamente antes de virar o `config.js`** e outra vez ao voltar para a cópia: é o que
+   traz as linhas escritas na cópia depois da última carga. Sem o `setval`, o primeiro insert
+   novo bate em chave duplicada.
+6. `_novo_conferencia.sql` — `count(*)` de cada tabela no novo contra o `mig`. Igual é o
+   esperado.
+7. `_novo_secrets.js` — os 6 secrets do painel no projeto novo (o `DATABASE_URL` do papel,
+   MC, Urtador base, origens, assets). A API de secrets **não tem `PUT`** e devolve só hash,
+   então não dá para conferir valor: confira o `http 200` e a lista de nomes
+   (`_novo_secretnames.js` faz o conjunto diferença com a cópia).
+
+Deploy + prova (nada de envio, nada de login com senha adivinhada — errar `entrar` trava o
+IP dele nas tentativas):
+
+```bash
+cd 2peer
+C:/Users/ps4la/bin/supabase.exe functions deploy peixeiro --no-verify-jwt --yes --project-ref ggufcvrwctieacvbbwim
+node tools/_prova_novo_live.js
+```
+
+A prova (`_prova_novo_live.js`) usa só actions que não mandam nada: `ping`, uma ação que não
+existe (404 antes do 401, o que confere o build), as rotas novas sem sessão (401 `sem_sessao`)
+e `links_destino` com uma linha de teste criada **e apagada** no banco novo — o slug
+`prova-migracao-novo` não é de cliente nenhum, então nenhum clique cai nele. Ela também
+confere que a função da cópia **não** vê essa linha: cada uma está presa no seu banco.
+
+O que a virada **não** levou, porque a API de secrets não devolve valor:
+
+- `URTADOR_TOKEN` — a sessão do login por WhatsApp no Urtador, que estava gravada como secret
+  da cópia. Sem ele o painel funciona, mas o link de recuperação sai sem encurtar na conta
+  dele (ou sai comprido, se o `create` recusar visita). Para repor:
+
+  ```bash
+  cd 2peer && export SUPABASE_ACCESS_TOKEN=$(grep -oE 'SUPABASE_TOKEN_NOVO=.*' .env | cut -d= -f2 | tr -d '\r')
+  npx supabase secrets set URTADOR_TOKEN=<token> --project-ref ggufcvrwctieacvbbwim
+  ```
+
+- `PAINEL_FUNCAO_URL` — só importa quando religar o webhook do GreenAPI (tarefa do chat): o
+  `chat_instalar` monta o endereço da função a partir dele. Antes de religar, grave
+  `PAINEL_FUNCAO_URL=https://ggufcvrwctieacvbbwim.supabase.co/functions/v1/peixeiro`; se
+  esquecer, o webhook do robô continua apontando para a cópia.
+
+Roda de volta: o banco e a função da cópia continuam inteiros e no ar, parados no ponto da
+última carga. Voltar é trocar uma linha — `painel/config.js` de novo para
+`https://bzgtptbwcvwpgnhbctjn.supabase.co/functions/v1/peixeiro` — e dar push; se tiver
+ficado mexendo no painel novo nesse meio tempo, o caminho inverso do `_novo_reload.sql`
+(troque `public` por `mig` e vice-versa, com a ponte apontada para o projeto novo) traz as
+linhas de volta.
 
 ## Quando for para a produção
 

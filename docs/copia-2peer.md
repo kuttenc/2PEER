@@ -11,6 +11,11 @@ teste ligada. Nada do que acontece aqui chega num cliente de verdade.
 | Banco | projeto Supabase `bzgtptbwcvwpgnhbctjn`, só desta cópia |
 | Serviço no Render | `o-peixeiro-2peer`, plano free, Oregon |
 
+> 18/11/2026: o painel do Pages (`kuttenc.github.io/2PEER/painel/`) foi para o projeto
+> `ggufcvrwctieacvbbwim`. Este `bzgtptbwcvwpgnhbctjn` continua o banco da cópia **e** do
+> serviço do Render acima — por isso ele não é mais o banco do painel no ar, e sim o
+> rollback. Ver `docs/painel-sem-render.md`, seção "A virada para o projeto do Urtador".
+
 ## Publicar uma mudança
 
 O Render não recebe webhook de repositório público: depois do push, é preciso entrar em
