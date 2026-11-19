@@ -1321,7 +1321,8 @@ e `links_destino` com uma linha de teste criada **e apagada** no banco novo — 
 `prova-migracao-novo` não é de cliente nenhum, então nenhum clique cai nele. Ela também
 confere que a função da cópia **não** vê essa linha: cada uma está presa no seu banco.
 
-O que a virada **não** levou, porque a API de secrets não devolve valor:
+O que a virada **não** levou, porque a API de secrets não devolve valor de secret nenhum
+(só o nome e um hash):
 
 - `URTADOR_TOKEN` — a sessão do login por WhatsApp no Urtador, que estava gravada como secret
   da cópia. Sem ele o painel funciona, mas o link de recuperação sai sem encurtar na conta
@@ -1332,10 +1333,10 @@ O que a virada **não** levou, porque a API de secrets não devolve valor:
   npx supabase secrets set URTADOR_TOKEN=<token> --project-ref ggufcvrwctieacvbbwim
   ```
 
-- `PAINEL_FUNCAO_URL` — só importa quando religar o webhook do GreenAPI (tarefa do chat): o
-  `chat_instalar` monta o endereço da função a partir dele. Antes de religar, grave
-  `PAINEL_FUNCAO_URL=https://ggufcvrwctieacvbbwim.supabase.co/functions/v1/peixeiro`; se
-  esquecer, o webhook do robô continua apontando para a cópia.
+`PAINEL_FUNCAO_URL` já foi gravado no projeto novo
+(`https://ggufcvrwctieacvbbwim.supabase.co/functions/v1/peixeiro`), porque o valor é público:
+é o endereço que o `chat_instalar` entrega para o GreenAPI chamar de volta. Sem ele, ao
+religar o webhook do robô (tarefa do chat) a chamada continuaria caindo na cópia.
 
 Roda de volta: o banco e a função da cópia continuam inteiros e no ar, parados no ponto da
 última carga. Voltar é trocar uma linha — `painel/config.js` de novo para
