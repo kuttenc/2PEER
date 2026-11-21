@@ -391,6 +391,9 @@ export function interpretar(bruto: Bruto): { mensagem?: Mensagem; motivo?: strin
     typeof corpo === "string" ? corpo : "",
     caminho(corpo, "content", "text"),
     caminho(corpo, "content", "caption"),
+    caminho(corpo, "messageData", "textMessageData", "textMessage"),
+    caminho(corpo, "messageData", "extendedTextMessageData", "text"),
+    caminho(corpo, "senderData", "textMessage"),
     caminho(corpo, "data", "textMessage", "text"),
     caminho(corpo, "textMessage", "text"),
     caminho(corpo, "_data", "textMessage", "text"),
@@ -406,13 +409,18 @@ export function interpretar(bruto: Bruto): { mensagem?: Mensagem; motivo?: strin
   const chatId = primeira([
     caminho(corpo, "chatId"),
     caminho(corpo, "messageId", "chat_id"),
+    caminho(corpo, "senderData", "chatId"),
+    caminho(corpo, "senderData", "sender"),
     bruto.chatId,
+    bruto.senderData,
     caminho(corpo, "data", "chatId"),
     caminho(corpo, "_data", "chatId"),
   ]);
   const de = primeira([
     chatId,
     caminho(corpo, "senderDeviceId"),
+    caminho(corpo, "senderData", "sender"),
+    caminho(corpo, "senderData", "chatId"),
     caminho(corpo, "data", "sender"),
     bruto.senderPhone,
     caminho(corpo, "messageId", "device_id"),
