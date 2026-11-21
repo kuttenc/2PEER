@@ -392,7 +392,10 @@ export function variaveisDaConta(
 
 /** A chave do painel é trocada toda vez que ele pede MENU. Assim o link antigo para de servir
  *  e a próxima resposta mostra somente o endereço atual do estabelecimento. */
-async function textoComPainel(conta: Conta, texto: string): Promise<string> {
+async function textoComPainel(
+  conta: Conta,
+  texto: string,
+): Promise<{ texto: string; texto2: string }> {
   const chave = crypto.randomUUID().replace(/-/g, "") +
     crypto.randomUUID().replace(/-/g, "").slice(0, 12);
   await consultar(
@@ -404,9 +407,15 @@ async function textoComPainel(conta: Conta, texto: string): Promise<string> {
   );
   const publicado = await publicarPainelBarbearia(conta.telefone, chave);
   if (!publicado.ok || !publicado.url) {
-    return `${texto}\n\nPainel privado ainda não ficou disponível. Digite /menu novamente para tentar atualizar o endereço.`;
+    return {
+      texto,
+      texto2: "Painel privado ainda não ficou disponível. Digite /menu novamente para tentar atualizar o endereço.",
+    };
   }
-  return `${texto}\n\nPara editar o site e o atendimento em um painel simples, clique aqui:\n${publicado.url}\n\nEste endereço é novo e substitui o anterior.`;
+  return {
+    texto,
+    texto2: `Para editar o site e o atendimento em um painel simples, clique aqui:\n${publicado.url}\n\nEste endereço é novo e substitui o anterior.`,
+  };
 }
 
 // ------------------------------------------------------------------ relógio de Brasília
@@ -889,7 +898,7 @@ async function pendenciaViva(telefone: string): Promise<Pendencia | null> {
 
 // ------------------------------------------------------------------ a conversa
 
-export type Resposta = { texto: string; tipo: string };
+export type Resposta = { texto: string; texto2?: string; tipo: string };
 
 const SIM = ["sim", "s", "confirmo", "confirmar", "pode", "isso", "ok"];
 const NAO = ["nao", "n", "cancela", "cancelar", "deixa"];
@@ -968,14 +977,13 @@ export async function responder(
     if (sub === "contabilidade") {
       const texto = `Menu de contabilidade:\n${MENU_CONTROLE_PADRAO}\n\n` +
         `Para voltar ao menu geral, digite /menu.\nPara editar a página, digite /menu pagina.`;
-      return {
-        texto: await textoComPainel(conta, texto),
-        tipo: "menu_contabilidade",
-      };
+      const duas = await textoComPainel(conta, texto);
+      return { texto: duas.texto, texto2: duas.texto2, tipo: "menu_contabilidade" };
     }
     if (sub === "pagina" || sub === "site") {
       const texto = await guiaDaPagina(conta, textos);
-      return { texto: await textoComPainel(conta, texto), tipo: "guia_pagina" };
+      const duas = await textoComPainel(conta, texto);
+      return { texto: duas.texto, texto2: duas.texto2, tipo: "guia_pagina" };
     }
     if (sub === "agenda") {
       const texto = `Menu da agenda:\n  AGENDA — lista os próximos horários\n` +
@@ -984,10 +992,8 @@ export async function responder(
           `  AVISA 1 — avisa o cliente\n  REMARCAR 1 sexta 16h — muda o horário\n` +
           `  FEITO 1 — registra o atendimento\n  CANCELAR 1 — cancela o horário\n\n` +
           `Para voltar ao menu geral, digite /menu.\nPara ver contabilidade, digite /menu contabilidade.`;
-      return {
-        texto: await textoComPainel(conta, texto),
-        tipo: "menu_agenda",
-      };
+      const duas = await textoComPainel(conta, texto);
+      return { texto: duas.texto, texto2: duas.texto2, tipo: "menu_agenda" };
     }
     if (sub === "funcionario") {
       const texto = textos.ajuda_funcionario ||
@@ -995,10 +1001,8 @@ export async function responder(
           `  LIVRE amanhã — horários disponíveis\n` +
           `  AGENDAR João 11999998888 sábado 15h — marca no seu nome\n\n` +
           `Para voltar ao menu geral, digite /menu.`;
-      return {
-        texto: await textoComPainel(conta, texto),
-        tipo: "menu_funcionario",
-      };
+      const duas = await textoComPainel(conta, texto);
+      return { texto: duas.texto, texto2: duas.texto2, tipo: "menu_funcionario" };
     }
     const baseMenu = textos.menu || MENU_CONTROLE_PADRAO;
     const jaTemAtalhos = baseMenu.includes("/menu contabilidade") ||
@@ -1008,18 +1012,14 @@ export async function responder(
       : `${baseMenu}\n\nAtalhos rápidos:\n  /menu contabilidade — lançamentos, preços e relatórios\n` +
         `  /menu pagina — nome, endereço, horários e dados da página\n` +
         `  /menu agenda — marcar e cuidar dos horários\n  /menu funcionario — menu do profissional`;
-    return {
-      texto: await textoComPainel(conta, texto),
-      tipo: "menu",
-    };
+    const duas = await textoComPainel(conta, texto);
+    return { texto: duas.texto, texto2: duas.texto2, tipo: "menu" };
   }
   if (t === "ajuda" || t === "controle" || t === "oi" || t === "ola") {
     const texto = `${textos.menu || MENU_CONTROLE_PADRAO}\n\n` +
       `Atalhos rápidos:\n  /menu contabilidade\n  /menu pagina\n  /menu agenda\n  /menu funcionario`;
-    return {
-      texto: await textoComPainel(conta, texto),
-      tipo: "menu",
-    };
+    const duas = await textoComPainel(conta, texto);
+    return { texto: duas.texto, texto2: duas.texto2, tipo: "menu" };
   }
   if (t === "catalogo" || t.startsWith("catalogo ")) {
     return { texto: textoCatalogo(catalogoConta), tipo: "catalogo" };
@@ -3042,6 +3042,15 @@ async function devolver(
   const envio = await enviarTexto(conf, para, corpo);
   if (envio.ok) {
     await registrarMensagem(para, "saida", corpo, `${carimbo}-${para}-${Date.now()}-${aleatorio(4)}`, textos.dias_retencao);
+  }
+  if (resposta.texto2) {
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    const segunda = preencherVariaveis(resposta.texto2, variaveisDaConta(conf, conta));
+    const envio2 = await enviarTexto(conf, para, segunda);
+    if (envio2.ok) {
+      await registrarMensagem(para, "saida", segunda,
+        `${carimbo}-painel-${para}-${Date.now()}-${aleatorio(4)}`, textos.dias_retencao);
+    }
   }
   return {
     status: 200,
