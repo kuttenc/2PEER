@@ -2226,6 +2226,7 @@ async function mostrarSite(conta: Conta, textos: Textos): Promise<Resposta> {
 export async function importarPaginaAppBarber(
   telefoneBruto: string,
   urlBruto: string,
+  conteudoBruto = "",
 ): Promise<{ ok: boolean; telefone: string; nome: string; slug: string; servicos: number;
   horarios: number; pagamentos: number; publicado: boolean; url: string; erro?: string }> {
   const telefone = normalizarWhatsapp(telefoneBruto);
@@ -2239,35 +2240,45 @@ export async function importarPaginaAppBarber(
   }
   url = url.replace(/\/+$/, "");
 
-  let html = "";
-  try {
-    const response = await fetch(url, {
-      headers: { "user-agent": "Mozilla/5.0 (compatible; OPeixeiro/1.0)" },
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!response.ok) {
+  let texto = String(conteudoBruto || "").trim();
+  let nome = conta.nome || "Estabelecimento";
+
+  if (!texto) {
+    let html = "";
+    try {
+      const response = await fetch(url, {
+        headers: { "user-agent": "Mozilla/5.0 (compatible; OPeixeiro/1.0)" },
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!response.ok) {
+        return { ok: false, telefone, nome: conta.nome, slug: conta.slug, servicos: 0, horarios: 0,
+          pagamentos: 0, publicado: false, url: "", erro: `pagina_http_${response.status}` };
+      }
+      html = await response.text();
+    } catch (exc) {
       return { ok: false, telefone, nome: conta.nome, slug: conta.slug, servicos: 0, horarios: 0,
-        pagamentos: 0, publicado: false, url: "", erro: `pagina_http_${response.status}` };
+        pagamentos: 0, publicado: false, url: "", erro: "pagina_inacessivel" };
     }
-    html = await response.text();
-  } catch (exc) {
-    return { ok: false, telefone, nome: conta.nome, slug: conta.slug, servicos: 0, horarios: 0,
-      pagamentos: 0, publicado: false, url: "", erro: "pagina_inacessivel" };
+
+    const title = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "")
+      .replace(/<[^>]+>/g, "").replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim();
+    nome = (title.split(/\s+-\s+/)[0] || conta.nome || "Estabelecimento").trim().slice(0, 120);
+    texto = html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, "\n")
+      .replace(/&nbsp;|&#160;/gi, " ")
+      .replace(/&amp;/gi, "&")
+      .replace(/&#039;|&apos;/gi, "'")
+      .replace(/&quot;/gi, '"')
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n");
   }
 
-  const title = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "")
-    .replace(/<[^>]+>/g, "").replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim();
-  const nome = (title.split(/\s+-\s+/)[0] || conta.nome || "Estabelecimento").trim().slice(0, 120);
-  const texto = html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<[^>]+>/g, "\n")
-    .replace(/&nbsp;|&#160;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&#039;|&apos;/gi, "'")
-    .replace(/&quot;/gi, '"')
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n");
+  if (conteudoBruto) {
+    const nomeLinha = texto.match(/(?:^|\n)\s*([A-ZÀ-Ý][A-ZÀ-Ý0-9 &.'()-]{4,100})\s*\n\s*Serviços(?:\n|$)/i)?.[1]?.trim();
+    if (nomeLinha) nome = nomeLinha.slice(0, 120);
+  }
 
   const telefonePublicado = texto.match(/(?:\(\d{2}\)\s*)?[\s]?\d{4,5}-?\d{4}/)?.[0] || "";
   const telefonePublico = telefonePublicado
@@ -2307,15 +2318,15 @@ export async function importarPaginaAppBarber(
   }
 
   const servicos: Array<{ nome: string; preco: number; duracao_min: number }> = [];
-  for (const match of texto.matchAll(/([A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9 +.&/-]{1,100})[\s:]*R\$\s*([0-9.]+(?:,[0-9]{1,2})?)[\s\S]{0,80}?(\d{1,3})\s*min/gi)) {
-    const nome = String(match[1] || "").replace(/\n/g, " ").replace(/\s+/g, " ").trim()
+  for (const match of texto.matchAll(/(?:^|\n)\s*([A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9 +.&/'()-]{1,100})\s*\n+\s*R\$\s*([0-9.]+(?:,[0-9]{1,2})?)\s*\n+\s*(\d{1,3})\s*min/gi)) {
+    const nomeServico = String(match[1] || "").replace(/\n/g, " ").replace(/\s+/g, " ").trim()
       .replace(/^(?:serviços|servicos|detalhes do estabelecimento)\s*/i, "")
       .slice(0, 120);
     const preco = Number(String(match[2]).replace(/\./g, "").replace(",", "."));
     const duracao = Number(match[3]);
-    if (nome && nome.length >= 2 && preco >= 0 && duracao >= 10 &&
-      !servicos.some((s) => semAcento(s.nome).toLowerCase() === semAcento(nome).toLowerCase())) {
-      servicos.push({ nome, preco, duracao_min: duracao });
+    if (nomeServico && nomeServico.length >= 2 && preco >= 0 && duracao >= 10 &&
+      !servicos.some((s) => semAcento(s.nome).toLowerCase() === semAcento(nomeServico).toLowerCase())) {
+      servicos.push({ nome: nomeServico, preco, duracao_min: duracao });
     }
   }
 

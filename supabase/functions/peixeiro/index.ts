@@ -106,6 +106,7 @@ const ACAO: Record<string, Handler> = {
   barb_conta_exportar: acoes.barbContaExportar,
   barb_conta_importar: acoes.barbContaImportar,
   barb_pagina_importar: acoes.barbPaginaImportar,
+  barb_pagina_publicar: acoes.barbPaginaPublicar,
   barb_interessados: acoes.barbInteressados,
   barb_detalhe: acoes.barbDetalhe,
   barb_conversas: acoes.barbConversas,

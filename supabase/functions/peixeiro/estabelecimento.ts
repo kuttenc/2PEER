@@ -37,6 +37,26 @@ function repositorio(): string {
   return String(Deno.env.get("ESTAB_REPO") || REPO_PADRAO).trim().replace(/^\/+|\/+$/g, "");
 }
 
+/** Pasta dentro do repositório. O padrão continua vazio para o repositório separado.
+ *  A raiz kuttenc.github.io usa "estabelecimentos" para não misturar com o Urtador. */
+function caminhoRepositorio(): string {
+  return String(Deno.env.get("ESTAB_REPO_PATH") || "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function caminhoPagina(slug: string, arquivo = "index.html"): string {
+  const prefixo = caminhoRepositorio();
+  return prefixo ? `${prefixo}/${slug}/${arquivo}` : `${slug}/${arquivo}`;
+}
+
+function caminhoIndice(): string {
+  const prefixo = caminhoRepositorio();
+  return prefixo ? `${prefixo}/index.html` : "index.html";
+}
+
 function tokenGitHub(): string {
   return String(Deno.env.get("ESTAB_GITHUB_TOKEN") || "").trim();
 }
@@ -62,7 +82,7 @@ export function slugDe(nome: string, telefone = ""): string {
 }
 
 export function slugValido(slug: string): boolean {
-  return /^[A-Z0-9][A-Z0-9_-]{1,59}$/.test(String(slug || ""));
+  return /^[A-Za-z0-9][A-Za-z0-9_-]{1,59}$/.test(String(slug || ""));
 }
 
 // -------------------------------------------------------------------------- o GitHub
@@ -782,7 +802,7 @@ export async function publicarPagina(
   if (!d) return { ok: false, erro: "sem_conta" };
   if (!slugValido(d.slug)) return { ok: false, erro: "slug_invalido" };
 
-  const caminho = `${d.slug}/index.html`;
+  const caminho = caminhoPagina(d.slug);
   const atual = await shaDoArquivo(caminho);
   if (atual === null) return { ok: false, erro: "github_indisponivel" };
   const gravado = await escrever(caminho, bytesParaB64(new TextEncoder().encode(htmlDaPagina(d, urlDaApi()))),
@@ -805,9 +825,9 @@ export async function publicarIndice(): Promise<void> {
       where slug <> '' and site_publicado_em is not null order by nome`,
   );
   const itens = linhas.rows.map((l) => ({ slug: String(l.slug || ""), nome: String(l.nome || "") }));
-  const atual = await shaDoArquivo("index.html");
+  const atual = await shaDoArquivo(caminhoIndice());
   if (atual === null) return;
-  await escrever("index.html", bytesParaB64(new TextEncoder().encode(htmlIndice(itens))), "Indice de estabelecimentos", atual);
+  await escrever(caminhoIndice(), bytesParaB64(new TextEncoder().encode(htmlIndice(itens))), "Indice de estabelecimentos", atual);
 }
 
 /**
@@ -828,7 +848,7 @@ export async function publicarFoto(
     .replace(/_{2,}/g, "_")
     .slice(-56) || `foto-${Date.now()}.jpg`;
   const nome = /\.(jpe?g|png|webp)$/i.test(seguro) ? seguro : `${seguro}.jpg`;
-  const caminho = `${d.slug}/fotos/${nome}`;
+  const caminho = caminhoPagina(d.slug, `fotos/${nome}`);
   const atual = await shaDoArquivo(caminho);
   if (atual === null) return { ok: false, erro: "github_indisponivel" };
   const gravado = await escrever(caminho, bytesParaB64(bytes), `Foto ${nome}`, atual);
@@ -841,7 +861,7 @@ export async function redirecionarPaginaAntiga(
   slugNovo: string,
 ): Promise<boolean> {
   if (!slugValido(slugAntigo) || !slugValido(slugNovo) || slugAntigo === slugNovo) return false;
-  const caminho = `${slugAntigo}/index.html`;
+  const caminho = caminhoPagina(slugAntigo);
   const atual = await shaDoArquivo(caminho);
   if (atual === null) return false;
   const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">` +
@@ -857,7 +877,7 @@ export async function retirarPagina(telefone: string): Promise<boolean> {
   const l = await consultar1(`select slug from public.barber_contas where telefone = $1`, [telefone]);
   const slug = String(l?.slug || "");
   if (!slugValido(slug)) return false;
-  const caminho = `${slug}/index.html`;
+  const caminho = caminhoPagina(slug);
   const atual = await shaDoArquivo(caminho);
   if (!atual) return false;
   const aviso = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Fora do ar</title></head>` +

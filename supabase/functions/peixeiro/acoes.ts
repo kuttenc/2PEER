@@ -112,6 +112,7 @@ import {
   tirarDaFila as barbTirarDaFila,
   TRIAL_DIAS_PADRAO,
 } from "./barbearia.ts";
+import { publicarPagina } from "./estabelecimento.ts";
 import { escreverCsv, lerCsv } from "./csv.ts";
 import { gravarPix, parsearPix } from "./pix.ts";
 import {
@@ -1774,7 +1775,11 @@ export async function barbContaImportar(dados: Registro): Promise<Saida> {
 export async function barbPaginaImportar(dados: Registro): Promise<Saida> {
   const telefone = normalizarWhatsapp(txt(dados.telefone));
   if (telefone.length < 10) return falha("telefone_invalido");
-  const feito = await importarPaginaAppBarber(telefone, txt(dados.url));
+  const feito = await importarPaginaAppBarber(
+    telefone,
+    txt(dados.url),
+    typeof dados.conteudo === "string" ? dados.conteudo : "",
+  );
   if (!feito.ok) {
     const erro = feito.erro === "url_appbarber" ? "url_appbarber"
       : feito.erro?.startsWith("pagina_http") ? "pagina_inacessivel"
@@ -1786,6 +1791,14 @@ export async function barbPaginaImportar(dados: Registro): Promise<Saida> {
     ...feito,
     ...await listarBarbeiros(1, ""),
   });
+}
+
+export async function barbPaginaPublicar(dados: Registro): Promise<Saida> {
+  const telefone = normalizarWhatsapp(txt(dados.telefone));
+  if (telefone.length < 10) return falha("telefone_invalido");
+  const feito = await publicarPagina(telefone);
+  if (!feito.ok) return falha(String(feito.erro || "banco"), 502);
+  return ok(feito);
 }
 
 export async function barbInteressados(): Promise<Saida> {

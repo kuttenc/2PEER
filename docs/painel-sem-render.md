@@ -1387,3 +1387,14 @@ não foi aplicada nesta etapa. As alterações do painel,
 backend e SQL permanecem locais: não houve deploy, alteração remota do banco nem envio real de
 WhatsApp. A prova `../tools/_prova_barbearia.ts` não foi executada porque grava e apaga dados de teste;
 validar esse roteiro em uma cópia isolada antes de qualquer execução.
+
+## Publicação das páginas públicas de estabelecimentos
+
+As páginas podem ser republicadas no repositório separado `kuttenc/estabelecimento` ou no
+repositório raiz `kuttenc/kuttenc.github.io`, abaixo de `/estabelecimentos/`. A escolha usa
+os secrets `ESTAB_REPO`, `ESTAB_REPO_PATH`, `ESTAB_BASE_URL` e `ESTAB_GITHUB_TOKEN`.
+
+No projeto atual, o caminho público é `https://kuttenc.github.io/estabelecimentos/<slug>`.
+O `404.html` da raiz reserva esse prefixo e não o encaminha para o Urtador. O slug pode conter
+letras maiúsculas ou minúsculas, números, `_` e `-`; a página da Barbearia do Oleiro usa
+`barbeariadoolei-h0ku`.
