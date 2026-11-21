@@ -2212,9 +2212,21 @@ export async function aplicarEdicaoDePagina(
 
   if (campo === "site") return await trocarSlug(conta, valor);
   if (campo === "nome") {
-    await consultar(`update public.barber_contas set nome = $2, atualizado_em = now() where telefone = $1`,
-      [telefone, valor.slice(0, 120)]);
-    return await respostaComPagina(conta, `Anotado: o nome na página agora é ${valor}.`, "nome");
+    const atual = await contaDeTelefone(telefone);
+    const novoSlug = slugDe(valor, telefone);
+    const slugAntigo = atual?.slug || conta.slug;
+    await consultar(
+      `update public.barber_contas
+          set nome = $2, slug = $3, atualizado_em = now()
+        where telefone = $1`,
+      [telefone, valor.slice(0, 120), novoSlug],
+    );
+    if (slugAntigo && slugAntigo !== novoSlug) {
+      await redirecionarPaginaAntiga(slugAntigo, novoSlug);
+    }
+    const atualizada = await contaDeTelefone(telefone);
+    return await respostaComPagina(atualizada || { ...conta, nome: valor, slug: novoSlug },
+      `Anotado: o nome na página agora é ${valor}.`, "nome");
   }
   if (campo === "telefone") {
     const digitos = normalizarWhatsapp(valor);

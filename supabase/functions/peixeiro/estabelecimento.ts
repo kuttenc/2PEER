@@ -74,8 +74,8 @@ export function urlDaApi(): string {
 /** O final do endereço: tudo junto, sem espaço, sem acento — é o que a URL aceita. */
 export function slugDe(nome: string, telefone = ""): string {
   const bruto = semAcento(String(nome || ""))
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
     .slice(0, 60);
   if (bruto.length >= 2) return bruto;
   return normalizarWhatsapp(telefone).replace(/\D/g, "").slice(-11);
