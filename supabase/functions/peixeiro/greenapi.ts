@@ -102,14 +102,42 @@ export async function setWebhookUrl(
 ): Promise<{ ok: boolean; status_code?: number; response?: Record<string, unknown>; error?: string }> {
   if (!(base(conf) && conf.id_instance && conf.api_token && url)) return { ok: false, error: "sem configuracao" };
   try {
-    const resp = await fetch(`${base(conf)}/waInstance${conf.id_instance}/setWebhookUrl/${conf.api_token}`, {
+    const endpointBase = `${base(conf)}/waInstance${conf.id_instance}`;
+    const resp = await fetch(`${endpointBase}/setWebhookUrl/${conf.api_token}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ incomingWebhook: true, outgoingWebhook: true, webhookUrl: url }),
       signal: AbortSignal.timeout(20_000),
     });
     const corpo = await jsonOuTexto(resp);
-    return { ok: resp.status < 400, status_code: resp.status, response: corpo };
+    if (resp.status < 400) return { ok: true, status_code: resp.status, response: corpo };
+
+    // Instâncias novas da Green API podem aceitar settings, mas não setWebhookUrl.
+    if (resp.status === 404) {
+      const settings = await fetch(`${endpointBase}/setSettings/${conf.api_token}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          webhookUrl: url,
+          incomingWebhook: "yes",
+          outgoingWebhook: "yes",
+          outgoingMessageStatuses: "yes",
+          stateWebhook: "yes",
+          pollMessageWebhook: "yes",
+          keepOnlineStatus: "yes",
+        }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      const settingsBody = await jsonOuTexto(settings);
+      return {
+        ok: settings.status < 400,
+        status_code: settings.status,
+        response: settingsBody,
+        error: settings.status >= 400 ? "greenapi_settings_erro" : undefined,
+      };
+    }
+
+    return { ok: false, status_code: resp.status, response: corpo };
   } catch (exc) {
     return { ok: false, error: String(exc).slice(0, 160) };
   }
