@@ -771,6 +771,21 @@
         </form>
       </div>
       <div class="card">
+        <h2>Clonar página de outro site</h2>
+        <p class="muted" style="margin-top:0">Cole o endereço público da página atual e escolha o estabelecimento
+          que receberá os dados públicos: nome, endereço, telefone, horários, pagamentos e serviços.</p>
+        <form id="formBarbPaginaImportar">
+          <div class="linha">
+            <input type="tel" id="bbiTelefone" class="maq" inputmode="tel" autocomplete="tel"
+              placeholder="Telefone do estabelecimento" required>
+            <input type="url" id="bbiUrl" inputmode="url"
+              placeholder="https://sites.appbarber.com.br/barbeariadoolei-h0ku" required>
+          </div>
+          <button type="submit" class="verde" id="bbiImportar">Clonar página e atualizar dados</button>
+          <span class="muted" id="bbiEstado"></span>
+        </form>
+      </div>
+      <div class="card">
         <h2>Estabelecimentos</h2>
         <div class="linha">
           <input type="search" id="bbBusca" placeholder="Buscar por nome, telefone ou observação" style="flex:1;min-width:190px">

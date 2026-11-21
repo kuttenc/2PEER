@@ -871,7 +871,10 @@ export async function responder(
   conf: Conf,
   agora: Date = new Date(),
 ): Promise<Resposta> {
-  const t = semAcento(String(bruto || "").toLowerCase()).replace(/\s+/g, " ").trim();
+  const t = semAcento(String(bruto || "").toLowerCase())
+    .replace(/^\s*\/+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
   const telefone = conta.telefone;
   const catalogoConta = await catalogo(telefone);
 
@@ -926,9 +929,55 @@ export async function responder(
   const pagina = await comandoPagina(conta, String(bruto || ""), t, textos);
   if (pagina) return pagina;
 
-  // 3) Comandos de uma palavra.
-  if (t === "menu" || t === "ajuda" || t === "controle" || t === "oi" || t === "ola") {
-    return { texto: textos.menu || "O robô ainda não tem menu escrito.", tipo: "menu" };
+  // 3) Comandos de uma palavra e os atalhos com barra.
+  const menuPedido = /^menu(?:\s+(contabilidade|pagina|site|agenda|funcionario))?$/.exec(t);
+  if (menuPedido) {
+    const sub = menuPedido[1] || "";
+    if (sub === "contabilidade") {
+      return {
+        texto: `Menu de contabilidade:\n${MENU_CONTROLE_PADRAO}\n\n` +
+          `Para voltar ao menu geral, digite /menu.\nPara editar a página, digite /menu pagina.`,
+        tipo: "menu_contabilidade",
+      };
+    }
+    if (sub === "pagina" || sub === "site") {
+      return { texto: await guiaDaPagina(conta, textos), tipo: "guia_pagina" };
+    }
+    if (sub === "agenda") {
+      return {
+        texto: `Menu da agenda:\n  AGENDA — lista os próximos horários\n` +
+          `  AGENDA hoje — lista os horários de hoje\n` +
+          `  AGENDA João 11999998888 sábado 15h — marca um horário\n` +
+          `  AVISA 1 — avisa o cliente\n  REMARCAR 1 sexta 16h — muda o horário\n` +
+          `  FEITO 1 — registra o atendimento\n  CANCELAR 1 — cancela o horário\n\n` +
+          `Para voltar ao menu geral, digite /menu.\nPara ver contabilidade, digite /menu contabilidade.`,
+        tipo: "menu_agenda",
+      };
+    }
+    if (sub === "funcionario") {
+      return {
+        texto: textos.ajuda_funcionario ||
+          `Menu do funcionário:\n  MINHA AGENDA — seus horários\n` +
+          `  LIVRE amanhã — horários disponíveis\n` +
+          `  AGENDAR João 11999998888 sábado 15h — marca no seu nome\n\n` +
+          `Para voltar ao menu geral, digite /menu.`,
+        tipo: "menu_funcionario",
+      };
+    }
+    return {
+      texto: `${textos.menu || MENU_CONTROLE_PADRAO}\n\n` +
+        `Atalhos rápidos:\n  /menu contabilidade — lançamentos, preços e relatórios\n` +
+        `  /menu pagina — nome, endereço, horários e outros dados da página\n` +
+        `  /menu agenda — marcar e cuidar dos horários\n  /menu funcionario — menu do profissional`,
+      tipo: "menu",
+    };
+  }
+  if (t === "ajuda" || t === "controle" || t === "oi" || t === "ola") {
+    return {
+      texto: `${textos.menu || MENU_CONTROLE_PADRAO}\n\n` +
+        `Atalhos rápidos:\n  /menu contabilidade\n  /menu pagina\n  /menu agenda\n  /menu funcionario`,
+      tipo: "menu",
+    };
   }
   if (t === "catalogo" || t.startsWith("catalogo ")) {
     return { texto: textoCatalogo(catalogoConta), tipo: "catalogo" };
@@ -1631,7 +1680,11 @@ async function confirmarAcaoCliente(
 async function processarEntrada(
   telefone: string, bruto: string, conf: Conf, textos: Textos, estadoAtual: EstadoEntrada | null,
 ): Promise<{ status: number; dados: Bruto }> {
-  const entrada = semAcento(String(bruto || "").toLowerCase()).replace(/[.!?]/g, "").replace(/\s+/g, " ").trim();
+  const entrada = semAcento(String(bruto || "").toLowerCase())
+    .replace(/^\s*\/+/, "")
+    .replace(/[.!?]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
   let estado = estadoAtual || { estado: "menu", dados: {} };
 
   if (entrada === "menu" || entrada === "voltar") {
@@ -2168,6 +2221,161 @@ async function mostrarSite(conta: Conta, textos: Textos): Promise<Resposta> {
   };
 }
 
+/** Importa dados públicos de uma página AppBarber já existente e atualiza apenas o
+ *  estabelecimento escolhido. A página de destino é criada do mesmo jeito que o comando SITE. */
+export async function importarPaginaAppBarber(
+  telefoneBruto: string,
+  urlBruto: string,
+): Promise<{ ok: boolean; telefone: string; nome: string; slug: string; servicos: number;
+  horarios: number; pagamentos: number; publicado: boolean; url: string; erro?: string }> {
+  const telefone = normalizarWhatsapp(telefoneBruto);
+  const conta = await contaDeTelefone(telefone);
+  if (!conta) return { ok: false, telefone, nome: "", slug: "", servicos: 0, horarios: 0,
+    pagamentos: 0, publicado: false, url: "", erro: "sem_barbearia" };
+  let url = String(urlBruto || "").trim();
+  if (!/^https:\/\/sites\.appbarber\.com\.br\/[a-z0-9-]+\/?$/i.test(url)) {
+    return { ok: false, telefone, nome: "", slug: "", servicos: 0, horarios: 0,
+      pagamentos: 0, publicado: false, url: "", erro: "url_appbarber" };
+  }
+  url = url.replace(/\/+$/, "");
+
+  let html = "";
+  try {
+    const response = await fetch(url, {
+      headers: { "user-agent": "Mozilla/5.0 (compatible; OPeixeiro/1.0)" },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) {
+      return { ok: false, telefone, nome: conta.nome, slug: conta.slug, servicos: 0, horarios: 0,
+        pagamentos: 0, publicado: false, url: "", erro: `pagina_http_${response.status}` };
+    }
+    html = await response.text();
+  } catch (exc) {
+    return { ok: false, telefone, nome: conta.nome, slug: conta.slug, servicos: 0, horarios: 0,
+      pagamentos: 0, publicado: false, url: "", erro: "pagina_inacessivel" };
+  }
+
+  const title = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "")
+    .replace(/<[^>]+>/g, "").replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim();
+  const nome = (title.split(/\s+-\s+/)[0] || conta.nome || "Estabelecimento").trim().slice(0, 120);
+  const texto = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, "\n")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&#039;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n");
+
+  const telefonePublicado = texto.match(/(?:\(\d{2}\)\s*)?[\s]?\d{4,5}-?\d{4}/)?.[0] || "";
+  const telefonePublico = telefonePublicado
+    ? normalizarWhatsapp(telefonePublicado.replace(/\D/g, ""))
+    : conta.telefone_publico;
+
+  const localizacao = texto.match(/(?:Localização|Conselheiro|Rua|Av\.|Avenida)[^\n]{8,160}/i)?.[0]?.trim() || "";
+  const endereco = localizacao.replace(/^Localização\s*/i, "").slice(0, 200);
+
+  const mapaDia: Record<string, number> = {
+    domingo: 0, segunda: 1, tercafeira: 2, quarta: 3, quinta: 4, sexta: 5, sabado: 6,
+  };
+  const horarios: Array<{ dia: number; abre: string; fecha: string }> = [];
+  for (const match of texto.matchAll(/(Domingo|Segunda(?:-Feira)?|Terça(?:-Feira)?|Terca(?:-Feira)?|Quarta(?:-Feira)?|Quinta(?:-Feira)?|Sexta(?:-Feira)?|Sábado|Sabado)[\s\S]{0,45}(\d{2}:\d{2})\s*[-–a]\s*(\d{2}:\d{2})/gi)) {
+    const chave = semAcento(String(match[1] || "").toLowerCase())
+      .replace(/[- ]feira/g, "")
+      .replace(/-/g, "")
+      .replace(/\s/g, "");
+    const dia = mapaDia[chave] ?? (
+      chave.startsWith("domingo") ? 0 :
+      chave.startsWith("segunda") ? 1 :
+      chave.startsWith("terca") ? 2 :
+      chave.startsWith("quarta") ? 3 :
+      chave.startsWith("quinta") ? 4 :
+      chave.startsWith("sexta") ? 5 :
+      chave.startsWith("sabado") ? 6 : -1
+    );
+    if (dia >= 0 && !horarios.some((h) => h.dia === dia)) {
+      horarios.push({ dia, abre: match[2], fecha: match[3] });
+    }
+  }
+
+  const pagamentos: string[] = [];
+  for (const pagamento of ["Dinheiro", "Cartão de Crédito", "Cartao de Credito", "Cartão de Débito", "Cartao de Debito", "PIX"]) {
+    if (semAcento(texto).toLowerCase().includes(semAcento(pagamento).toLowerCase()) &&
+      !pagamentos.includes(pagamento)) pagamentos.push(pagamento);
+  }
+
+  const servicos: Array<{ nome: string; preco: number; duracao_min: number }> = [];
+  for (const match of texto.matchAll(/([A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9 +.&/-]{1,100})[\s:]*R\$\s*([0-9.]+(?:,[0-9]{1,2})?)[\s\S]{0,80}?(\d{1,3})\s*min/gi)) {
+    const nome = String(match[1] || "").replace(/\n/g, " ").replace(/\s+/g, " ").trim()
+      .replace(/^(?:serviços|servicos|detalhes do estabelecimento)\s*/i, "")
+      .slice(0, 120);
+    const preco = Number(String(match[2]).replace(/\./g, "").replace(",", "."));
+    const duracao = Number(match[3]);
+    if (nome && nome.length >= 2 && preco >= 0 && duracao >= 10 &&
+      !servicos.some((s) => semAcento(s.nome).toLowerCase() === semAcento(nome).toLowerCase())) {
+      servicos.push({ nome, preco, duracao_min: duracao });
+    }
+  }
+
+  const slug = slugDe(nome, telefone);
+  await consultar(
+    `update public.barber_contas
+        set nome = $2, slug = $3, endereco = coalesce(nullif($4, ''), endereco),
+            telefone_publico = coalesce(nullif($5, ''), telefone_publico),
+            atualizado_em = now()
+      where telefone = $1`,
+    [telefone, nome, slug, endereco, telefonePublico],
+  );
+
+  if (horarios.length) {
+    await consultar(`delete from public.barber_horario where telefone = $1`, [telefone]);
+    for (const horario of horarios) {
+      await consultar(
+        `insert into public.barber_horario (telefone, dia, abre, fecha, intervalo)
+         values ($1, $2, $3, $4, 30)`,
+        [telefone, horario.dia, horario.abre, horario.fecha],
+      );
+    }
+  }
+  if (pagamentos.length) {
+    await consultar(`delete from public.barber_pagamento where telefone = $1`, [telefone]);
+    for (let i = 0; i < pagamentos.length; i++) {
+      await consultar(
+        `insert into public.barber_pagamento (telefone, nome, ordem)
+         values ($1, $2, $3)`,
+        [telefone, pagamentos[i], i],
+      );
+    }
+  }
+  if (servicos.length) {
+    await consultar(`delete from public.barber_servico where telefone = $1`, [telefone]);
+    for (const servico of servicos) {
+      await consultar(
+        `insert into public.barber_servico (telefone, nome, preco, duracao_min, ativo)
+         values ($1, $2, $3, $4, true)`,
+        [telefone, servico.nome, servico.preco, servico.duracao_min],
+      );
+    }
+  }
+
+  const atualizada = await contaDeTelefone(telefone);
+  const publicado = atualizada ? await publicarPagina(telefone) : { ok: false, url: "" };
+  const destino = publicado.ok ? publicado.url || urlDaPagina(atualizada || conta) : urlDaPagina(atualizada || conta);
+  return {
+    ok: true,
+    telefone,
+    nome,
+    slug,
+    servicos: servicos.length,
+    horarios: horarios.length,
+    pagamentos: pagamentos.length,
+    publicado: Boolean(publicado.ok),
+    url: destino,
+  };
+}
+
 /** O dispatcher da página: devolve nulo quando a frase é de outro assunto, para a conversa
  *  seguir o caminho de sempre (dinheiro, agenda, catálogo). */
 export async function comandoPagina(
@@ -2423,7 +2631,10 @@ export async function tratarFotoRecebida(
 export async function responderFuncionario(
   barbearia: Conta, funcionario: Bruto, bruto: string, textos: Textos, agora: Date,
 ): Promise<Resposta> {
-  const t = semAcento(String(bruto || "").toLowerCase()).replace(/\s+/g, " ").trim();
+  const t = semAcento(String(bruto || "").toLowerCase())
+    .replace(/^\s*\/+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
   const meuTelefone = String(funcionario.telefone || "");
   const meuNome = String(funcionario.nome || "");
   if (!t) return { texto: "", tipo: "vazio" };
@@ -2684,7 +2895,11 @@ export async function rotearWebhook(bruto: Bruto, chave: string): Promise<{ stat
     if (!estado) {
       await salvarEstadoEntrada(m.telefone, "menu");
       estado = { estado: "menu", dados: {} };
-      const entrada = semAcento(m.texto.toLowerCase()).replace(/[.!?]/g, "").replace(/\s+/g, " ").trim();
+      const entrada = semAcento(m.texto.toLowerCase())
+        .replace(/^\s*\/+/, "")
+        .replace(/[.!?]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
       if (estabelecimentosCliente.length && entrada !== "menu" && entrada !== "falar com suporte" &&
         entrada !== "nao" && entrada !== "n") {
         return await responderEntrada(m.telefone,

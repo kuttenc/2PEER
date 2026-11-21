@@ -104,6 +104,8 @@
     texto_grande: "Texto grande demais: são até 1200 caracteres.",
     bloqueado: "Este número está na aba Bloqueados (respondeu \u201cnão\u201d). Desbloqueie lá para mandar de novo.",
     nao_esta_bloqueado: "Este número já não estava bloqueado.",
+    url_appbarber: "Use o endereço público completo de um site AppBarber.",
+    pagina_inacessivel: "Não consegui abrir a página atual agora. Confira o endereço e tente novamente.",
   };
 
   // ------------------------------------------------------------------ utilidades
@@ -3166,6 +3168,30 @@
   }
 
   CARREGA.clientesbarbearia = carregarPaginaClientesBarbearia;
+
+  $("formBarbPaginaImportar").addEventListener("submit", function (evento) {
+    evento.preventDefault();
+    var botao = $("bbiImportar");
+    botao.disabled = true;
+    bbAviso("bbiEstado", "Lendo a página pública e atualizando os dados…", false);
+    chamar("barb_pagina_importar", {
+      telefone: $("bbiTelefone").value,
+      url: $("bbiUrl").value,
+    }, 90).then(function (d) {
+      botao.disabled = false;
+      if (!d.ok) {
+        bbAviso("bbiEstado", mensagemDetalhada(d), true);
+        return;
+      }
+      var texto = "Página clonada: " + texto(d.nome) +
+        " · " + texto(d.servicos || 0) + " serviço(s)" +
+        " · " + texto(d.horarios || 0) + " horário(s)" +
+        " · " + texto(d.pagamentos || 0) + " forma(s) de pagamento.";
+      if (d.url) texto += " Endereço: " + d.url;
+      bbAviso("bbiEstado", texto, false);
+      carregarContasBarbearia(bbPaginaAtual);
+    });
+  });
 
   $("formBarbChat").addEventListener("submit", function (evento) {
     evento.preventDefault();

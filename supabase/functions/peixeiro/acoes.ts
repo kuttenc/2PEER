@@ -105,7 +105,7 @@ import { avisarRenovacao, avisarVencimentos, fichaPara } from "./varredura.ts";
 import {
   adicionarBarbeiro, agendamentosDe, agendamentosParaTela, apagarBarbeiro, catalogo, clientesDoBarbeiro,
   contaDeTelefone, conversasBarbearia, exportarBarbeiros, exportarConversasBarbearia, fecharBarbeiro,
-  filaTreinoBarbearia, importarBarbeiros, lancamentosDe, lembretesDoDia, ligarBarbeiro, listarBarbeiros,
+  filaTreinoBarbearia, importarBarbeiros, importarPaginaAppBarber, lancamentosDe, lembretesDoDia, ligarBarbeiro, listarBarbeiros,
   listarInteressados, mensagensDoBarbeiro, montarFila, obterTextos, proximoDaFila, resumoBarbearia,
   rotearWebhook, salvarTextos, statusFila, enviarParaBarbeiro,
   limparFila as barbLimparFila,
@@ -1769,6 +1769,23 @@ export async function barbContaImportar(dados: Registro): Promise<Saida> {
   const dias = Number(txt(dados.dias) || 0);
   const feito = await importarBarbeiros(barbTexto(dados.texto), dias || TRIAL_DIAS_PADRAO);
   return ok({ ...feito, ...await listarBarbeiros(1, "") });
+}
+
+export async function barbPaginaImportar(dados: Registro): Promise<Saida> {
+  const telefone = normalizarWhatsapp(txt(dados.telefone));
+  if (telefone.length < 10) return falha("telefone_invalido");
+  const feito = await importarPaginaAppBarber(telefone, txt(dados.url));
+  if (!feito.ok) {
+    const erro = feito.erro === "url_appbarber" ? "url_appbarber"
+      : feito.erro?.startsWith("pagina_http") ? "pagina_inacessivel"
+      : "banco";
+    return falha(erro, 502);
+  }
+  return ok({
+    importado: true,
+    ...feito,
+    ...await listarBarbeiros(1, ""),
+  });
 }
 
 export async function barbInteressados(): Promise<Saida> {
