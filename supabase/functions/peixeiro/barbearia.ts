@@ -146,10 +146,12 @@ export type Conta = {
   telefone_publico: string;
   mostra_barbeiro: boolean;
   publicado_em: Date | null;
+  modelo_equipe: string;
+  divide_lucro: boolean | null;
 };
 
 const COLUNAS_CONTA = `telefone, nome, nota, ativo, expira_em, criado_em, slug, endereco, cidade, uf,
-  cep, telefone_publico, mostra_barbeiro, site_publicado_em`;
+  cep, telefone_publico, mostra_barbeiro, site_publicado_em, modelo_equipe, divide_lucro`;
 
 function linhaParaConta(linha: Bruto): Conta {
   return {
@@ -167,6 +169,9 @@ function linhaParaConta(linha: Bruto): Conta {
     telefone_publico: String(linha.telefone_publico || ""),
     mostra_barbeiro: Boolean(linha.mostra_barbeiro),
     publicado_em: linha.site_publicado_em ? new Date(String(linha.site_publicado_em)) : null,
+    modelo_equipe: String(linha.modelo_equipe || ""),
+    divide_lucro: linha.divide_lucro === null || linha.divide_lucro === undefined
+      ? null : Boolean(linha.divide_lucro),
   };
 }
 
@@ -1731,7 +1736,9 @@ async function processarEntrada(
   }
 
   if (estado.estado === "menu") {
-    if (entrada === "1" || entrada.startsWith("1 ")) {
+    if (entrada === "1" || entrada.startsWith("1 ") ||
+      entrada === "quero testar" || entrada.startsWith("quero testar ") ||
+      entrada === "teste gratis" || entrada === "testar") {
       await salvarEstadoEntrada(telefone, "novo_estabelecimento_nome");
       return await responderEntrada(telefone, "Qual é o nome do seu estabelecimento?", conf, textos, "cadastro_estabelecimento");
     }
@@ -1779,12 +1786,83 @@ async function processarEntrada(
       return await responderEntrada(telefone, "Não consegui concluir o cadastro. Confira o número e tente novamente.",
         conf, textos, "cadastro_estabelecimento_erro");
     }
-    await apagarEstadoEntrada(telefone);
-    const menu = textos.menu || MENU_CONTROLE_PADRAO;
-    const boasVindas = textos.boas_vindas
-      ? preencherVariaveis(textos.boas_vindas, variaveisDaConta(conf, criado.conta))
-      : `Cadastro de ${nome} concluído. Seu período de teste já começou.`;
-    return await responderEntrada(telefone, `${boasVindas}\n\n${menu}`, conf, textos, "estabelecimento_cadastrado");
+    await salvarEstadoEntrada(telefone, "novo_estabelecimento_equipe", {
+      nome,
+      telefone_conta: telefone,
+    });
+    return await responderEntrada(telefone,
+      `Cadastro iniciado para ${nome}. Seu teste já começou.\n\n` +
+      "Agora me diga como funciona a equipe:\n" +
+      "1 — Eu trabalho sozinho\n" +
+      "2 — Eu sou o dono e divido o lucro com funcionários\n" +
+      "3 — Trabalha uma equipe, mas eu mesmo cuido da contabilidade",
+      conf, textos, "onboarding_equipe");
+  }
+
+  if (estado.estado === "novo_estabelecimento_equipe") {
+    let modelo = "";
+    let divide = false;
+    if (entrada === "1" || entrada.startsWith("1 ")) modelo = "sozinho";
+    else if (entrada === "2" || entrada.startsWith("2 ")) {
+      modelo = "equipe_divide_lucro";
+      divide = true;
+    } else if (entrada === "3" || entrada.startsWith("3 ")) modelo = "equipe_dono_contabilidade";
+    else {
+      return await responderEntrada(telefone,
+        "Responda 1, 2 ou 3:\n1 — Trabalho sozinho\n2 — Divido lucro com funcionários\n3 — Tenho equipe e cuido da contabilidade",
+        conf, textos, "onboarding_equipe");
+    }
+    await consultar(
+      `update public.barber_contas
+          set modelo_equipe = $2, divide_lucro = $3, atualizado_em = now()
+        where telefone = $1`,
+      [telefone, modelo, divide],
+    );
+    await salvarEstadoEntrada(telefone, "novo_estabelecimento_fotos", {
+      nome: String(estado.dados.nome || ""),
+      modelo,
+      divide_lucro: divide,
+    });
+    return await responderEntrada(telefone,
+      "Como você quer a página pública?\n" +
+      "1 — Mostrar somente fotos da barbearia\n" +
+      "2 — Mostrar fotos da barbearia e dos barbeiros\n" +
+      "3 — Criar a página sem fotos por enquanto",
+      conf, textos, "onboarding_fotos");
+  }
+
+  if (estado.estado === "novo_estabelecimento_fotos") {
+    if (entrada === "1" || entrada.startsWith("1 ")) {
+      await consultar(`update public.barber_contas set mostra_barbeiro = false, atualizado_em = now() where telefone = $1`, [telefone]);
+      await salvarEstadoEntrada(telefone, "novo_estabelecimento_foto_salao");
+      await gravarPendencia(telefone, "foto", { destino: "salao" });
+      return await responderEntrada(telefone,
+        "Tudo bem. Agora mande uma foto da fachada ou do salão. Eu publico no endereço da página.\n\nDepois pode enviar mais fotos, uma por vez.",
+        conf, textos, "onboarding_solicita_foto");
+    }
+    if (entrada === "2" || entrada.startsWith("2 ")) {
+      await consultar(`update public.barber_contas set mostra_barbeiro = true, atualizado_em = now() where telefone = $1`, [telefone]);
+      await salvarEstadoEntrada(telefone, "novo_estabelecimento_foto_salao");
+      await gravarPendencia(telefone, "foto", { destino: "salao" });
+      return await responderEntrada(telefone,
+        "Ótimo. Primeiro mande uma foto da fachada ou do salão.\nDepois cadastre cada barbeiro assim:\n" +
+        "  FUNCIONARIO Fabio 11989346164\n" +
+        "  FOTO DO Fabio\n" +
+        "Mande a foto do profissional logo depois desse comando.\n\nDigite /menu pagina para ver todas as opções.",
+        conf, textos, "onboarding_fotos_profissionais");
+    }
+    if (entrada === "3" || entrada.startsWith("3 ")) {
+      await consultar(`update public.barber_contas set mostra_barbeiro = true, atualizado_em = now() where telefone = $1`, [telefone]);
+      await apagarEstadoEntrada(telefone);
+      const menu = textos.menu || MENU_CONTROLE_PADRAO;
+      return await responderEntrada(telefone,
+        `Certo. Você pode adicionar fotos depois:\n  FOTO — envia uma foto da barbearia\n` +
+        `  FUNCIONARIO Nome telefone — cadastra um profissional\n  FOTO DO Nome — envia a foto do profissional\n\n${menu}`,
+        conf, textos, "estabelecimento_cadastrado");
+    }
+    return await responderEntrada(telefone,
+      "Responda 1 para fotos só da barbearia, 2 para profissionais ou 3 para começar sem fotos.",
+      conf, textos, "onboarding_fotos");
   }
 
   if (estado.estado === "funcionario_nome") {
@@ -1925,6 +2003,9 @@ export async function guiaDaPagina(conta: Conta, textos: Textos): Promise<string
     .replace(/\{telefone\}/g, formatarTelefone(conta.telefone));
   const comandos = [
     "SITE — abre o link da sua página",
+    "SOMENTE BARBEARIA — mostra só fotos da barbearia na página",
+    "COM BARBEIROS — mostra fotos da barbearia e dos profissionais",
+    "SEM FOTOS — cria a página sem fotos por enquanto",
     "EDITAR NOME — troca o nome no topo da página",
     "EDITAR SITE — troca o final do endereço (NOMESITE barbeariadooleiro, tudo junto)",
     "EDITAR ENDERECO — muda a rua e o mapa",
@@ -2460,6 +2541,32 @@ export async function comandoPagina(
   if (/^(meu\s+)?(site|pagina|link)(\s+da\s+(barbearia|loja))?/.test(t) && t.length <= 32) {
     return await mostrarSite(conta, textos);
   }
+  if (t === "somente barbearia" || t === "apenas barbearia" || t === "fotos da barbearia") {
+    await consultar(`update public.barber_contas set mostra_barbeiro = false, atualizado_em = now() where telefone = $1`, [conta.telefone]);
+    await gravarPendencia(conta.telefone, "foto", { destino: "salao" });
+    return {
+      texto: "Entendi: a página vai mostrar somente fotos da barbearia. Agora mande uma foto da fachada ou do salão.",
+      tipo: "onboarding_foto_salao",
+    };
+  }
+  if (t === "com barbeiros" || t === "barbearia e barbeiros" || t === "fotos dos barbeiros") {
+    await consultar(`update public.barber_contas set mostra_barbeiro = true, atualizado_em = now() where telefone = $1`, [conta.telefone]);
+    await gravarPendencia(conta.telefone, "foto", { destino: "salao" });
+    return {
+      texto: "Entendi: a página pode mostrar a barbearia e os profissionais.\n" +
+        "Mande primeiro uma foto da fachada ou do salão.\n" +
+        "Depois cadastre assim:\n  FUNCIONARIO Fabio 11989346164\n" +
+        "  FOTO DO Fabio",
+      tipo: "onboarding_fotos_profissionais",
+    };
+  }
+  if (t === "sem fotos" || t === "pagina sem fotos") {
+    await consultar(`update public.barber_contas set mostra_barbeiro = false, atualizado_em = now() where telefone = $1`, [conta.telefone]);
+    return {
+      texto: "A página ficou sem fotos por enquanto. Você pode mandar FOTO a qualquer hora ou cadastrar profissionais com FUNCIONARIO Nome telefone.",
+      tipo: "onboarding_sem_fotos",
+    };
+  }
   if (t === "editar" || t === "comandos da pagina" || t === "menu site" || t === "ajuda site") {
     return { texto: await guiaDaPagina(conta, textos), tipo: "guia_pagina" };
   }
@@ -2974,6 +3081,12 @@ export async function rotearWebhook(bruto: Bruto, chave: string): Promise<{ stat
         .replace(/[.!?]/g, "")
         .replace(/\s+/g, " ")
         .trim();
+      if (entrada === "quero testar" || entrada === "testar" || entrada.startsWith("quero testar ")) {
+        await salvarEstadoEntrada(m.telefone, "novo_estabelecimento_nome");
+        return await responderEntrada(m.telefone,
+          "Perfeito. Qual é o nome do seu estabelecimento?",
+          conf, textos, "cadastro_estabelecimento");
+      }
       if (estabelecimentosCliente.length && entrada !== "menu" && entrada !== "falar com suporte" &&
         entrada !== "nao" && entrada !== "n") {
         return await responderEntrada(m.telefone,
