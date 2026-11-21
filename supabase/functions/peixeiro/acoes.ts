@@ -1942,17 +1942,29 @@ export async function barbPainelSalvar(dados: Registro): Promise<Saida> {
     if (id) await consultar(`delete from public.barber_produto where id = $1 and telefone = $2`, [id, telefone]);
   }
   if (Array.isArray(dados.horarios)) {
-    await consultar(`delete from public.barber_horario where telefone = $1`, [telefone]);
+    const horarios: { dia: number; abre: string; fecha: string }[] = [];
     for (const item of dados.horarios as Registro[]) {
       const dia = Number(item.dia);
       const abre = txt(item.abre);
       const fecha = txt(item.fecha);
-      if (dia < 0 || dia > 6 || !/^\d{2}:\d{2}$/.test(abre) || !/^\d{2}:\d{2}$/.test(fecha)) continue;
+      if (!abre && !fecha) continue;
+      if (
+        !Number.isInteger(dia) || dia < 0 || dia > 6 ||
+        !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(abre) ||
+        !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(fecha) ||
+        abre >= fecha
+      ) {
+        return falha("horario_invalido");
+      }
+      horarios.push({ dia, abre, fecha });
+    }
+    await consultar(`delete from public.barber_horario where telefone = $1`, [telefone]);
+    for (const item of horarios) {
       await consultar(
         `insert into public.barber_horario (telefone, dia, abre, fecha, intervalo)
          values ($1, $2, $3, $4, 30)
          on conflict (telefone, dia) do update set abre = excluded.abre, fecha = excluded.fecha`,
-        [telefone, dia, abre, fecha],
+        [telefone, item.dia, item.abre, item.fecha],
       );
     }
   }
@@ -2172,11 +2184,11 @@ export async function barbCron(dados: Registro, ctx: Contexto): Promise<Saida> {
   const hora = new Date(Date.now() - BRAZIL_OFFSET_MS).getUTCHours();
   const textos = await obterTextos();
   const forcar = booleano(dados.reenviar);
-  if (!forcar && hora < Number(textos.lembrete_hora || 8)) {
-    return ok({ ok: true, ignorado: "antes da hora do lembrete", hora_brasilia: hora });
-  }
   const bomDia = await bomDiaTodos(forcar);
-  const feito = await lembretesDoDia(forcar);
+  const antesDaHoraDoLembrete = !forcar && hora < Number(textos.lembrete_hora || 8);
+  const feito = antesDaHoraDoLembrete
+    ? { ok: true, ignorado: "antes da hora do lembrete", hora_brasilia: hora }
+    : await lembretesDoDia(forcar);
   await gravarEvento({
     event_type: "barbearia_cron_lembrete",
     status_code: 200,

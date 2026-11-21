@@ -5,15 +5,20 @@ import { avisoCron } from "./varredura.ts";
 import { usuarioAutenticado } from "./sessao.ts";
 import { modoTeste } from "./mcapi.ts";
 import { gerarAcesso } from "./site.ts";
+import {
+  estabCancelarConfirmar,
+  estabCancelarSolicitar,
+  estabMarcar,
+  estabVagas,
+} from "./estabelecimento.ts";
 import type { Handler, Registro } from "./acoes.ts";
 
-// O clique de um cliente na página r/ é anônimo por natureza: ele não tem, e não pode ter,
-// sessão do painel — e só pede o endereço para onde o link dele já mandava. O webhook do
-// GreenAPI é a mesma coisa: quem bate aqui é o servidor dele, e a chave vai na URL.
-// `site_gerar` entra no mesmo grupo: é o botão do clone do site, apertado pelo cliente.
+// As páginas públicas de estabelecimento e o webhook do GreenAPI não têm sessão do painel:
+// as primeiras usam o slug e o telefone do cliente; o webhook traz sua chave na URL.
 const SEM_SESSAO = new Set([
   "ping", "entrar", "aviso_cron", "barb_cron", "links_destino", "chat_webhook", "site_gerar",
   "barb_painel_ver", "barb_painel_salvar", "barb_painel_foto", "barb_painel_foto_apagar",
+  "estab_vagas", "estab_marcar", "estab_cancelar_solicitar", "estab_cancelar_confirmar",
 ]);
 
 /** O contrato público do painel: cada rota do Flask vira uma action com nome de rota.
@@ -60,6 +65,17 @@ const ACAO: Record<string, Handler> = {
 
   // O botão "Gerar acesso 4 horas" do clone do site, sem sessão e sem Render.
   site_gerar: gerarAcesso,
+
+  estab_vagas: async (dados, ctx) => ({ status: 200, dados: await estabVagas(dados, ctx) }),
+  estab_marcar: async (dados, ctx) => ({ status: 200, dados: await estabMarcar(dados, ctx) }),
+  estab_cancelar_solicitar: async (dados, ctx) => ({
+    status: 200,
+    dados: await estabCancelarSolicitar(dados, ctx),
+  }),
+  estab_cancelar_confirmar: async (dados, ctx) => ({
+    status: 200,
+    dados: await estabCancelarConfirmar(dados, ctx),
+  }),
 
   lote_contagem: acoes.loteContagem,
   lote_executar: acoes.loteExecutar,

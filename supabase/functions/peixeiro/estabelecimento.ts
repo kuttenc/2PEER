@@ -8,9 +8,10 @@
 // O robô escreve `<slug>/index.html` pela Contents API com o token que está nos secrets da
 // função. Nada de chave no navegador: a página só conversa com as rotas públicas `estab_*`.
 import { obterConfig } from "./banco.ts";
-import { consultar, consultar1 } from "./db.ts";
+import { aleatorio, consultar, consultar1 } from "./db.ts";
 import { enviarTexto } from "./greenapi.ts";
 import { modoTeste } from "./mcapi.ts";
+import { hashCodigoCancelamento, instanteDoAgendamento, novoCodigoCancelamento } from "./cancelamento.mjs";
 import {
   BRAZIL_OFFSET_MS,
   bytesParaB64,
@@ -191,14 +192,15 @@ export type DadosPagina = {
 
 const NOMES_DIA = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
 
-/** O horário padrão de um salão que ainda não disse nada: o que a maioria usa. */
-const HORARIOS_PADRAO: Horario[] = [1, 2, 3, 4, 5, 6].map((dia) => ({
-  dia,
-  abre: "09:00",
-  fecha: "19:00",
-  intervalo: 30,
-  primeiro: "09:00",
-}));
+export function mapearHorarios(rows: Bruto[]): Horario[] {
+  return rows.map((h) => ({
+    dia: Number(h.dia),
+    abre: String(h.abre || ""),
+    fecha: String(h.fecha || ""),
+    intervalo: Math.max(10, Math.min(120, Number(h.intervalo || 30))),
+    primeiro: String(h.primeiro || ""),
+  }));
+}
 
 export async function dadosDaPagina(telefone: string): Promise<DadosPagina | null> {
   const conta = await consultar1(
@@ -259,15 +261,7 @@ export async function dadosDaPagina(telefone: string): Promise<DadosPagina | nul
       descricao: String(s.descricao || ""),
     })),
     produtos: produtos.rows.map((p) => ({ nome: String(p.nome || ""), preco: Number(p.preco || 0) })),
-    horarios: (horarios.rows.length
-      ? horarios.rows.map((h) => ({
-        dia: Number(h.dia),
-        abre: String(h.abre || "09:00"),
-        fecha: String(h.fecha || "19:00"),
-        intervalo: Math.max(10, Math.min(120, Number(h.intervalo || 30))),
-        primeiro: String(h.primeiro || ""),
-      }))
-      : HORARIOS_PADRAO),
+    horarios: mapearHorarios(horarios.rows),
     pagamentos: pagamentos.rows.map((p) => String(p.nome || "")),
     funcionarios: funcionarios.rows.map((f) => ({
       telefone: String(f.telefone || ""),
@@ -441,53 +435,59 @@ function urlFoto(d: DadosPagina, arquivo: string): string {
 }
 
 const CSS = `
-:root{--fundo:#12100e;--card:#1b1815;--linha:#2c2723;--texto:#f3ece0;--apago:#a89b88;--ouro:#d8b26e;--botao:#c8442f}
+:root{color-scheme:dark;--fundo:#101820;--card:#18232d;--linha:#2a3a47;--texto:#edf3f6;--apago:#9eafb9;--ouro:#efbd72;--botao:#c66c48;--verde:#327c67;--sombra:0 18px 48px #07101866}
 *{box-sizing:border-box}
-body{margin:0;background:var(--fundo);color:var(--texto);font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-.cabeca{padding:26px 18px 22px;background:linear-gradient(160deg,#1b1815,#12100e 70%);border-bottom:1px solid var(--linha);text-align:center}
-.cabeca h1{margin:0 0 6px;font-size:clamp(23px,6vw,38px);letter-spacing:.5px;text-transform:uppercase;color:var(--ouro)}
-.cabeca p{margin:0;color:var(--apago);font-size:14px}
-.acoes{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px}
-.acoes a{display:inline-block;padding:11px 16px;border-radius:10px;background:var(--card);border:1px solid var(--linha);color:var(--texto);text-decoration:none;font-size:15px}
-.acoes a.zap{background:var(--botao);border-color:var(--botao);color:#fff;font-weight:600}
-main{max-width:940px;margin:0 auto;padding:0 16px 60px}
-section{margin-top:26px;background:var(--card);border:1px solid var(--linha);border-radius:14px;padding:18px}
-h2{margin:0 0 14px;font-size:19px;color:var(--ouro);text-transform:uppercase;letter-spacing:1px}
-.item{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px dashed var(--linha)}
+body{margin:0;background:radial-gradient(ellipse at 50% -18%,#284254 0,transparent 58%),var(--fundo);color:var(--texto);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.cabeca{padding:42px 18px 30px;background:linear-gradient(150deg,#1d303d,#15212a 72%);border-bottom:1px solid var(--linha);text-align:center}
+.cabeca h1{max-width:900px;margin:0 auto 8px;font-size:clamp(25px,6vw,42px);line-height:1.15;letter-spacing:.2px;color:var(--ouro)}
+.cabeca p{margin:0 auto;color:var(--apago);font-size:15px}
+.acoes{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:20px}
+.acoes a{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:10px 16px;border-radius:12px;background:#1a2934;border:1px solid var(--linha);color:var(--texto);text-decoration:none;font-size:14px;font-weight:650;transition:transform .15s,border-color .15s}
+.acoes a:hover{transform:translateY(-1px);border-color:var(--ouro)}
+.acoes a.zap{background:var(--verde);border-color:var(--verde);color:#fff}
+main{max-width:960px;margin:0 auto;padding:4px 18px 64px}
+section{margin-top:20px;background:linear-gradient(145deg,#1b2832,#17232c);border:1px solid var(--linha);border-radius:18px;padding:22px;box-shadow:var(--sombra)}
+h2{margin:0 0 14px;font-size:20px;color:var(--ouro);letter-spacing:.1px}
+.item{display:flex;justify-content:space-between;gap:12px;padding:13px 0;border-bottom:1px solid #ffffff12}
 .item:last-child{border-bottom:0}
 .item b{font-weight:600}
 .item span{color:var(--apago);font-size:13px;white-space:nowrap}
 .mini{color:var(--apago);font-size:13px;margin:6px 0 0}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
-.chip{padding:7px 12px;border:1px solid var(--linha);border-radius:999px;font-size:14px;background:#151311}
+.chip{padding:7px 12px;border:1px solid var(--linha);border-radius:999px;font-size:14px;background:#1b2b35}
 grade{display:grid}
 .dias{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
 .hora{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed var(--linha);font-size:15px}
 .hora:last-child{border-bottom:0}
 .hora b{color:var(--apago);font-weight:500;text-transform:capitalize}
 .opcoes{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
-.op{padding:10px 13px;border:1px solid var(--linha);border-radius:10px;background:#151311;color:var(--texto);font:inherit;cursor:pointer}
-.op.ativo{border-color:var(--ouro);background:#241f18;color:var(--ouro);font-weight:600}
+.op{padding:10px 14px;border:1px solid var(--linha);border-radius:12px;background:#1a2933;color:var(--texto);font:inherit;cursor:pointer;transition:background .15s,border-color .15s}
+.op:hover{border-color:#9c8060}
+.op.ativo{border-color:var(--ouro);background:#3a3225;color:var(--ouro);font-weight:700}
 .op:disabled{opacity:.35;cursor:not-allowed}
-.pessoa{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--linha);border-radius:12px;background:#151311;cursor:pointer;color:var(--texto);font:inherit}
-.pessoa.ativo{border-color:var(--ouro);background:#241f18}
+.pessoa{display:flex;align-items:center;gap:10px;padding:10px 13px;border:1px solid var(--linha);border-radius:14px;background:#1a2933;cursor:pointer;color:var(--texto);font:inherit}
+.pessoa.ativo{border-color:var(--ouro);background:#3a3225}
 .pessoa img{width:42px;height:42px;border-radius:50%;object-fit:cover;background:#0e0d0c}
 .pessoa div{text-align:left}
 .pessoa small{display:block;color:var(--apago);font-size:12px;text-transform:capitalize}
 .galeria{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
 .galeria figure{margin:0}
-.galeria img{width:100%;height:140px;object-fit:cover;border-radius:10px;display:block;background:#0e0d0c}
+.galeria img{width:100%;height:180px;object-fit:cover;border-radius:14px;display:block;background:#0e0d0c}
 .galeria figcaption{font-size:12px;color:var(--apago);margin-top:5px}
-.rotulo{display:block;font-size:13px;color:var(--apago);margin:14px 0 6px;text-transform:uppercase;letter-spacing:1px}
-input,select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--linha);background:#151311;color:var(--texto);font:inherit}
-.gravar{width:100%;margin-top:16px;padding:14px;border:0;border-radius:11px;background:var(--botao);color:#fff;font-size:17px;font-weight:700;cursor:pointer}
+.rotulo{display:block;font-size:12px;color:var(--apago);margin:14px 0 6px;text-transform:uppercase;letter-spacing:.08em;font-weight:700}
+input,select{width:100%;min-height:46px;padding:11px 13px;border-radius:12px;border:1px solid var(--linha);background:#111c24;color:var(--texto);font:inherit}
+input:focus,select:focus{outline:2px solid #efbd7280;border-color:var(--ouro)}
+.gravar{width:100%;margin-top:16px;padding:14px;border:0;border-radius:12px;background:var(--botao);color:#fff;font-size:16px;font-weight:750;cursor:pointer;transition:filter .15s,transform .15s}
+.gravar:hover:not(:disabled){filter:brightness(1.12);transform:translateY(-1px)}
+.gravar.secundario{background:#263b48;border:1px solid #466072}
+.codigo{max-width:250px;letter-spacing:.35em;font-size:22px;font-weight:750;text-align:center}
 .gravar:disabled{opacity:.45;cursor:not-allowed}
-.aviso{margin-top:12px;padding:12px;border-radius:10px;font-size:15px;display:none}
-.aviso.ok{display:block;background:#162a1c;border:1px solid #2b5539}
-.aviso.erro{display:block;background:#2c1512;border:1px solid #55272b}
-.pés{margin-top:22px;text-align:center;color:var(--apago);font-size:12px}
+.aviso{margin-top:12px;padding:12px 14px;border-radius:12px;font-size:14px;display:none}
+.aviso.ok{display:block;background:#17342d;border:1px solid #327c67}
+.aviso.erro{display:block;background:#3a2421;border:1px solid #85503f}
+.pés{margin-top:26px;text-align:center;color:var(--apago);font-size:12px}
 .pés a{color:var(--apago)}
-@media (max-width:560px){section{padding:15px}.acoes a{flex:1 1 auto;text-align:center}}
+@media (max-width:560px){.cabeca{padding:32px 16px 24px}main{padding:0 12px 44px}section{margin-top:14px;padding:17px;border-radius:15px}.acoes a{flex:1 1 130px;text-align:center}.item{align-items:flex-start}.galeria{grid-template-columns:repeat(auto-fill,minmax(125px,1fr))}}
 `;
 
 /** O JavaScript da página é escrito com concatenação e sem crases de propósito: dentro do
@@ -581,7 +581,14 @@ function jsDaPagina(api: string): string {
   var escolhido = null;
   function montarDias() {
     limpar(caixaDias); escolhido = null;
-    var semVaga = (d.servicos || []).length === 0 ? 30 : (escolha.servico ? escolha.servico.duracao_min : 30);
+    if (!(d.servicos || []).length) {
+      var avisoServico = document.createElement('p'); avisoServico.className = 'mini';
+      avisoServico.textContent = 'A agenda estará disponível assim que o salão cadastrar serviços.';
+      caixaDias.appendChild(avisoServico);
+      limpar(caixaHoras);
+      el('gravar').disabled = true;
+      return;
+    }
     dia.forEach(function (iso, i) {
       var partes = iso.split('-');
       var data = new Date(Date.UTC(Number(partes[0]), Number(partes[1]) - 1, Number(partes[2])));
@@ -673,6 +680,81 @@ function jsDaPagina(api: string): string {
     }).catch(function () { el('gravar').disabled = false; aviso('erro', 'Sem resposta da agenda. Tente de novo.'); });
   };
 
+  var cancelarTelefone = el('cancelar-telefone');
+  cancelarTelefone.addEventListener('input', function () {
+    var n = cancelarTelefone.value.replace(/\D/g, '').slice(0, 11);
+    if (n.length > 6) cancelarTelefone.value = '(' + n.slice(0, 2) + ') ' + n.slice(2, 7) + '-' + n.slice(7);
+    else if (n.length > 2) cancelarTelefone.value = '(' + n.slice(0, 2) + ') ' + n.slice(2);
+    else cancelarTelefone.value = n;
+  });
+  el('cancelar-codigo').addEventListener('input', function () {
+    el('cancelar-codigo').value = el('cancelar-codigo').value.replace(/\D/g, '').slice(0, 6);
+  });
+  function enviarAcaoCancelamento(acao, dados) {
+    return fetch(api, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(Object.assign({ action: acao, slug: d.slug }, dados))
+    }).then(function (r) {
+      return r.json().then(function (s) {
+        if (!r.ok) throw new Error(s.erro || 'indisponivel');
+        return s;
+      });
+    });
+  }
+  function dadosCancelamento() {
+    return {
+      telefone: cancelarTelefone.value.replace(/\D/g, ''),
+      dia: el('cancelar-dia').value,
+      hora: el('cancelar-hora').value
+    };
+  }
+  el('cancelar-solicitar').onclick = function () {
+    var dados = dadosCancelamento();
+    if (dados.telefone.length < 10 || !dados.dia || !dados.hora) {
+      el('cancelar-aviso').className = 'aviso erro';
+      el('cancelar-aviso').textContent = 'Preencha o telefone usado no agendamento, a data e o horário.';
+      return;
+    }
+    if (!api) {
+      el('cancelar-aviso').className = 'aviso erro';
+      el('cancelar-aviso').textContent = 'O cancelamento está indisponível agora. Tente novamente.';
+      return;
+    }
+    el('cancelar-solicitar').disabled = true;
+    el('cancelar-aviso').className = 'aviso';
+    enviarAcaoCancelamento('estab_cancelar_solicitar', dados).then(function (s) {
+      el('cancelar-aviso').className = 'aviso ok';
+      el('cancelar-aviso').textContent = s.texto || 'Se encontramos seu horário, enviamos um código pelo WhatsApp.';
+      el('cancelar-codigo-passo').hidden = false;
+      el('cancelar-codigo').focus();
+    }).catch(function () {
+      el('cancelar-aviso').className = 'aviso erro';
+      el('cancelar-aviso').textContent = 'Não foi possível solicitar agora. Tente novamente em instantes.';
+    }).finally(function () { el('cancelar-solicitar').disabled = false; });
+  };
+  el('cancelar-confirmar').onclick = function () {
+    var dados = dadosCancelamento();
+    dados.codigo = el('cancelar-codigo').value;
+    if (dados.codigo.length !== 6) {
+      el('cancelar-aviso').className = 'aviso erro';
+      el('cancelar-aviso').textContent = 'Digite o código de seis números recebido no WhatsApp.';
+      return;
+    }
+    el('cancelar-confirmar').disabled = true;
+    enviarAcaoCancelamento('estab_cancelar_confirmar', dados).then(function (s) {
+      el('cancelar-aviso').className = 'aviso ok';
+      el('cancelar-aviso').textContent = s.texto || 'Cancelamento confirmado.';
+      el('cancelar-codigo-passo').hidden = true;
+      el('cancelar-codigo').value = '';
+    }).catch(function (e) {
+      el('cancelar-aviso').className = 'aviso erro';
+      el('cancelar-aviso').textContent = e.message === 'devagar'
+        ? 'Muitas tentativas. Aguarde um minuto antes de tentar novamente.'
+        : 'Código não validado. Confira os dados, solicite um novo código e tente novamente.';
+    }).finally(function () { el('cancelar-confirmar').disabled = false; });
+  };
+
   montarDias();
 })();
 `;
@@ -721,6 +803,8 @@ export function htmlDaPagina(d: DadosPagina, api: string): string {
   <h1>${esc(d.nome || "Estabelecimento")}</h1>
   <p>${esc(endereco || "Endereço e ponto de referência no WhatsApp")}</p>
   <div class="acoes">
+    <a href="#agendar">Agendar</a>
+    <a href="#cancelar">Cancelar horário</a>
     <a class="zap" href="${esc(zap)}" rel="noopener">Chamar no WhatsApp</a>
     ${endereco ? `<a href="${esc(mapaEndereco(d))}" rel="noopener nofollow">Como chegar</a>` : ""}
   </div>
@@ -748,6 +832,31 @@ export function htmlDaPagina(d: DadosPagina, api: string): string {
     <p class="mini">O horário cai direto na agenda do salão e ele confirma com você.</p>
   </section>
 
+  <section id="cancelar">
+    <h2>Cancelar agendamento</h2>
+    <p class="mini">Use o mesmo telefone informado ao marcar. Enviaremos um código de confirmação pelo WhatsApp desse número.</p>
+    <div class="opcoes" style="align-items:flex-end">
+      <label style="flex:1;min-width:180px"><span class="rotulo">Telefone do agendamento</span>
+        <input id="cancelar-telefone" type="tel" inputmode="numeric" maxlength="17" placeholder="(11) 99999-9999" autocomplete="tel">
+      </label>
+      <label style="flex:1;min-width:150px"><span class="rotulo">Data</span>
+        <input id="cancelar-dia" type="date">
+      </label>
+      <label style="flex:1;min-width:130px"><span class="rotulo">Horário</span>
+        <input id="cancelar-hora" type="time">
+      </label>
+    </div>
+    <button class="gravar secundario" id="cancelar-solicitar" type="button">Enviar código pelo WhatsApp</button>
+    <div class="aviso" id="cancelar-aviso" aria-live="polite"></div>
+    <div id="cancelar-codigo-passo" hidden>
+      <label><span class="rotulo">Código de seis números</span>
+        <input class="codigo" id="cancelar-codigo" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000">
+      </label>
+      <p class="mini">O código expira em 10 minutos. Após a confirmação, o horário será cancelado.</p>
+      <button class="gravar" id="cancelar-confirmar" type="button">Confirmar cancelamento</button>
+    </div>
+  </section>
+
   ${d.servicos.length ? `<section><h2>Serviços</h2>${linhaServico}</section>` : ""}
   ${d.produtos.length ? `<section><h2>Produtos</h2>${linhaProduto}</section>` : ""}
   <section><h2>Horários de atendimento</h2>${linhaHorario}</section>
@@ -760,7 +869,7 @@ export function htmlDaPagina(d: DadosPagina, api: string): string {
   <p class="pés">${esc(d.nome || "")}${d.atualizado_em ? ` · atualizado em ${esc(d.atualizado_em)}` : ""}</p>
 </main>
 <script id="dados" type="application/json">${snapshot}</script>
-<script>${d.servicos.length ? jsDaPagina(api) : ""}</script>
+<script>${jsDaPagina(api)}</script>
 </body>
 </html>
 `;
@@ -777,8 +886,9 @@ export function htmlIndice(itens: { slug: string; nome: string }[]): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Estabelecimentos atendidos pelo chatbot</title>
-<style>body{font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#12100e;color:#f3ece0;max-width:720px;margin:0 auto;padding:34px 18px}
-h1{color:#d8b26e;text-transform:uppercase;font-size:24px}a{color:#f3ece0}ul{padding-left:20px}li{margin:8px 0}</style>
+<style>:root{color-scheme:dark;--bg:#101820;--card:#18232d;--line:#2a3a47;--text:#edf3f6;--muted:#9eafb9;--gold:#efbd72}
+*{box-sizing:border-box}body{font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:radial-gradient(ellipse at 50% -18%,#284254 0,transparent 58%),var(--bg);color:var(--text);max-width:820px;margin:0 auto;padding:34px 18px}
+h1{color:var(--gold);font-size:clamp(25px,5vw,36px)}ul{padding:0;list-style:none}li{margin:10px 0}a{display:block;padding:13px 15px;border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--text);text-decoration:none;font-weight:650}a:hover{border-color:var(--gold)}</style>
 </head>
 <body>
 <h1>Estabelecimentos</h1>
@@ -837,8 +947,19 @@ export async function publicarPainelBarbearia(
 <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Painel privado — ${nome}</title>
 <style>
-:root{color-scheme:dark;--bg:#0d1117;--card:#161b22;--line:#30363d;--text:#e6edf3;--muted:#9da7b3;--green:#238636;--gold:#d8b26e}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px system-ui;padding:16px}main{max-width:820px;margin:auto}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin:12px 0}h1,h2{color:var(--gold)}label{display:block;margin:10px 0 4px;color:var(--muted)}input,select,textarea{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:#0d1117;color:var(--text)}button{padding:10px 14px;border:0;border-radius:8px;background:var(--green);color:white;font-weight:700}.linha{display:flex;gap:8px;flex-wrap:wrap}.linha>*{flex:1;min-width:180px}.item{border:1px solid var(--line);border-radius:8px;padding:8px;margin:7px 0}.item img{width:84px;height:84px;object-fit:cover;border-radius:8px}.muted{color:var(--muted)}.erro{color:#ff8e8e}.ok{color:#7ee787}
+:root{color-scheme:dark;--bg:#101820;--card:#18232d;--line:#2a3a47;--text:#edf3f6;--muted:#9eafb9;--green:#327c67;--gold:#efbd72;--red:#bd674d}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 50% -18%,#284254 0,transparent 58%),var(--bg);color:var(--text);font:15px/1.6 system-ui,Segoe UI,Roboto,Arial,sans-serif;padding:24px 16px}
+main{max-width:900px;margin:auto}h1{font-size:clamp(25px,5vw,36px);line-height:1.15;margin:6px 0;color:var(--gold)}h2{font-size:19px;margin:0 0 14px;color:var(--gold)}
+.card{background:linear-gradient(145deg,#1b2832,#17232c);border:1px solid var(--line);border-radius:18px;padding:20px;margin:16px 0;box-shadow:0 18px 48px #07101866}
+label{display:block;margin:12px 0 5px;color:var(--muted);font-size:13px;font-weight:650}
+input,select,textarea{width:100%;min-height:44px;padding:11px 13px;border:1px solid var(--line);border-radius:12px;background:#111c24;color:var(--text);font:inherit}
+input:focus,select:focus,textarea:focus{outline:2px solid #efbd7280;border-color:var(--gold)}
+button{min-height:42px;padding:10px 15px;border:1px solid var(--green);border-radius:12px;background:var(--green);color:white;font:inherit;font-weight:700;cursor:pointer;transition:filter .15s,transform .15s}
+button:hover{filter:brightness(1.12);transform:translateY(-1px)}button:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.linha{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.linha>*{flex:1;min-width:180px}
+.item{border:1px solid var(--line);border-radius:14px;padding:12px;margin:9px 0;background:#111c2466}.item img{width:84px;height:84px;object-fit:cover;border-radius:12px}
+.muted{color:var(--muted)}.erro{color:#ffad98}.ok{color:#83d9b7}
+@media(max-width:560px){body{padding:16px 12px}.card{padding:16px;border-radius:15px}.linha>*{min-width:100%}}
 </style></head><body><main>
 <h1>Painel privado — ${nome}</h1><p class="muted">Esta página altera somente este estabelecimento.</p>
 <p id="status"></p>
@@ -853,7 +974,7 @@ export async function publicarPainelBarbearia(
 <section class="card"><h2>Produtos</h2><div id="produtos"></div>
 <div class="linha"><input id="novoProduto" placeholder="Nome do produto"><input id="novoProdutoPreco" type="number" step="0.01" placeholder="Preço"></div>
 <button id="adicionarProduto">Adicionar produto</button></section>
-<section class="card"><h2>Horários</h2><div id="horarios"></div><button id="salvarHorarios">Salvar horários</button></section>
+<section class="card"><h2>Horários</h2><p class="muted">Informe abertura e fechamento. Para marcar um dia como fechado, deixe os dois campos vazios.</p><div id="horarios"></div><button id="salvarHorarios">Salvar horários</button></section>
 <section class="card"><h2>Pagamento</h2><textarea id="pagamentos" rows="4" placeholder="Dinheiro, PIX, Cartão"></textarea><button id="salvarPagamentos">Salvar formas de pagamento</button></section>
 <section class="card"><h2>Fotos</h2><div id="fotos"></div><input id="foto" type="file" accept="image/jpeg,image/png,image/webp"><button id="enviarFoto">Enviar foto</button></section>
 </main>
@@ -863,12 +984,12 @@ async function call(action,data){const r=await fetch(API,{method:'POST',headers:
 function status(t,erro){const el=document.getElementById('status');el.className=erro?'erro':'ok';el.textContent=t||''}
 async function ver(){const d=await call('barb_painel_ver');if(!d.ok){status(d.erro||'Acesso inválido',true);return}const c=d.conta||{};document.getElementById('nome').value=c.nome||'';document.getElementById('telefone_publico').value=c.telefone_publico||'';document.getElementById('endereco').value=c.endereco||'';desenhar(d)}
 function criar(tag,cls,text){const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n}
-function desenhar(d){const serv=document.getElementById('servicos');serv.innerHTML='';(d.servicos||[]).forEach(s=>{const box=criar('div','item linha');const nome=document.createElement('input');nome.value=s.nome||'';const preco=document.createElement('input');preco.type='number';preco.value=s.preco||0;const duracao=document.createElement('input');duracao.type='number';duracao.value=s.duracao_min||30;const editar=criar('button','', 'Salvar');editar.onclick=async()=>{const r=await call('barb_painel_salvar',{acao:'servico_editar',id:s.id,nome:nome.value,preco:preco.value,duracao_min:duracao.value});status(r.ok?'Serviço atualizado':'Não consegui atualizar',!r.ok);if(r.ok)ver()};const apagar=criar('button','', 'Apagar');apagar.onclick=async()=>{if(!confirm('Apagar este serviço?'))return;const r=await call('barb_painel_salvar',{acao:'servico_apagar',id:s.id});status(r.ok?'Serviço apagado':'Não consegui apagar',!r.ok);if(r.ok)ver()};box.append(nome,preco,duracao,editar,apagar);serv.append(box)});const prod=document.getElementById('produtos');prod.innerHTML='';(d.produtos||[]).forEach(p=>{const box=criar('div','item linha');const nome=document.createElement('input');nome.value=p.nome||'';const preco=document.createElement('input');preco.type='number';preco.value=p.preco||0;const editar=criar('button','', 'Salvar');editar.onclick=async()=>{const r=await call('barb_painel_salvar',{acao:'produto_editar',id:p.id,nome:nome.value,preco:preco.value});status(r.ok?'Produto atualizado':'Não consegui atualizar',!r.ok);if(r.ok)ver()};const apagar=criar('button','', 'Apagar');apagar.onclick=async()=>{if(!confirm('Apagar este produto?'))return;const r=await call('barb_painel_salvar',{acao:'produto_apagar',id:p.id});status(r.ok?'Produto apagado':'Não consegui apagar',!r.ok);if(r.ok)ver()};box.append(nome,preco,editar,apagar);prod.append(box)});const h=document.getElementById('horarios');h.innerHTML='';const nomes=['domingo','segunda','terça','quarta','quinta','sexta','sábado'];const por={};(d.horarios||[]).forEach(x=>por[Number(x.dia)]=x);for(let i=0;i<7;i++){const x=por[i]||{};const row=criar('div','item linha');row.append(criar('b','',nomes[i]));const fecha=document.createElement('input');fecha.className='fecha';fecha.dataset.dia=i;fecha.value=x.fecha||'';fecha.placeholder='19:00';row.append(fecha);h.append(row)}document.getElementById('pagamentos').value=(d.pagamentos||[]).map(p=>p.nome).join(', ');const fotos=document.getElementById('fotos');fotos.innerHTML='';(d.fotos||[]).forEach(f=>{const box=criar('div','item linha');if(f.arquivo){const img=document.createElement('img');img.src=${JSON.stringify(baseDoSite())}+'/'+SLUG+'/'+f.arquivo;box.append(img)}const remover=criar('button','', 'Remover');remover.onclick=async()=>{const r=await call('barb_painel_foto_apagar',{id:f.id});status(r.ok?'Foto removida':'Não consegui remover',!r.ok);if(r.ok)ver()};box.append(remover);fotos.append(box)})
+function desenhar(d){const serv=document.getElementById('servicos');serv.innerHTML='';(d.servicos||[]).forEach(s=>{const box=criar('div','item linha');const nome=document.createElement('input');nome.value=s.nome||'';const preco=document.createElement('input');preco.type='number';preco.value=s.preco||0;const duracao=document.createElement('input');duracao.type='number';duracao.value=s.duracao_min||30;const editar=criar('button','', 'Salvar');editar.onclick=async()=>{const r=await call('barb_painel_salvar',{acao:'servico_editar',id:s.id,nome:nome.value,preco:preco.value,duracao_min:duracao.value});status(r.ok?'Serviço atualizado':'Não consegui atualizar',!r.ok);if(r.ok)ver()};const apagar=criar('button','', 'Apagar');apagar.onclick=async()=>{if(!confirm('Apagar este serviço?'))return;const r=await call('barb_painel_salvar',{acao:'servico_apagar',id:s.id});status(r.ok?'Serviço apagado':'Não consegui apagar',!r.ok);if(r.ok)ver()};box.append(nome,preco,duracao,editar,apagar);serv.append(box)});const prod=document.getElementById('produtos');prod.innerHTML='';(d.produtos||[]).forEach(p=>{const box=criar('div','item linha');const nome=document.createElement('input');nome.value=p.nome||'';const preco=document.createElement('input');preco.type='number';preco.value=p.preco||0;const editar=criar('button','', 'Salvar');editar.onclick=async()=>{const r=await call('barb_painel_salvar',{acao:'produto_editar',id:p.id,nome:nome.value,preco:preco.value});status(r.ok?'Produto atualizado':'Não consegui atualizar',!r.ok);if(r.ok)ver()};const apagar=criar('button','', 'Apagar');apagar.onclick=async()=>{if(!confirm('Apagar este produto?'))return;const r=await call('barb_painel_salvar',{acao:'produto_apagar',id:p.id});status(r.ok?'Produto apagado':'Não consegui apagar',!r.ok);if(r.ok)ver()};box.append(nome,preco,editar,apagar);prod.append(box)});const h=document.getElementById('horarios');h.innerHTML='';const nomes=['domingo','segunda','terça','quarta','quinta','sexta','sábado'];const por={};(d.horarios||[]).forEach(x=>por[Number(x.dia)]=x);for(let i=0;i<7;i++){const x=por[i]||{};const row=criar('div','item linha');row.append(criar('b','',nomes[i]));const abre=document.createElement('input');abre.type='time';abre.className='abre';abre.dataset.dia=i;abre.value=x.abre||'';abre.setAttribute('aria-label','Abertura '+nomes[i]);const fecha=document.createElement('input');fecha.type='time';fecha.className='fecha';fecha.dataset.dia=i;fecha.value=x.fecha||'';fecha.setAttribute('aria-label','Fechamento '+nomes[i]);row.append(abre,fecha);h.append(row)}document.getElementById('pagamentos').value=(d.pagamentos||[]).map(p=>p.nome).join(', ');const fotos=document.getElementById('fotos');fotos.innerHTML='';(d.fotos||[]).forEach(f=>{const box=criar('div','item linha');if(f.arquivo){const img=document.createElement('img');img.src=${JSON.stringify(baseDoSite())}+'/'+SLUG+'/'+f.arquivo;box.append(img)}const remover=criar('button','', 'Remover');remover.onclick=async()=>{const r=await call('barb_painel_foto_apagar',{id:f.id});status(r.ok?'Foto removida':'Não consegui remover',!r.ok);if(r.ok)ver()};box.append(remover);fotos.append(box)})
 }
 document.getElementById('salvarDados').onclick=async()=>{const r=await call('barb_painel_salvar',{nome:document.getElementById('nome').value,telefone_publico:document.getElementById('telefone_publico').value,endereco:document.getElementById('endereco').value});status(r.ok?'Dados salvos':'Não consegui salvar',!r.ok);if(r.ok)ver()}
 document.getElementById('adicionarServico').onclick=async()=>{const nome=document.getElementById('novoServico').value.trim(),preco=Number(document.getElementById('novoPreco').value||0),duracao=Number(document.getElementById('novoDuracao').value||30);if(!nome)return status('Escreva o nome do serviço',true);const r=await call('barb_painel_salvar',{acao:'servico',nome,preco,duracao_min:duracao});status(r.ok?'Serviço salvo':'Não consegui salvar',!r.ok);if(r.ok)ver()}
 document.getElementById('adicionarProduto').onclick=async()=>{const nome=document.getElementById('novoProduto').value.trim(),preco=Number(document.getElementById('novoProdutoPreco').value||0);if(!nome)return status('Escreva o nome do produto',true);const r=await call('barb_painel_salvar',{acao:'produto',nome,preco});status(r.ok?'Produto salvo':'Não consegui salvar',!r.ok);if(r.ok)ver()}
-document.getElementById('salvarHorarios').onclick=async()=>{const horarios=[];document.querySelectorAll('#horarios .item').forEach(row=>{const abre=row.querySelector('.abre'),fecha=row.querySelector('.fecha');if(abre&&fecha&&abre.value&&fecha.value)horarios.push({dia:Number(abre.dataset.dia),abre:abre.value,fecha:fecha.value})});const r=await call('barb_painel_salvar',{horarios});status(r.ok?'Horários salvos':'Não consegui salvar',!r.ok);if(r.ok)ver()}
+document.getElementById('salvarHorarios').onclick=async()=>{const horarios=[];let incompleto=false;document.querySelectorAll('#horarios .item').forEach(row=>{const abre=row.querySelector('.abre'),fecha=row.querySelector('.fecha');if(!abre||!fecha)return;if(Boolean(abre.value)!==Boolean(fecha.value)){incompleto=true;return}if(abre.value&&fecha.value)horarios.push({dia:Number(abre.dataset.dia),abre:abre.value,fecha:fecha.value})});if(incompleto)return status('Preencha abertura e fechamento do mesmo dia',true);if(!horarios.length&&!confirm('Salvar todos os dias como fechados e remover os horários atuais?'))return;const r=await call('barb_painel_salvar',{horarios});status(r.ok?'Horários salvos':'Não consegui salvar',!r.ok);if(r.ok)ver()}
 document.getElementById('salvarPagamentos').onclick=async()=>{const pagamentos=document.getElementById('pagamentos').value.split(/[,;]/).map(x=>x.trim()).filter(Boolean);const r=await call('barb_painel_salvar',{pagamentos});status(r.ok?'Formas de pagamento salvas':'Não consegui salvar',!r.ok);if(r.ok)ver()}
 document.getElementById('enviarFoto').onclick=async()=>{const file=document.getElementById('foto').files[0];if(!file)return status('Escolha uma foto',true);const b64=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file)});const r=await call('barb_painel_foto',{b64:String(b64)});status(r.ok?'Foto enviada':'Não consegui enviar',!r.ok);if(r.ok)ver()}
 ver();
@@ -984,7 +1105,9 @@ export const estabVagas: Handler = async (dados) => {
 };
 
 const REGISTROS_IP = new Map<string, number[]>();
+const SOLICITACOES_CANCELAMENTO_IP = new Map<string, number[]>();
 const MAX_POR_MINUTO = 8;
+const MAX_CANCELAMENTO_POR_MINUTO = 5;
 
 function muitasReservas(ip: string): boolean {
   const agora = Date.now();
@@ -997,6 +1120,188 @@ function muitasReservas(ip: string): boolean {
   REGISTROS_IP.set(ip, recentes);
   return false;
 }
+
+function muitasSolicitacoesCancelamento(ip: string, acao: string): boolean {
+  const agora = Date.now();
+  const chave = `${acao}:${ip || "0"}`;
+  const recentes = (SOLICITACOES_CANCELAMENTO_IP.get(chave) || []).filter((t) => agora - t < 60_000);
+  if (recentes.length >= MAX_CANCELAMENTO_POR_MINUTO) {
+    SOLICITACOES_CANCELAMENTO_IP.set(chave, recentes);
+    return true;
+  }
+  recentes.push(agora);
+  SOLICITACOES_CANCELAMENTO_IP.set(chave, recentes);
+  return false;
+}
+
+function respostaCancelamentoGenerica(): Bruto {
+  return {
+    ok: true,
+    texto: "Se encontramos um horário futuro com esses dados, enviamos um código pelo WhatsApp. Confira também as mensagens arquivadas.",
+  };
+}
+
+function segredoDeCancelamento(): string {
+  const segredo = String(Deno.env.get("DATABASE_URL") || "").trim();
+  if (!segredo) throw new Error("DATABASE_URL faltando para validar cancelamento.");
+  return segredo;
+}
+
+function instanteInformado(dados: Bruto): string | null {
+  return instanteDoAgendamento(String(dados.dia || ""), String(dados.hora || ""));
+}
+
+/** Envia um código de uso único apenas ao número já vinculado ao horário. */
+export const estabCancelarSolicitar: Handler = async (dados, ctx) => {
+  const conta = await contaPorSlug(String(dados.slug || ""));
+  if (!conta) return { ok: false, erro: "sem_pagina" };
+  if (muitasSolicitacoesCancelamento(ctx.ip, "solicitar")) return respostaCancelamentoGenerica();
+
+  const cliente = normalizarWhatsapp(String(dados.telefone || ""));
+  const instante = instanteInformado(dados);
+  if (!telefoneValido(cliente) || !instante) return respostaCancelamentoGenerica();
+  const conf = await obterConfig();
+  if (!conf) return { ok: false, erro: "indisponivel" };
+
+  const codigo = novoCodigoCancelamento();
+  const salt = aleatorio(16);
+  const codigoHash = await hashCodigoCancelamento(codigo, salt, segredoDeCancelamento());
+  const salvo = await consultar1(
+    `insert into public.barber_cancelamento_codigo
+       (agendamento_id, telefone, cliente_telefone, codigo_hash, salt, expira_em,
+        tentativas, solicitacoes, janela_inicio_em, ultima_solicitacao_em, usado_em, atualizado_em)
+     select a.id, a.telefone, a.cliente_telefone, $4, $5, now() + interval '10 minutes',
+            0, 1, now(), now(), null, now()
+       from public.barber_agendamento a
+      where a.telefone = $1 and a.cliente_telefone = $2 and a.data_hora = $3
+        and a.data_hora > now() and a.status = 'marcado'
+      order by a.id
+      limit 1
+     on conflict (agendamento_id) do update
+       set cliente_telefone = excluded.cliente_telefone,
+           codigo_hash = excluded.codigo_hash,
+           salt = excluded.salt,
+           expira_em = excluded.expira_em,
+           tentativas = 0,
+           solicitacoes = case
+             when barber_cancelamento_codigo.janela_inicio_em <= now() - interval '15 minutes' then 1
+             else barber_cancelamento_codigo.solicitacoes + 1
+           end,
+           janela_inicio_em = case
+             when barber_cancelamento_codigo.janela_inicio_em <= now() - interval '15 minutes' then now()
+             else barber_cancelamento_codigo.janela_inicio_em
+           end,
+           ultima_solicitacao_em = now(),
+           usado_em = null,
+           atualizado_em = now()
+     where barber_cancelamento_codigo.ultima_solicitacao_em <= now() - interval '60 seconds'
+       and (barber_cancelamento_codigo.janela_inicio_em <= now() - interval '15 minutes'
+            or barber_cancelamento_codigo.solicitacoes < 3)
+     returning agendamento_id`,
+    [String(conta.telefone || ""), cliente, instante, codigoHash, salt],
+  );
+  if (!salvo) return respostaCancelamentoGenerica();
+
+  const envio = await enviarTexto(
+    conf,
+    cliente,
+    `Seu código para cancelar um horário em ${String(conta.nome || "seu salão")} é ${codigo}. Ele expira em 10 minutos. Se você não pediu o cancelamento, ignore esta mensagem.`,
+  );
+  if (!envio.ok) {
+    await consultar(
+      `update public.barber_cancelamento_codigo
+          set usado_em = now(), atualizado_em = now()
+        where agendamento_id = $1 and codigo_hash = $2`,
+      [Number(salvo.agendamento_id), codigoHash],
+    );
+  }
+  return respostaCancelamentoGenerica();
+};
+
+/** Valida o código uma única vez e cancela somente o horário correspondente ao telefone. */
+export const estabCancelarConfirmar: Handler = async (dados, ctx) => {
+  const conta = await contaPorSlug(String(dados.slug || ""));
+  if (!conta) return { ok: false, erro: "sem_pagina" };
+  if (muitasSolicitacoesCancelamento(ctx.ip, "confirmar")) {
+    return { ok: false, erro: "devagar" };
+  }
+
+  const cliente = normalizarWhatsapp(String(dados.telefone || ""));
+  const instante = instanteInformado(dados);
+  const codigo = String(dados.codigo || "").trim();
+  if (!telefoneValido(cliente) || !instante || !/^\d{6}$/.test(codigo)) {
+    return { ok: false, erro: "codigo_ou_agendamento_invalido" };
+  }
+
+  const codigoAtivo = await consultar1(
+    `select c.salt
+       from public.barber_cancelamento_codigo c
+       join public.barber_agendamento a on a.id = c.agendamento_id
+      where c.telefone = $1 and c.cliente_telefone = $2
+        and a.data_hora = $3 and a.data_hora > now() and a.status = 'marcado'
+        and c.expira_em > now() and c.usado_em is null and c.tentativas < 5
+      order by c.agendamento_id
+      limit 1`,
+    [String(conta.telefone || ""), cliente, instante],
+  );
+  if (!codigoAtivo) return { ok: false, erro: "codigo_ou_agendamento_invalido" };
+  const codigoHash = await hashCodigoCancelamento(
+    codigo,
+    String(codigoAtivo.salt || ""),
+    segredoDeCancelamento(),
+  );
+  const cancelado = await consultar1(
+    `with alvo as materialized (
+       select c.agendamento_id, c.codigo_hash
+         from public.barber_cancelamento_codigo c
+         join public.barber_agendamento a on a.id = c.agendamento_id
+        where c.telefone = $1 and c.cliente_telefone = $2
+          and a.data_hora = $3 and a.data_hora > now() and a.status = 'marcado'
+          and c.expira_em > now() and c.usado_em is null and c.tentativas < 5
+        order by c.agendamento_id
+        limit 1
+        for update of c
+     ),
+     tentativa as (
+       update public.barber_cancelamento_codigo c
+          set tentativas = c.tentativas + 1,
+              usado_em = case when c.codigo_hash = $4 then now() else c.usado_em end,
+              atualizado_em = now()
+         from alvo
+        where c.agendamento_id = alvo.agendamento_id
+        returning c.agendamento_id, c.codigo_hash = $4 as codigo_correto
+     )
+     update public.barber_agendamento a
+        set status = 'cancelado', atualizado_em = now()
+       from tentativa t
+      where t.codigo_correto and a.id = t.agendamento_id
+        and a.status = 'marcado' and a.data_hora > now()
+      returning a.id, a.telefone, a.cliente_nome, a.servico, a.data_hora, a.numero`,
+    [String(conta.telefone || ""), cliente, instante, codigoHash],
+  );
+  if (!cancelado) return { ok: false, erro: "codigo_ou_agendamento_invalido" };
+
+  const conf = await obterConfig();
+  let avisadoSalao = false;
+  if (conf) {
+    const horario = new Date(String(cancelado.data_hora || ""));
+    const relogio = emBrasilia(horario);
+    const horaLocal = `${String(relogio.hora).padStart(2, "0")}:${String(relogio.minuto).padStart(2, "0")}`;
+    const diaLocal = `${String(relogio.dia).padStart(2, "0")}/${String(relogio.mes + 1).padStart(2, "0")}/${relogio.ano}`;
+    const texto = `Cancelamento confirmado pelo site:\n${diaLocal} às ${horaLocal}\n` +
+      `${String(cancelado.cliente_nome || "Cliente")} — ${String(cancelado.servico || "horário")}\n` +
+      `Telefone: ${formatarTelefone(cliente)}`;
+    avisadoSalao = (await enviarTexto(conf, String(conta.telefone || ""), texto)).ok;
+  }
+
+  return {
+    ok: true,
+    avisado_salao: avisadoSalao,
+    texto: avisadoSalao
+      ? "Cancelamento confirmado. A barbearia foi avisada."
+      : "Cancelamento confirmado. Avise a barbearia pelo WhatsApp para garantir que ela receba o recado.",
+  };
+};
 
 /** Aqui é o contrário do painel: quem escreve é o cliente, pelo nome e pelo telefone dele.
  *  A vaga é conferida de novo — a página mostra o que estava livre segundos antes. */

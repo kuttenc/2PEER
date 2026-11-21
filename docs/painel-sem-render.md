@@ -1388,6 +1388,40 @@ backend e SQL permanecem locais: não houve deploy, alteração remota do banco 
 WhatsApp. A prova `../tools/_prova_barbearia.ts` não foi executada porque grava e apaga dados de teste;
 validar esse roteiro em uma cópia isolada antes de qualquer execução.
 
+## Bom-dia diário das barbearias
+
+O job `barber-daily-bom-dia` roda às 11h UTC (8h de Brasília) e chama `barb_cron`. O bom-dia
+é processado antes da verificação do horário configurado para os lembretes da agenda, então
+alterar esse horário não pode impedir a mensagem das 8h. O controle `bom_dia_enviado_em`
+deduplica por estabelecimento e dia; o botão manual do painel exige confirmação e envia para
+todas as contas ativas.
+
+O painel fixa a versão de `app.js` na URL para evitar que o cache do GitHub Pages (10 minutos)
+mantenha o JavaScript antigo sem o handler do botão. Sempre que `app.js` mudar, atualize também
+o parâmetro `v` da tag `<script>` em `painel/index.html`. O mesmo versionamento vale para
+`styles.css`.
+
+## Aparência e cancelamento pelo cliente
+
+As páginas públicas dos estabelecimentos, os painéis privados e o painel principal usam agora
+uma identidade visual responsiva comum. A Edge Function ainda precisa ser publicada para que
+as páginas estáticas existentes sejam regeneradas com o novo visual.
+
+O cliente informa o telefone do agendamento, data e horário; o sistema envia um código de seis
+dígitos pelo WhatsApp do próprio número registrado. O código expira em dez minutos, fica salvo
+somente como HMAC protegido pelo segredo do servidor, permite no máximo cinco tentativas e
+tem limites de reenvio por horário. A confirmação cancela somente um agendamento futuro ativo
+do mesmo salão e número. As mensagens de solicitação não revelam se o agendamento existe.
+As rotas públicas `estab_vagas`, `estab_marcar` e as duas rotas de cancelamento são registradas
+explicitamente no roteador e não exigem sessão do painel.
+
+Antes de publicar a função ou atualizar páginas, aplique `../tools/20261121_barber_cancelamento_codigo.sql`
+no banco `2peer`. Os testes locais estão em `../tests/barber-cancelamento.test.mjs` e
+`../tests/barber-public-actions.test.mjs` e `../tests/barber-page-render.test.mjs`. O envio real de
+códigos não foi testado nesta etapa. As mudanças ainda estão locais: a consulta de permissões de
+Edge Functions retornou HTTP 403; não foi aplicada migration, publicada função, atualizada página
+de estabelecimento nem enviado WhatsApp.
+
 ## Publicação das páginas públicas de estabelecimentos
 
 As páginas podem ser republicadas no repositório separado `kuttenc/estabelecimento` ou no
@@ -1398,3 +1432,14 @@ No projeto atual, o caminho público é `https://kuttenc.github.io/estabelecimen
 O `404.html` da raiz reserva esse prefixo e não o encaminha para o Urtador. O slug pode conter
 letras maiúsculas ou minúsculas, números, `_` e `-`; a página da Barbearia do Oleiro usa
 `barbeariadoolei-h0ku`.
+
+### Horários do painel privado — publicado em 21/11/2026
+
+O editor privado agora pede abertura e fechamento para cada dia; ambos vazios significam dia
+fechado. Horários incompletos ou inválidos são recusados antes de remover o cadastro atual, e
+salvar a semana toda fechada exige confirmação. Páginas sem expediente cadastrado não recebem
+mais um horário genérico de 09h–19h: exibem os dias como fechados e não oferecem vagas. A
+migration aditiva de códigos foi aplicada ao projeto `ggufcvrwctieacvbbwim` e a Edge Function
+`peixeiro` foi publicada com a correção. Os testes locais passaram (11/11). O frontend do painel
+e as páginas privadas dependem do push deste commit para o GitHub Pages; nenhuma nova página
+ou mensagem aos estabelecimentos foi publicada/enviada ainda.

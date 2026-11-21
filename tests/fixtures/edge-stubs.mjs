@@ -1,0 +1,15 @@
+export const BRAZIL_OFFSET_MS = 3 * 60 * 60 * 1000;
+export const aleatorio = () => "";
+export const bytesParaB64 = () => "";
+export const consultar = async () => ({ rows: [], rowCount: 0 });
+export const consultar1 = async () => null;
+export const formatarTelefone = (telefone) => telefone;
+export const hashCodigoCancelamento = async () => "";
+export const instanteDoAgendamento = () => null;
+export const modoTeste = () => true;
+export const normalizarWhatsapp = (telefone) => telefone;
+export const novoCodigoCancelamento = () => "123456";
+export const obterConfig = async () => null;
+export const semAcento = (texto) => texto;
+export const telefoneValido = () => true;
+export const enviarTexto = async () => ({ ok: true });
