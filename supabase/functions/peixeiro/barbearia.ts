@@ -976,11 +976,15 @@ export async function responder(
         tipo: "menu_funcionario",
       };
     }
+    const baseMenu = textos.menu || MENU_CONTROLE_PADRAO;
+    const jaTemAtalhos = baseMenu.includes("/menu contabilidade") ||
+      baseMenu.includes("/menu pagina");
     return {
-      texto: `${textos.menu || MENU_CONTROLE_PADRAO}\n\n` +
-        `Atalhos rápidos:\n  /menu contabilidade — lançamentos, preços e relatórios\n` +
-        `  /menu pagina — nome, endereço, horários e outros dados da página\n` +
-        `  /menu agenda — marcar e cuidar dos horários\n  /menu funcionario — menu do profissional`,
+      texto: jaTemAtalhos
+        ? baseMenu
+        : `${baseMenu}\n\nAtalhos rápidos:\n  /menu contabilidade — lançamentos, preços e relatórios\n` +
+          `  /menu pagina — nome, endereço, horários e dados da página\n` +
+          `  /menu agenda — marcar e cuidar dos horários\n  /menu funcionario — menu do profissional`,
       tipo: "menu",
     };
   }
