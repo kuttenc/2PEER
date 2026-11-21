@@ -128,6 +128,7 @@ const ACAO: Record<string, Handler> = {
   barb_fila_tirar: acoes.barbFilaTirar,
   barb_fila_limpar: acoes.barbFilaLimpar,
   barb_lembrete: acoes.barbLembrete,
+  barb_bom_dia: acoes.barbBomDia,
   barb_cron: acoes.barbCron,
 };
 

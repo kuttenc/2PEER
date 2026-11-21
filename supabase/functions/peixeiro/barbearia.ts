@@ -3285,6 +3285,97 @@ export async function limparFila(): Promise<number> {
 
 // ------------------------------------------------------------- o lembrete das 8 horas
 
+/** Bom-dia diário às 8h: não depende de agendamento marcado. Uma mensagem por
+ *  estabelecimento por dia, com página pública e painel privado atualizados. */
+export async function bomDiaTodos(
+  forcar = false,
+  agora: Date = new Date(),
+): Promise<Bruto> {
+  const textos = await obterTextos();
+  const conf = await obterConfig();
+  if (!conf) return { ok: false, error: "sem banco" };
+  if (!textos.ativo) return { ok: true, ativo: false, enviados: 0, avaliados: 0 };
+
+  const inicioDia = instanteDe({ ...relogio(agora), hora: 0, minuto: 0 });
+  const r = await consultar(
+    `select ${COLUNAS_CONTA}, bom_dia_enviado_em
+       from public.barber_contas
+      where ativo order by telefone`,
+  );
+  let enviados = 0;
+  const falhas: string[] = [];
+
+  for (const linha of r.rows) {
+    const conta = linhaParaConta(linha);
+    if (await estaBloqueado(conta.telefone)) continue;
+
+    const ultimo = linha.bom_dia_enviado_em
+      ? new Date(String(linha.bom_dia_enviado_em))
+      : null;
+    if (!forcar && ultimo && ultimo.getTime() >= inicioDia.getTime()) continue;
+
+    const dadosPagina = await dadosDaPagina(conta.telefone);
+    const paginaPublica = dadosPagina?.url ||
+      (dadosPagina?.slug
+        ? `${baseDoSite()}/${dadosPagina.slug}`
+        : conta.slug
+          ? `${baseDoSite()}/${conta.slug}`
+          : "");
+
+    const chave = crypto.randomUUID().replace(/-/g, "") +
+      crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+    await consultar(
+      `insert into public.barber_painel (telefone, chave, ativo, criado_em, atualizado_em)
+       values ($1, $2, true, now(), now())
+       on conflict (telefone) do update set chave = excluded.chave, ativo = true,
+         atualizado_em = now()`,
+      [conta.telefone, chave],
+    );
+    const painel = await publicarPainelBarbearia(conta.telefone, chave);
+
+    const nome = nomeAproveitavel(conta.nome) || "Barbearia";
+    const partes = [
+      `Bom dia, ${nome}! ☀️`,
+      "Que tal revisar hoje os serviços e produtos do seu salão?",
+      paginaPublica
+        ? `Página e agendamentos: ${paginaPublica}`
+        : "",
+      painel.ok && painel.url
+        ? `Painel para editar tudo: ${painel.url}`
+        : "",
+      "No WhatsApp você pode cadastrar:",
+      "  PRECO SERVICO corte 30,00",
+      "  PRECO PRODUTO gel 15,00",
+      "  NOVO corte 30,00",
+      "  SAIDA energia 220",
+      "/menu mostra todas as opções",
+    ].filter(Boolean);
+    const corpo = partes.join("\n");
+    const envio = await enviarTexto(conf, conta.telefone, corpo);
+    if (envio.ok) {
+      enviados++;
+      await consultar(
+        `update public.barber_contas set bom_dia_enviado_em = now(), atualizado_em = now()
+          where telefone = $1`,
+        [conta.telefone],
+      );
+      await registrarMensagem(conta.telefone, "saida", corpo,
+        `bom-dia-${conta.telefone}-${Math.round(inicioDia.getTime() / 1000)}`,
+        textos.dias_retencao);
+    } else {
+      falhas.push(`${conta.telefone}: ${envio.error || "sem resposta"}`);
+    }
+  }
+
+  return {
+    ok: true,
+    ativo: true,
+    enviados,
+    avaliados: r.rows.length,
+    falhas: falhas.slice(0, 10),
+  };
+}
+
 /** Um aviso por barbearia, com a agenda do dia. O `lembrete_enviado_em` no agendamento é o que
  *  faz o cron poder ser chamado duas vezes no mesmo dia sem duplicar mensagem. */
 export async function lembretesDoDia(

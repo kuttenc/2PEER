@@ -2933,6 +2933,20 @@
     });
   };
 
+  $("bcBomDia").addEventListener("click", function () {
+    if (!window.confirm("Enviar o bom-dia de agora para todas as barbearias ativas?")) return;
+    var botao = $("bcBomDia");
+    botao.disabled = true;
+    bbAviso("bcBomDiaEstado", "Enviando bom-dia…", false);
+    chamar("barb_bom_dia", { forcar: true }, 180).then(function (d) {
+      botao.disabled = false;
+      if (!d.ok) { bbAviso("bcBomDiaEstado", mensagemDetalhada(d), true); return; }
+      bbAviso("bcBomDiaEstado",
+        "Bom-dia enviado para " + texto(d.enviados || 0) + " barbearia(s).",
+        false);
+    });
+  });
+
   function carregarContasBarbearia(pagina, busca) {
     bbPaginaAtual = Math.max(1, Number(pagina || 1));
     var termo = busca === undefined ? $("bbBusca").value.trim() : busca;

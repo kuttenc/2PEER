@@ -107,7 +107,7 @@ import {
   contaDeTelefone, conversasBarbearia, exportarBarbeiros, exportarConversasBarbearia, fecharBarbeiro,
   filaTreinoBarbearia, importarBarbeiros, importarPaginaAppBarber, lancamentosDe, lembretesDoDia, ligarBarbeiro, listarBarbeiros,
   listarInteressados, mensagensDoBarbeiro, montarFila, obterTextos, proximoDaFila, resumoBarbearia,
-  rotearWebhook, salvarTextos, statusFila, enviarParaBarbeiro,
+  rotearWebhook, salvarTextos, statusFila, enviarParaBarbeiro, bomDiaTodos,
   limparFila as barbLimparFila,
   tirarDaFila as barbTirarDaFila,
   TRIAL_DIAS_PADRAO,
@@ -2150,6 +2150,18 @@ export async function barbLembrete(dados: Registro, ctx: Contexto): Promise<Said
   return { status: Number(feito.ok) ? 200 : 500, dados: { ...feito } };
 }
 
+export async function barbBomDia(dados: Registro, ctx: Contexto): Promise<Saida> {
+  const feito = await bomDiaTodos(booleano(dados.forcar));
+  await gravarEvento({
+    event_type: "barbearia_bom_dia_manual",
+    status_code: 200,
+    request_payload: { forcar: booleano(dados.forcar) },
+    response_payload: feito,
+    client_ip: ctx.ip,
+  });
+  return ok(feito);
+}
+
 /** A chamada do cron: a chave é o `aviso_token` do banco, o mesmo do aviso de vencimento,
  *  porque é a mesma pessoa agendando as duas coisas. */
 export async function barbCron(dados: Registro, ctx: Contexto): Promise<Saida> {
@@ -2163,13 +2175,14 @@ export async function barbCron(dados: Registro, ctx: Contexto): Promise<Saida> {
   if (!forcar && hora < Number(textos.lembrete_hora || 8)) {
     return ok({ ok: true, ignorado: "antes da hora do lembrete", hora_brasilia: hora });
   }
+  const bomDia = await bomDiaTodos(forcar);
   const feito = await lembretesDoDia(forcar);
   await gravarEvento({
     event_type: "barbearia_cron_lembrete",
     status_code: 200,
     request_payload: { forcar },
-    response_payload: feito,
+    response_payload: { bom_dia: bomDia, lembrete_agenda: feito, hora_brasilia: hora },
     client_ip: ctx.ip,
   });
-  return ok({ ...feito, hora_brasilia: hora });
+  return ok({ bom_dia: bomDia, lembrete_agenda: feito, hora_brasilia: hora });
 }
