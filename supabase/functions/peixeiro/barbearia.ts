@@ -374,7 +374,14 @@ export function variaveisDaConta(
     expira: conta.expira,
   };
   const v = variaveisMensagem(conf as unknown as Bruto, ficha, {}, agora);
-  return { ...v, barbearia: nomeAproveitavel(conta.nome) || "sua barbearia", ...(extras as Record<string, string>) };
+  const nomeDaBarbearia = nomeAproveitavel(conta.nome) || "sua barbearia";
+  return {
+    ...v,
+    nome: nomeDaBarbearia,
+    primeiro: nomeDaBarbearia,
+    barbearia: nomeDaBarbearia,
+    ...(extras as Record<string, string>),
+  };
 }
 
 // ------------------------------------------------------------------ relógio de Brasília
