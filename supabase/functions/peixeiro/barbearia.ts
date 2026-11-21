@@ -17,6 +17,7 @@ import {
   htmlDaPagina,
   publicarFoto,
   publicarPagina,
+  publicarPainelBarbearia,
   redirecionarPaginaAntiga,
   slugDe,
   slugValido,
@@ -387,6 +388,25 @@ export function variaveisDaConta(
     barbearia: nomeDaBarbearia,
     ...(extras as Record<string, string>),
   };
+}
+
+/** A chave do painel é trocada toda vez que ele pede MENU. Assim o link antigo para de servir
+ *  e a próxima resposta mostra somente o endereço atual do estabelecimento. */
+async function textoComPainel(conta: Conta, texto: string): Promise<string> {
+  const chave = crypto.randomUUID().replace(/-/g, "") +
+    crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+  await consultar(
+    `insert into public.barber_painel (telefone, chave, ativo, criado_em, atualizado_em)
+     values ($1, $2, true, now(), now())
+     on conflict (telefone) do update set chave = excluded.chave, ativo = true,
+       atualizado_em = now()`,
+    [conta.telefone, chave],
+  );
+  const publicado = await publicarPainelBarbearia(conta.telefone, chave);
+  if (!publicado.ok || !publicado.url) {
+    return `${texto}\n\nPainel privado ainda não ficou disponível. Digite /menu novamente para tentar atualizar o endereço.`;
+  }
+  return `${texto}\n\nPara editar o site e o atendimento em um painel simples, clique aqui:\n${publicado.url}\n\nEste endereço é novo e substitui o anterior.`;
 }
 
 // ------------------------------------------------------------------ relógio de Brasília
@@ -946,52 +966,58 @@ export async function responder(
   if (menuPedido) {
     const sub = menuPedido[1] || "";
     if (sub === "contabilidade") {
+      const texto = `Menu de contabilidade:\n${MENU_CONTROLE_PADRAO}\n\n` +
+        `Para voltar ao menu geral, digite /menu.\nPara editar a página, digite /menu pagina.`;
       return {
-        texto: `Menu de contabilidade:\n${MENU_CONTROLE_PADRAO}\n\n` +
-          `Para voltar ao menu geral, digite /menu.\nPara editar a página, digite /menu pagina.`,
+        texto: await textoComPainel(conta, texto),
         tipo: "menu_contabilidade",
       };
     }
     if (sub === "pagina" || sub === "site") {
-      return { texto: await guiaDaPagina(conta, textos), tipo: "guia_pagina" };
+      const texto = await guiaDaPagina(conta, textos);
+      return { texto: await textoComPainel(conta, texto), tipo: "guia_pagina" };
     }
     if (sub === "agenda") {
-      return {
-        texto: `Menu da agenda:\n  AGENDA — lista os próximos horários\n` +
+      const texto = `Menu da agenda:\n  AGENDA — lista os próximos horários\n` +
           `  AGENDA hoje — lista os horários de hoje\n` +
           `  AGENDA João 11999998888 sábado 15h — marca um horário\n` +
           `  AVISA 1 — avisa o cliente\n  REMARCAR 1 sexta 16h — muda o horário\n` +
           `  FEITO 1 — registra o atendimento\n  CANCELAR 1 — cancela o horário\n\n` +
-          `Para voltar ao menu geral, digite /menu.\nPara ver contabilidade, digite /menu contabilidade.`,
+          `Para voltar ao menu geral, digite /menu.\nPara ver contabilidade, digite /menu contabilidade.`;
+      return {
+        texto: await textoComPainel(conta, texto),
         tipo: "menu_agenda",
       };
     }
     if (sub === "funcionario") {
-      return {
-        texto: textos.ajuda_funcionario ||
+      const texto = textos.ajuda_funcionario ||
           `Menu do funcionário:\n  MINHA AGENDA — seus horários\n` +
           `  LIVRE amanhã — horários disponíveis\n` +
           `  AGENDAR João 11999998888 sábado 15h — marca no seu nome\n\n` +
-          `Para voltar ao menu geral, digite /menu.`,
+          `Para voltar ao menu geral, digite /menu.`;
+      return {
+        texto: await textoComPainel(conta, texto),
         tipo: "menu_funcionario",
       };
     }
     const baseMenu = textos.menu || MENU_CONTROLE_PADRAO;
     const jaTemAtalhos = baseMenu.includes("/menu contabilidade") ||
       baseMenu.includes("/menu pagina");
+    const texto = jaTemAtalhos
+      ? baseMenu
+      : `${baseMenu}\n\nAtalhos rápidos:\n  /menu contabilidade — lançamentos, preços e relatórios\n` +
+        `  /menu pagina — nome, endereço, horários e dados da página\n` +
+        `  /menu agenda — marcar e cuidar dos horários\n  /menu funcionario — menu do profissional`;
     return {
-      texto: jaTemAtalhos
-        ? baseMenu
-        : `${baseMenu}\n\nAtalhos rápidos:\n  /menu contabilidade — lançamentos, preços e relatórios\n` +
-          `  /menu pagina — nome, endereço, horários e dados da página\n` +
-          `  /menu agenda — marcar e cuidar dos horários\n  /menu funcionario — menu do profissional`,
+      texto: await textoComPainel(conta, texto),
       tipo: "menu",
     };
   }
   if (t === "ajuda" || t === "controle" || t === "oi" || t === "ola") {
+    const texto = `${textos.menu || MENU_CONTROLE_PADRAO}\n\n` +
+      `Atalhos rápidos:\n  /menu contabilidade\n  /menu pagina\n  /menu agenda\n  /menu funcionario`;
     return {
-      texto: `${textos.menu || MENU_CONTROLE_PADRAO}\n\n` +
-        `Atalhos rápidos:\n  /menu contabilidade\n  /menu pagina\n  /menu agenda\n  /menu funcionario`,
+      texto: await textoComPainel(conta, texto),
       tipo: "menu",
     };
   }
