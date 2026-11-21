@@ -71,7 +71,7 @@ import {
 } from "./destinos.ts";
 import {
   ajustarChat, apagarRegra, exportarTreino, instalarWebhook, ligarRegra, listarRegras, mensagensDe,
-  novaRegra, receberWebhook, renderizar, resumoChat, salvarRegra, telefonesConversados, tokenChat,
+  novaRegra, renderizar, resumoChat, salvarRegra, telefonesConversados, tokenChat,
   variaveis,
   entregasPorUsuario,
 } from "./chat.ts";
@@ -102,11 +102,22 @@ import {
   type TipoLote,
 } from "./lote.ts";
 import { avisarRenovacao, avisarVencimentos, fichaPara } from "./varredura.ts";
+import {
+  adicionarBarbeiro, agendamentosDe, agendamentosParaTela, apagarBarbeiro, catalogo, clientesDoBarbeiro,
+  contaDeTelefone, conversasBarbearia, exportarBarbeiros, exportarConversasBarbearia, fecharBarbeiro,
+  filaTreinoBarbearia, importarBarbeiros, lancamentosDe, lembretesDoDia, ligarBarbeiro, listarBarbeiros,
+  listarInteressados, mensagensDoBarbeiro, montarFila, obterTextos, proximoDaFila, resumoBarbearia,
+  rotearWebhook, salvarTextos, statusFila, enviarParaBarbeiro,
+  limparFila as barbLimparFila,
+  tirarDaFila as barbTirarDaFila,
+  TRIAL_DIAS_PADRAO,
+} from "./barbearia.ts";
 import { escreverCsv, lerCsv } from "./csv.ts";
 import { gravarPix, parsearPix } from "./pix.ts";
 import {
   b64ParaBytes,
   bytesParaB64,
+  BRAZIL_OFFSET_MS,
   type ClienteMensagem,
   formatarBrasilia,
   formatarTelefone,
@@ -1483,10 +1494,14 @@ export async function linksResolver(dados: Registro): Promise<Saida> {
 // ------------------------------------------------------------------ chat (o robô do WhatsApp)
 
 /** O webhook do GreenAPI entra aqui sem sessão. A chave vai na URL, e não no corpo, porque o
- *  corpo é a mensagem do cliente — não há onde encaixar o nosso token ali. */
+ *  corpo é a mensagem do cliente — não há onde encaixar o nosso token ali.
+ *
+ *  É também a única porta das duas bases: `rotearWebhook` olha o número e decide se a conversa
+ *  é do robô das barbearias ou do do Peixeiro. Quem não é barbearia segue exatamente o
+ *  caminho de sempre, linha por linha. */
 export async function chatWebhook(dados: Registro, ctx: Contexto): Promise<Saida> {
-  const saida = await receberWebhook(dados, ctx.query.token || txt(dados.token));
-  return { status: saida.status, dados: saida.dados };
+  const saida = await rotearWebhook(dados, ctx.query.token || txt(dados.token));
+  return { status: saida.status, dados: saida.dados as Registro };
 }
 
 export async function chatVer(dados: Registro, ctx: Contexto): Promise<Saida> {
@@ -1625,4 +1640,302 @@ export async function bloqueadosDesbloquear(dados: Registro, ctx: Contexto): Pro
     client_ip: ctx.ip,
   });
   return ok({ telefone: formatarTelefone(telefone), ...await listarBloqueados("") });
+}
+
+// ------------------------------------------------------------------ barbearias
+// As rotas da segunda base. Nada daqui lê as tabelas do painel MC: o que entra e o que sai
+// é `barber_*`, e a chave de tudo é o telefone da barbearia.
+
+/** A abordagem e o menu das barbearias passam de 1200 letras; o teto delas é o do WhatsApp. */
+const BARB_MAX_TEXTO = 4000;
+
+function barbTexto(valor: unknown): string {
+  return String(valor ?? "").slice(0, BARB_MAX_TEXTO);
+}
+
+async function barbContaParaTela(telefone: string): Promise<Registro> {
+  const conta = await contaDeTelefone(telefone);
+  if (!conta) return {};
+  return {
+    telefone: conta.telefone,
+    nome: conta.nome,
+    nota: conta.nota,
+    ativo: conta.ativo,
+    expira: conta.expira ? formatarBrasilia(conta.expira) : "",
+    criado: conta.criado_em ? formatarBrasilia(conta.criado_em) : "",
+    slug: conta.slug,
+    endereco: conta.endereco,
+    cidade: conta.cidade,
+    uf: conta.uf,
+    cep: conta.cep,
+    telefone_publico: conta.telefone_publico,
+    mostra_barbeiro: conta.mostra_barbeiro,
+    publicado: conta.publicado_em ? formatarBrasilia(conta.publicado_em) : "",
+  };
+}
+
+export async function barbVer(_dados: Registro, _ctx: Contexto): Promise<Saida> {
+  return ok(await resumoBarbearia());
+}
+
+/** Um campo por vez: a tela que grava o menu não escreve vazio na abordagem. */
+export async function barbSalvar(dados: Registro, _ctx: Contexto): Promise<Saida> {
+  const campos: Registro = {};
+  for (const chave of [
+    "menu", "abordagem", "boas_vindas", "lembrete", "aviso_cliente", "msg_interesse", "msg_vencido",
+    "boas_vindas_site", "aviso_novo_site", "ajuda_funcionario",
+  ]) {
+    if (chave in dados) campos[chave] = barbTexto(dados[chave]);
+  }
+  for (const chave of ["dias_retencao", "trial_dias", "lembrete_hora"]) {
+    if (chave in dados) campos[chave] = dados[chave];
+  }
+  for (const chave of ["ativo", "responder_controle"]) {
+    if (chave in dados) campos[chave] = booleano(dados[chave]);
+  }
+  const gravado = await salvarTextos(campos);
+  if (!gravado.ok) return falha(gravado.error === "numero" ? "numero" : "nada_gravar");
+  return ok(await resumoBarbearia());
+}
+
+export async function barbContas(dados: Registro): Promise<Saida> {
+  const pagina = Math.max(1, Number(txt(dados.pagina) || 1));
+  return ok(await listarBarbeiros(pagina, txt(dados.q)));
+}
+
+/** Telefone e nome bastam: o teste de um dia começa nesta chamada, e readicionar não apaga o
+ *  histórico de quem já era barbearia. */
+export async function barbContaAdicionar(dados: Registro, ctx: Contexto): Promise<Saida> {
+  const telefone = normalizarWhatsapp(txt(dados.telefone));
+  const dias = Number(txt(dados.dias) || 0);
+  const criado = await adicionarBarbeiro(telefone, txt(dados.nome), txt(dados.nota), dias || TRIAL_DIAS_PADRAO);
+  if (!criado.ok) return falha("telefone_invalido");
+  await gravarEvento({
+    event_type: criado.novo ? "barbearia_criada" : "barbearia_readicionada",
+    status_code: 200,
+    request_payload: { telefone, nome: txt(dados.nome) },
+    response_payload: {},
+    client_ip: ctx.ip,
+  });
+  const aviso = booleano(dados.avisar ?? true) && criado.novo;
+  const boas = aviso ? await enviarParaBarbeiro(telefone, (await obterTextos()).boas_vindas) : null;
+  return ok({
+    ...await listarBarbeiros(1, ""),
+    conta: await barbContaParaTela(telefone),
+    novo: criado.novo,
+    boas_vindas: boas ? { ok: boas.ok, simulado: boas.simulado, erro: boas.error || "" } : null,
+  });
+}
+
+export async function barbContaLigar(dados: Registro): Promise<Saida> {
+  const telefone = normalizarWhatsapp(txt(dados.telefone));
+  if (telefone.length < 10) return falha("telefone_invalido");
+  if (!(await ligarBarbeiro(telefone, booleano(dados.ativo)))) return falha("sem_barbearia", 404);
+  return ok({ conta: await barbContaParaTela(telefone) });
+}
+
+/** Fim do teste: o vencimento passa a valer os dias do plano que ele fechou. */
+export async function barbContaFechar(dados: Registro): Promise<Saida> {
+  const telefone = normalizarWhatsapp(txt(dados.telefone));
+  if (telefone.length < 10) return falha("telefone_invalido");
+  const dias = Number(txt(dados.dias) || 30);
+  if (!Number.isFinite(dias)) return falha("numero");
+  if (!(await fecharBarbeiro(telefone, dias))) return falha("sem_barbearia", 404);
+  return ok({ conta: await barbContaParaTela(telefone) });
+}
+
+/** A única rota desta aba que destrói alguma coisa: leva a conta e as tabelas dela, e só
+ *  dela. Pediu a palavra escrita, como o painel já faz com as linhas do MC. */
+export async function barbContaApagar(dados: Registro, ctx: Contexto): Promise<Saida> {
+  if (txt(dados.confirmar).toLowerCase() !== "apagar") return falha("confirme_apagar", 409);
+  const telefone = normalizarWhatsapp(txt(dados.telefone));
+  if (telefone.length < 10) return falha("telefone_invalido");
+  const feito = await apagarBarbeiro(telefone);
+  await gravarEvento({
+    event_type: "barbearia_apagada",
+    status_code: 200,
+    request_payload: { telefone },
+    response_payload: feito,
+    client_ip: ctx.ip,
+  });
+  return ok({ apagado: feito, ...await listarBarbeiros(1, "") });
+}
+
+export async function barbContaExportar(): Promise<Saida> {
+  return ok(await exportarBarbeiros());
+}
+
+export async function barbContaImportar(dados: Registro): Promise<Saida> {
+  const dias = Number(txt(dados.dias) || 0);
+  const feito = await importarBarbeiros(barbTexto(dados.texto), dias || TRIAL_DIAS_PADRAO);
+  return ok({ ...feito, ...await listarBarbeiros(1, "") });
+}
+
+export async function barbInteressados(): Promise<Saida> {
+  return ok({ interessados: await listarInteressados() });
+}
+
+/** Tudo de uma barbearia em uma chamada: cada tabela da tela tem o seu botão, e o painel só
+ *  precisa de um pedido para montar os sete. */
+export async function barbDetalhe(dados: Registro): Promise<Saida> {
+  const telefone = normalizarWhatsapp(txt(dados.telefone));
+  if (telefone.length < 10) return falha("telefone_invalido");
+  const conta = await contaDeTelefone(telefone);
+  if (!conta) return falha("sem_barbearia", 404);
+  const cat = await catalogo(telefone);
+  const desde = new Date(Date.now() - 30 * 86_400_000);
+  const ate = new Date(Date.now() + 90 * 86_400_000);
+  const [agenda, funcionarios, horarios, pagamentos, fotos, lancamentos, clientes, mensagens] = await Promise.all([
+    agendamentosDe(telefone, desde, ate, "", 300),
+    consultar(
+      `select telefone, nome, cargo, cor, foto_arquivo, na_pagina, ativo, criado_em
+         from public.barber_funcionario where barbearia = $1 order by nome, telefone`,
+      [telefone],
+    ),
+    consultar(
+      `select dia, to_char(abre, 'HH24:MI') as abre, to_char(fecha, 'HH24:MI') as fecha,
+              coalesce(to_char(primeiro, 'HH24:MI'), '') as primeiro, intervalo
+         from public.barber_horario where telefone = $1 order by dia`,
+      [telefone],
+    ),
+    consultar(
+      `select id, nome, detalhe, ordem from public.barber_pagamento where telefone = $1 order by ordem, nome`,
+      [telefone],
+    ),
+    consultar(
+      `select id, arquivo, legenda, ordem, criado_em from public.barber_foto where telefone = $1 order by ordem, id`,
+      [telefone],
+    ),
+    lancamentosDe(telefone, 200),
+    clientesDoBarbeiro(telefone, 300),
+    mensagensDoBarbeiro(telefone, 200),
+  ]);
+  return ok({
+    conta: await barbContaParaTela(telefone),
+    servicos: cat.servicos,
+    produtos: cat.produtos,
+    pacotes: cat.pacotes,
+    lancamentos,
+    agendamentos: agendamentosParaTela(agenda),
+    clientes,
+    mensagens,
+    funcionarios: funcionarios.rows,
+    horarios: horarios.rows,
+    pagamentos: pagamentos.rows,
+    fotos: fotos.rows,
+  });
+}
+
+export async function barbConversas(dados: Registro): Promise<Saida> {
+  const dias = Number(txt(dados.dias) || 90);
+  const telefone = normalizarWhatsapp(txt(dados.telefone));
+  const conversa = telefone.length >= 10 ? await mensagensDoBarbeiro(telefone, 200) : [];
+  return ok({
+    conversas: await conversasBarbearia(Number.isFinite(dias) ? dias : 90),
+    conversa: { telefone, mensagens: conversa },
+  });
+}
+
+export async function barbConversasExportar(dados: Registro): Promise<Saida> {
+  const dias = Number(txt(dados.dias) || 90);
+  return ok(await exportarConversasBarbearia(Number.isFinite(dias) ? dias : 90));
+}
+
+export async function barbTreino(): Promise<Saida> {
+  return ok({ frases: await filaTreinoBarbearia() });
+}
+
+/** O "mensagem" da linha: texto dele, variáveis da barbearia, sem link e sem foto. */
+export async function barbMensagem(dados: Registro): Promise<Saida> {
+  const telefone = normalizarWhatsapp(txt(dados.telefone));
+  if (telefone.length < 10) return falha("telefone_invalido");
+  const modelo = barbTexto(dados.texto);
+  if (!modelo) return falha("sem_texto");
+  const envio = await enviarParaBarbeiro(telefone, modelo);
+  if (!envio.ok) return falha(envio.error === "bloqueado" ? "bloqueado" : "envio", 502, { detalhe: envio.error || "" });
+  return ok({ telefone: formatarTelefone(telefone), simulado: envio.simulado });
+}
+
+export async function barbBoasVindas(dados: Registro): Promise<Saida> {
+  const telefone = normalizarWhatsapp(txt(dados.telefone));
+  if (telefone.length < 10) return falha("telefone_invalido");
+  const modelo = (await obterTextos()).boas_vindas;
+  if (!modelo) return falha("sem_texto");
+  const envio = await enviarParaBarbeiro(telefone, modelo);
+  if (!envio.ok) return falha(envio.error === "bloqueado" ? "bloqueado" : "envio", 502, { detalhe: envio.error || "" });
+  return ok({ telefone: formatarTelefone(telefone), simulado: envio.simulado, texto: envio.texto });
+}
+
+// ---------------------------------------------------------------- a fila do disparo
+
+/** Ou ele cola os números, ou manda pegar todas as barbearias guardadas de uma vez. */
+export async function barbFilaMontar(dados: Registro): Promise<Saida> {
+  const modelo = barbTexto(dados.texto);
+  if (!modelo) return falha("sem_texto");
+  let telefones = lista(dados.telefones);
+  if (booleano(dados.todos) || !telefones.length) {
+    const base = await listarBarbeiros(1, "");
+    telefones = (base.linhas as Registro[]).map((l) => String(l.telefone || ""));
+  }
+  const feito = await montarFila(telefones, modelo);
+  if (!feito.ok) return falha(String(feito.error || "sem_texto"));
+  return ok({ ...feito, ...await statusFila() });
+}
+
+export async function barbFilaStatus(): Promise<Saida> {
+  return ok(await statusFila());
+}
+
+export async function barbFilaProximo(): Promise<Saida> {
+  return ok(await proximoDaFila());
+}
+
+export async function barbFilaTirar(dados: Registro): Promise<Saida> {
+  const telefone = normalizarWhatsapp(txt(dados.telefone));
+  if (!(await barbTirarDaFila(telefone))) return falha("nao_esta_na_fila", 409);
+  return ok(await statusFila());
+}
+
+export async function barbFilaLimpar(): Promise<Saida> {
+  return ok({ removidos: await barbLimparFila(), ...await statusFila() });
+}
+
+// ----------------------------------------------------------------- o lembrete do dia
+
+/** O botão da tela: roda agora, para toda barbearia com horário marcado hoje. */
+export async function barbLembrete(dados: Registro, ctx: Contexto): Promise<Saida> {
+  const forcar = booleano(dados.forcar);
+  const feito = await lembretesDoDia(forcar);
+  await gravarEvento({
+    event_type: "barbearia_lembrete",
+    status_code: 200,
+    request_payload: { forcar },
+    response_payload: feito,
+    client_ip: ctx.ip,
+  });
+  return { status: Number(feito.ok) ? 200 : 500, dados: { ...feito } };
+}
+
+/** A chamada do cron: a chave é o `aviso_token` do banco, o mesmo do aviso de vencimento,
+ *  porque é a mesma pessoa agendando as duas coisas. */
+export async function barbCron(dados: Registro, ctx: Contexto): Promise<Saida> {
+  const conf = await obterConfig();
+  const esperado = String(conf?.aviso_token || "").trim();
+  if (!esperado) return falha("sem_token", 503);
+  if (txt(dados.token) !== esperado) return falha("token", 401);
+  const hora = new Date(Date.now() - BRAZIL_OFFSET_MS).getUTCHours();
+  const textos = await obterTextos();
+  const forcar = booleano(dados.reenviar);
+  if (!forcar && hora < Number(textos.lembrete_hora || 8)) {
+    return ok({ ok: true, ignorado: "antes da hora do lembrete", hora_brasilia: hora });
+  }
+  const feito = await lembretesDoDia(forcar);
+  await gravarEvento({
+    event_type: "barbearia_cron_lembrete",
+    status_code: 200,
+    request_payload: { forcar },
+    response_payload: feito,
+    client_ip: ctx.ip,
+  });
+  return ok({ ...feito, hora_brasilia: hora });
 }

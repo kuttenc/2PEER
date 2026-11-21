@@ -1360,3 +1360,30 @@ Nada aqui está pronto para produção enquanto você não decidir. A ordem segu
 Roda de volta: o `painel_web.py` e o `render.yaml` continuam no repositório. Apontar o
 `config.js` de novo para o Render, ou manter os dois no ar um tempo, é o caminho mais curto
 se algo aqui desaguar.
+
+## Triagem e painel de estabelecimentos — implementação local
+
+O código local agora inclui duas abas no painel: **Chat Barbearias** configura as mensagens e
+regras do robô; **Clientes Barbearia** lista estabelecimentos, interessados e solicitações, e
+permite abrir detalhes de cadastro, catálogo, lançamentos, agenda, clientes, conversas,
+funcionários, horários, pagamentos e fotos. Ações de ativar/desativar, definir prazo e apagar
+conta são limitadas ao estabelecimento selecionado; apagar exige digitar `APAGAR`.
+Abrir as abas não envia mensagens. O cadastro só manda boas-vindas se a opção estiver marcada;
+o envio manual de boas-vindas ou outra mensagem exige clique e confirmação.
+
+Contatos desconhecidos recebem uma triagem com opções para cadastrar estabelecimento, pedir
+vínculo de funcionário, consultar/reagendar/cancelar um horário ou ver o menu de controle.
+Clientes reconhecidos pelo chatbot antigo continuam nesse fluxo; quem já tem agendamento em
+um estabelecimento recebe a opção de atendimento de cliente. Um pedido de vínculo não
+concede acesso automaticamente: fica registrado para conferência no painel. A consulta de
+agendamento só retorna horários vinculados ao mesmo número que está enviando a mensagem; a
+remarcação verifica a disponibilidade e pede confirmação antes de salvar.
+
+O estado da triagem é guardado em `barber_entrada`, com validade de sete dias. Antes de publicar
+a função, confirme que os esquemas do bot (`../tools/_barber_schema.sql` e
+`../tools/_barber_estabelecimento.sql`) estão aplicados e aplique a migration aditiva
+`../tools/20261120_barber_inbound_onboarding.sql` no banco do projeto **2peer**. A migration
+não foi aplicada nesta etapa. As alterações do painel,
+backend e SQL permanecem locais: não houve deploy, alteração remota do banco nem envio real de
+WhatsApp. A prova `../tools/_prova_barbearia.ts` não foi executada porque grava e apaga dados de teste;
+validar esse roteiro em uma cópia isolada antes de qualquer execução.

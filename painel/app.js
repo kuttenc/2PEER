@@ -262,7 +262,7 @@
 
   // ------------------------------------------------------------------ rotas
 
-  var TELAS = ["inicio", "config", "avisos", "acessos", "fila", "recuperacao", "clientes", "deletar", "links", "chat", "bloqueados", "senha", "apagar"];
+  var TELAS = ["inicio", "config", "avisos", "acessos", "fila", "recuperacao", "clientes", "deletar", "links", "chat", "chatbarbearia", "clientesbarbearia", "bloqueados", "senha", "apagar"];
   var CARREGA = {};
   var TELA_ATUAL = "inicio";
 
@@ -2889,6 +2889,355 @@
       if (!lote.rodando) rodarLote(tipo);
     });
   }
+
+  // ------------------------------------------------------------ barbearias
+
+  var bbPaginaAtual = 1;
+  var bbDetalheAtual = null;
+  var bbAbaDetalhe = "conta";
+
+  function bbAviso(id, mensagem, erro) {
+    var el = $(id);
+    if (!el) return;
+    el.textContent = mensagem || "";
+    el.className = erro ? "muted verm" : "muted";
+  }
+
+  CARREGA.chatbarbearia = function () {
+    chamar("barb_ver", {}, 45).then(function (d) {
+      if (!d.ok) { recado(d.erro, d.detalhe); return; }
+      $("bcPill").textContent = d.ativo ? "Ligado" : "Desligado";
+      $("bcPill").className = "pill" + (d.ativo ? " on" : "");
+      $("bcContas").textContent = texto(d.contas || 0) + " (" + texto(d.ativos || 0) + " ativas; " + texto(d.vencidos || 0) + " vencidas)";
+      $("bcAgendados").textContent = texto(d.agendados || 0);
+      $("bcMensagens").textContent = texto(d.mensagens || 0);
+      $("bcInteressados").textContent = texto(d.interessados || 0);
+      $("bcWebhook").textContent = d.webhook ? "Configurado (token oculto)" : "Não configurado";
+      $("bcAtivo").checked = Boolean(d.ativo);
+      $("bcControle").checked = Boolean(d.responder_controle);
+      $("bcTrial").value = texto(d.trial_dias || 1);
+      $("bcLembreteHora").value = texto(d.lembrete_hora === undefined ? 8 : d.lembrete_hora);
+      $("bcRetencao").value = texto(d.dias_retencao || 90);
+      $("bcMenu").value = texto(d.menu);
+      $("bcBoasVindas").value = texto(d.boas_vindas);
+      $("bcAbordagem").value = texto(d.abordagem);
+      $("bcLembrete").value = texto(d.lembrete);
+      $("bcAvisoCliente").value = texto(d.aviso_cliente);
+      $("bcInteresse").value = texto(d.msg_interesse);
+      $("bcVencido").value = texto(d.msg_vencido);
+      $("bcBoasVindasSite").value = texto(d.boas_vindas_site);
+      $("bcAvisoNovoSite").value = texto(d.aviso_novo_site);
+      $("bcAjudaFuncionario").value = texto(d.ajuda_funcionario);
+    });
+  };
+
+  function carregarContasBarbearia(pagina, busca) {
+    bbPaginaAtual = Math.max(1, Number(pagina || 1));
+    var termo = busca === undefined ? $("bbBusca").value.trim() : busca;
+    chamar("barb_contas", { pagina: bbPaginaAtual, q: termo }, 60).then(function (d) {
+      if (!d.ok) { recado(d.erro, d.detalhe); return; }
+      var caixa = limpar($("bbLista"));
+      var linhas = d.linhas || [];
+      var info = d.info || {};
+      $("bbResumo").textContent = texto(info.encontrados || 0) + " estabelecimento(s); " +
+        texto(info.ativos || 0) + " ativo(s), " + texto(info.vencidos || 0) + " vencido(s).";
+      $("bbPagina").textContent = "Página " + texto(info.pagina || bbPaginaAtual) + " de " + texto(info.paginas || 1);
+      $("bbAnterior").disabled = bbPaginaAtual <= 1;
+      $("bbProxima").disabled = bbPaginaAtual >= Number(info.paginas || 1);
+      if (!linhas.length) {
+        caixa.appendChild(criar("p", "muted", "Nenhum estabelecimento encontrado."));
+        return;
+      }
+      linhas.forEach(function (conta) {
+        var item = criar("div", "item");
+        item.appendChild(criar("b", "", conta.nome || "Sem nome"));
+        item.appendChild(pilula(Boolean(conta.ativo), "Ativo", "Desativado"));
+        item.appendChild(criar("span", "muted",
+          texto(conta.telefone) + " · teste até " + (conta.expira || "sem data") +
+          " · " + texto(conta.agendados || 0) + " agendamento(s) · " +
+          texto(conta.servicos || 0) + " serviço(s) · " + texto(conta.produtos || 0) + " produto(s)"));
+        if (conta.nota) item.appendChild(criar("span", "muted", conta.nota));
+        var acoes = criar("div", "linha");
+        var detalhe = criar("button", "", "Abrir detalhes");
+        detalhe.type = "button";
+        detalhe.addEventListener("click", function () { abrirDetalheBarbearia(conta.telefone); });
+        acoes.appendChild(detalhe);
+        var alternar = criar("button", "segundo", conta.ativo ? "Desativar" : "Ativar");
+        alternar.type = "button";
+        alternar.addEventListener("click", function () {
+          chamar("barb_conta_ligar", { telefone: conta.telefone, ativo: !conta.ativo }, 45).then(function (r) {
+            if (!r.ok) { recado(r.erro, r.detalhe); return; }
+            carregarContasBarbearia(bbPaginaAtual);
+          });
+        });
+        acoes.appendChild(alternar);
+        var fechar = criar("button", "segundo", "Definir prazo");
+        fechar.type = "button";
+        fechar.addEventListener("click", function () {
+          var dias = window.prompt("Definir o prazo a partir de hoje, em dias:", "30");
+          if (dias === null) return;
+          if (!/^\d+$/.test(dias) || Number(dias) < 1 || Number(dias) > 3650) {
+            recado("numero");
+            return;
+          }
+          chamar("barb_conta_fechar", { telefone: conta.telefone, dias: Number(dias) }, 45).then(function (r) {
+            if (!r.ok) { recado(r.erro, r.detalhe); return; }
+            carregarContasBarbearia(bbPaginaAtual);
+          });
+        });
+        acoes.appendChild(fechar);
+        var apagar = criar("button", "segundo", "Apagar dados");
+        apagar.type = "button";
+        apagar.addEventListener("click", function () {
+          var confirmar = window.prompt("Esta ação apaga os dados deste estabelecimento. Digite APAGAR para confirmar:");
+          if (String(confirmar || "").trim().toLowerCase() !== "apagar") return;
+          chamar("barb_conta_apagar", { telefone: conta.telefone, confirmar: "apagar" }, 60).then(function (r) {
+            if (!r.ok) { recado(r.erro, r.detalhe); return; }
+            $("bbDetalhe").hidden = true;
+            carregarContasBarbearia(bbPaginaAtual);
+          });
+        });
+        acoes.appendChild(apagar);
+        item.appendChild(acoes);
+        caixa.appendChild(item);
+      });
+    });
+  }
+
+  function carregarInteressadosBarbearia() {
+    chamar("barb_interessados", {}, 45).then(function (d) {
+      if (!d.ok) { recado(d.erro, d.detalhe); return; }
+      var caixa = limpar($("bbInteressados"));
+      var interessados = d.interessados || [];
+      if (!interessados.length) {
+        caixa.appendChild(criar("p", "muted", "Nenhum pedido ou interessado registrado."));
+        return;
+      }
+      interessados.forEach(function (pessoa) {
+        var item = criar("div", "item");
+        item.appendChild(criar("b", "", pessoa.telefone || "Sem telefone"));
+        item.appendChild(pilula(Boolean(pessoa.virou), pessoa.virou ? "Cadastrado" : "Pendente", "Pendente"));
+        item.appendChild(criar("span", "muted", pessoa.criado_em || ""));
+        item.appendChild(criar("span", "", pessoa.texto || "Sem mensagem registrada"));
+        if (pessoa.conta) item.appendChild(criar("span", "muted", "Conta vinculada: " + pessoa.conta));
+        caixa.appendChild(item);
+      });
+    });
+  }
+
+  function carregarPaginaClientesBarbearia() {
+    $("bbDetalhe").hidden = true;
+    carregarContasBarbearia(bbPaginaAtual);
+    carregarInteressadosBarbearia();
+  }
+
+  function bbValor(valor) {
+    if (valor === null || valor === undefined) return "";
+    if (typeof valor === "object") return JSON.stringify(valor);
+    return String(valor);
+  }
+
+  function bbRenderTabela(dados) {
+    var caixa = document.createElement("div");
+    if (!dados || (Array.isArray(dados) && !dados.length)) {
+      caixa.appendChild(criar("p", "muted", "Nenhum registro."));
+      return caixa;
+    }
+    var linhas = Array.isArray(dados) ? dados : [dados];
+    var colunas = Object.keys(linhas[0] || {});
+    if (!colunas.length) {
+      caixa.appendChild(criar("p", "muted", "Nenhum detalhe disponível."));
+      return caixa;
+    }
+    var tabela = document.createElement("table");
+    var thead = document.createElement("thead");
+    var cabecalho = document.createElement("tr");
+    colunas.forEach(function (coluna) { cabecalho.appendChild(criar("th", "", coluna)); });
+    thead.appendChild(cabecalho);
+    tabela.appendChild(thead);
+    var corpo = document.createElement("tbody");
+    linhas.slice(0, 100).forEach(function (linha) {
+      var tr = document.createElement("tr");
+      colunas.forEach(function (coluna) { tr.appendChild(criar("td", "", bbValor(linha[coluna]))); });
+      corpo.appendChild(tr);
+    });
+    tabela.appendChild(corpo);
+    caixa.appendChild(tabela);
+    if (linhas.length > 100) caixa.appendChild(criar("p", "muted", "Mostrando os primeiros 100 registros."));
+    return caixa;
+  }
+
+  var BB_ABAS_DETALHE = [
+    { id: "conta", rotulo: "Cadastro", dado: "conta" },
+    { id: "servicos", rotulo: "Serviços", dado: "servicos" },
+    { id: "produtos", rotulo: "Produtos", dado: "produtos" },
+    { id: "pacotes", rotulo: "Pacotes", dado: "pacotes" },
+    { id: "lancamentos", rotulo: "Lançamentos", dado: "lancamentos" },
+    { id: "agendamentos", rotulo: "Agenda", dado: "agendamentos" },
+    { id: "clientes", rotulo: "Clientes", dado: "clientes" },
+    { id: "mensagens", rotulo: "Conversas", dado: "mensagens" },
+    { id: "funcionarios", rotulo: "Funcionários", dado: "funcionarios" },
+    { id: "horarios", rotulo: "Horários", dado: "horarios" },
+    { id: "pagamentos", rotulo: "Pagamentos", dado: "pagamentos" },
+    { id: "fotos", rotulo: "Fotos", dado: "fotos" },
+  ];
+
+  function renderDetalheBarbearia() {
+    if (!bbDetalheAtual) return;
+    var abas = limpar($("bbAbasDetalhe"));
+    BB_ABAS_DETALHE.forEach(function (aba) {
+      var botao = criar("button", aba.id === bbAbaDetalhe ? "prim" : "segundo", aba.rotulo);
+      botao.type = "button";
+      botao.addEventListener("click", function () {
+        bbAbaDetalhe = aba.id;
+        renderDetalheBarbearia();
+      });
+      abas.appendChild(botao);
+    });
+    var abaAtiva = BB_ABAS_DETALHE.find(function (aba) { return aba.id === bbAbaDetalhe; }) || BB_ABAS_DETALHE[0];
+    limpar($("bbConteudoDetalhe")).appendChild(bbRenderTabela(bbDetalheAtual[abaAtiva.dado]));
+    $("bbDetalheTitulo").textContent = "Detalhes — " + (bbDetalheAtual.conta.nome || bbDetalheAtual.conta.telefone);
+    $("bbDetalheSubtitulo").textContent = (bbDetalheAtual.conta.telefone || "") +
+      (bbDetalheAtual.conta.slug ? " · página: " + bbDetalheAtual.conta.slug : "");
+    var acoes = limpar($("bbAcoes"));
+    var telefone = bbDetalheAtual.conta.telefone;
+    var ativo = Boolean(bbDetalheAtual.conta.ativo);
+    var alternar = criar("button", "segundo", ativo ? "Desativar estabelecimento" : "Ativar estabelecimento");
+    alternar.type = "button";
+    alternar.addEventListener("click", function () {
+      chamar("barb_conta_ligar", { telefone: telefone, ativo: !ativo }, 45).then(function (r) {
+        if (!r.ok) { recado(r.erro, r.detalhe); return; }
+        abrirDetalheBarbearia(telefone);
+        carregarContasBarbearia(bbPaginaAtual);
+      });
+    });
+    acoes.appendChild(alternar);
+    var boasVindas = criar("button", "segundo", "Enviar boas-vindas");
+    boasVindas.type = "button";
+    boasVindas.addEventListener("click", function () {
+      if (!window.confirm("Enviar agora a mensagem de boas-vindas por WhatsApp?")) return;
+      chamar("barb_boas_vindas", { telefone: telefone }, 60).then(function (r) {
+        if (!r.ok) { recado(r.erro, r.detalhe); return; }
+        recado("mensagem_enviada", r.simulado ? "Envio simulado; nenhum WhatsApp saiu." : "");
+      });
+    });
+    acoes.appendChild(boasVindas);
+    var mensagem = criar("button", "segundo", "Enviar mensagem");
+    mensagem.type = "button";
+    mensagem.addEventListener("click", function () {
+      var textoMensagem = window.prompt("Mensagem para este estabelecimento:");
+      if (!textoMensagem) return;
+      if (!window.confirm("Enviar esta mensagem agora para " + telefone + "?")) return;
+      chamar("barb_mensagem", { telefone: telefone, texto: textoMensagem }, 60).then(function (r) {
+        if (!r.ok) { recado(r.erro, r.detalhe); return; }
+        recado("mensagem_enviada", r.simulado ? "Envio simulado; nenhum WhatsApp saiu." : "");
+      });
+    });
+    acoes.appendChild(mensagem);
+    var fechar = criar("button", "segundo", "Definir prazo");
+    fechar.type = "button";
+    fechar.addEventListener("click", function () {
+      var dias = window.prompt("Definir o prazo a partir de hoje, em dias:", "30");
+      if (dias === null) return;
+      if (!/^\d+$/.test(dias) || Number(dias) < 1 || Number(dias) > 3650) { recado("numero"); return; }
+      chamar("barb_conta_fechar", { telefone: telefone, dias: Number(dias) }, 45).then(function (r) {
+        if (!r.ok) { recado(r.erro, r.detalhe); return; }
+        abrirDetalheBarbearia(telefone);
+        carregarContasBarbearia(bbPaginaAtual);
+      });
+    });
+    acoes.appendChild(fechar);
+  }
+
+  function abrirDetalheBarbearia(telefone) {
+    $("bbDetalhe").hidden = false;
+    $("bbDetalheTitulo").textContent = "Carregando estabelecimento…";
+    $("bbDetalheSubtitulo").textContent = telefone;
+    chamar("barb_detalhe", { telefone: telefone }, 60).then(function (d) {
+      if (!d.ok) {
+        $("bbDetalhe").hidden = true;
+        recado(d.erro, d.detalhe);
+        return;
+      }
+      bbDetalheAtual = d;
+      bbAbaDetalhe = "conta";
+      renderDetalheBarbearia();
+    });
+  }
+
+  CARREGA.clientesbarbearia = carregarPaginaClientesBarbearia;
+
+  $("formBarbChat").addEventListener("submit", function (evento) {
+    evento.preventDefault();
+    var botao = evento.target.querySelector('button[type="submit"]');
+    botao.disabled = true;
+    bbAviso("bcEstado", "Salvando…", false);
+    chamar("barb_salvar", {
+      ativo: $("bcAtivo").checked,
+      responder_controle: $("bcControle").checked,
+      trial_dias: $("bcTrial").value,
+      lembrete_hora: $("bcLembreteHora").value,
+      dias_retencao: $("bcRetencao").value,
+      menu: $("bcMenu").value,
+      boas_vindas: $("bcBoasVindas").value,
+      abordagem: $("bcAbordagem").value,
+      lembrete: $("bcLembrete").value,
+      aviso_cliente: $("bcAvisoCliente").value,
+      msg_interesse: $("bcInteresse").value,
+      msg_vencido: $("bcVencido").value,
+      boas_vindas_site: $("bcBoasVindasSite").value,
+      aviso_novo_site: $("bcAvisoNovoSite").value,
+      ajuda_funcionario: $("bcAjudaFuncionario").value,
+    }, 60).then(function (d) {
+      botao.disabled = false;
+      if (!d.ok) { bbAviso("bcEstado", mensagemDetalhada(d), true); return; }
+      bbAviso("bcEstado", "Configurações salvas.", false);
+      CARREGA.chatbarbearia();
+    });
+  });
+
+  $("formBarbAdicionar").addEventListener("submit", function (evento) {
+    evento.preventDefault();
+    var botao = $("bbAdicionar");
+    botao.disabled = true;
+    bbAviso("bbAdicionarEstado", "Cadastrando…", false);
+    chamar("barb_conta_adicionar", {
+      telefone: $("bbTelefone").value,
+      nome: $("bbNome").value,
+      nota: $("bbNota").value,
+      dias: $("bbDias").value,
+      avisar: $("bbAvisar").checked,
+    }, 60).then(function (d) {
+      botao.disabled = false;
+      if (!d.ok) { bbAviso("bbAdicionarEstado", mensagemDetalhada(d), true); return; }
+      var aviso = d.boas_vindas ? (d.boas_vindas.ok
+        ? (d.boas_vindas.simulado ? " Boas-vindas simuladas; nenhum WhatsApp saiu." : " Boas-vindas enviadas.")
+        : " O cadastro foi feito, mas o envio de boas-vindas falhou: " + texto(d.boas_vindas.erro))
+        : " Nenhuma mensagem foi enviada.";
+      bbAviso("bbAdicionarEstado", (d.novo ? "Estabelecimento cadastrado." : "Cadastro existente atualizado.") + aviso, false);
+      $("bbTelefone").value = "";
+      $("bbNome").value = "";
+      $("bbNota").value = "";
+      carregarContasBarbearia(1);
+      carregarInteressadosBarbearia();
+    });
+  });
+
+  $("bbBuscar").addEventListener("click", function () { carregarContasBarbearia(1, $("bbBusca").value.trim()); });
+  $("bbAtualizar").addEventListener("click", function () {
+    carregarContasBarbearia(bbPaginaAtual);
+    carregarInteressadosBarbearia();
+  });
+  $("bbBusca").addEventListener("keydown", function (evento) {
+    if (evento.key === "Enter") {
+      evento.preventDefault();
+      carregarContasBarbearia(1, $("bbBusca").value.trim());
+    }
+  });
+  $("bbAnterior").addEventListener("click", function () {
+    if (bbPaginaAtual > 1) carregarContasBarbearia(bbPaginaAtual - 1);
+  });
+  $("bbProxima").addEventListener("click", function () { carregarContasBarbearia(bbPaginaAtual + 1); });
 
   // ------------------------------------------------------------------ boot
 

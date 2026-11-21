@@ -11,7 +11,7 @@ import type { Handler, Registro } from "./acoes.ts";
 // sessão do painel — e só pede o endereço para onde o link dele já mandava. O webhook do
 // GreenAPI é a mesma coisa: quem bate aqui é o servidor dele, e a chave vai na URL.
 // `site_gerar` entra no mesmo grupo: é o botão do clone do site, apertado pelo cliente.
-const SEM_SESSAO = new Set(["ping", "entrar", "aviso_cron", "links_destino", "chat_webhook", "site_gerar"]);
+const SEM_SESSAO = new Set(["ping", "entrar", "aviso_cron", "barb_cron", "links_destino", "chat_webhook", "site_gerar"]);
 
 /** O contrato público do painel: cada rota do Flask vira uma action com nome de rota.
  *  Escrita à mão de propósito — assim dá para conferir, linha por linha, que nenhuma
@@ -92,6 +92,33 @@ const ACAO: Record<string, Handler> = {
 
   bloqueados_ver: acoes.bloqueadosVer,
   bloqueados_desbloquear: acoes.bloqueadosDesbloquear,
+
+  // ------------------------------------------------------------------ barbearias
+  // O segundo robô: a mesma instância de WhatsApp, duas bases que nunca se misturam. As
+  // rotas abaixo só mexem em `barber_*`; o telefone da barbearia é a chave de tudo aqui.
+  barb_ver: acoes.barbVer,
+  barb_salvar: acoes.barbSalvar,
+  barb_contas: acoes.barbContas,
+  barb_conta_adicionar: acoes.barbContaAdicionar,
+  barb_conta_ligar: acoes.barbContaLigar,
+  barb_conta_fechar: acoes.barbContaFechar,
+  barb_conta_apagar: acoes.barbContaApagar,
+  barb_conta_exportar: acoes.barbContaExportar,
+  barb_conta_importar: acoes.barbContaImportar,
+  barb_interessados: acoes.barbInteressados,
+  barb_detalhe: acoes.barbDetalhe,
+  barb_conversas: acoes.barbConversas,
+  barb_conversas_exportar: acoes.barbConversasExportar,
+  barb_treino: acoes.barbTreino,
+  barb_mensagem: acoes.barbMensagem,
+  barb_boas_vindas: acoes.barbBoasVindas,
+  barb_fila_montar: acoes.barbFilaMontar,
+  barb_fila_status: acoes.barbFilaStatus,
+  barb_fila_proximo: acoes.barbFilaProximo,
+  barb_fila_tirar: acoes.barbFilaTirar,
+  barb_fila_limpar: acoes.barbFilaLimpar,
+  barb_lembrete: acoes.barbLembrete,
+  barb_cron: acoes.barbCron,
 };
 
 function origensPermitidas(): string[] {

@@ -38,6 +38,8 @@
       <a href="#deletar" data-tela="deletar">Deletar</a>
       <a href="#links" data-tela="links">Links</a>
       <a href="#chat" data-tela="chat">Chat</a>
+      <a href="#chatbarbearia" data-tela="chatbarbearia">Chat Barbearias</a>
+      <a href="#clientesbarbearia" data-tela="clientesbarbearia">Clientes Barbearia</a>
       <a href="#bloqueados" data-tela="bloqueados">Bloqueados</a>
       <a href="#senha" data-tela="senha">Senha</a>
       <a href="#sair" data-tela="sair">Sair</a>
@@ -695,6 +697,106 @@
           <button type="button" id="chExportar">Baixar o CSV de treino</button>
           <span class="muted">o que venceu s&atilde;o as conversas; o arquivo de treino fica todo.</span>
         </div>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------- CHAT DAS BARBEARIAS -->
+    <section data-pagina="chatbarbearia" hidden>
+      <div class="card">
+        <h2>Robô de barbearias e estabelecimentos</h2>
+        <p class="muted" style="margin-top:0">Este robô usa a mesma instância WhatsApp do painel, mas mantém
+          clientes, conversas, agenda e lançamentos nas tabelas próprias <code>barber_*</code>. As regras
+          da aba Chat e os clientes do painel MC não são copiados para cá.</p>
+        <table>
+          <tr><th>Robô</th><td><span class="pill" id="bcPill">…</span></td></tr>
+          <tr><th>Estabelecimentos</th><td id="bcContas"></td></tr>
+          <tr><th>Agendamentos futuros</th><td id="bcAgendados"></td></tr>
+          <tr><th>Conversas</th><td id="bcMensagens"></td></tr>
+          <tr><th>Leads / pedidos de cadastro</th><td id="bcInteressados"></td></tr>
+          <tr><th>Webhook</th><td id="bcWebhook"></td></tr>
+        </table>
+      </div>
+      <form id="formBarbChat">
+        <div class="card">
+          <h2>Ativação e regras gerais</h2>
+          <label class="cb"><input type="checkbox" id="bcAtivo"> Robô das barbearias ligado</label>
+          <label class="cb"><input type="checkbox" id="bcControle"> Responder a quem pedir CONTROLE</label>
+          <div class="linha">
+            <div class="col"><label for="bcTrial">Dias de teste ao cadastrar</label>
+              <input type="number" id="bcTrial" min="1" max="365"></div>
+            <div class="col"><label for="bcLembreteHora">Hora do lembrete diário (Brasília)</label>
+              <input type="number" id="bcLembreteHora" min="0" max="23"></div>
+            <div class="col"><label for="bcRetencao">Dias para guardar conversas</label>
+              <input type="number" id="bcRetencao" min="1" max="365"></div>
+          </div>
+          <p class="muted">O lembrete automático depende de agendamento externo do cron. Salvar esta configuração
+            não cria nem altera uma agenda de execução.</p>
+        </div>
+        <div class="card">
+          <h2>Mensagens e menus do robô</h2>
+          <label for="bcMenu">Menu do proprietário</label><textarea id="bcMenu" rows="8"></textarea>
+          <label for="bcBoasVindas">Boas-vindas após cadastro</label><textarea id="bcBoasVindas" rows="5"></textarea>
+          <label for="bcAbordagem">Primeira mensagem / apresentação</label><textarea id="bcAbordagem" rows="8"></textarea>
+          <label for="bcLembrete">Lembrete diário da agenda</label><textarea id="bcLembrete" rows="5"></textarea>
+          <label for="bcAvisoCliente">Aviso enviado ao cliente do salão</label><textarea id="bcAvisoCliente" rows="4"></textarea>
+          <label for="bcInteresse">Resposta quando alguém pede CONTROLE</label><textarea id="bcInteresse" rows="4"></textarea>
+          <label for="bcVencido">Aviso de teste vencido</label><textarea id="bcVencido" rows="4"></textarea>
+          <label for="bcBoasVindasSite">Instruções da página do estabelecimento</label><textarea id="bcBoasVindasSite" rows="5"></textarea>
+          <label for="bcAvisoNovoSite">Aviso de página criada</label><textarea id="bcAvisoNovoSite" rows="4"></textarea>
+          <label for="bcAjudaFuncionario">Menu de funcionário</label><textarea id="bcAjudaFuncionario" rows="5"></textarea>
+          <button class="prim" type="submit">Salvar configurações do Chat Barbearias</button>
+          <span class="muted" id="bcEstado"></span>
+        </div>
+      </form>
+    </section>
+
+    <!-- ---------------------------------------------- CLIENTES BARBEARIA -->
+    <section data-pagina="clientesbarbearia" hidden>
+      <div class="card">
+        <h2>Adicionar estabelecimento</h2>
+        <p class="muted" style="margin-top:0">O período de teste começa no cadastro. O telefone deve ser do
+          responsável e ter WhatsApp. O catálogo e as informações são exclusivos desse estabelecimento.</p>
+        <form id="formBarbAdicionar">
+          <div class="linha">
+            <input type="tel" id="bbTelefone" class="maq" inputmode="tel" autocomplete="tel"
+              placeholder="Telefone do WhatsApp (11) 91234-5678" required>
+            <input type="text" id="bbNome" autocomplete="organization" placeholder="Nome do salão ou comércio" required maxlength="120">
+            <input type="text" id="bbNota" placeholder="Observação (opcional)" maxlength="300">
+            <input type="number" id="bbDias" min="1" max="365" value="1" aria-label="Dias de teste">
+          </div>
+          <label class="cb"><input type="checkbox" id="bbAvisar">
+            Enviar a mensagem de boas-vindas ao cadastrar (opcional)</label>
+          <button type="submit" class="verde" id="bbAdicionar">Cadastrar estabelecimento</button>
+          <span class="muted" id="bbAdicionarEstado"></span>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Estabelecimentos</h2>
+        <div class="linha">
+          <input type="search" id="bbBusca" placeholder="Buscar por nome, telefone ou observação" style="flex:1;min-width:190px">
+          <button type="button" id="bbBuscar">Buscar</button>
+          <button type="button" class="segundo" id="bbAtualizar">Atualizar lista</button>
+        </div>
+        <p class="muted" id="bbResumo"></p>
+        <div id="bbLista" class="lista"></div>
+        <div class="linha">
+          <button type="button" id="bbAnterior">Página anterior</button>
+          <span class="muted" id="bbPagina"></span>
+          <button type="button" id="bbProxima">Próxima página</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Interessados e solicitações recebidas</h2>
+        <p class="muted">Números ainda não cadastrados que pediram informações ou solicitaram vínculo
+          como funcionário. Um pedido não concede acesso automaticamente.</p>
+        <div id="bbInteressados" class="lista"></div>
+      </div>
+      <div class="card" id="bbDetalhe" hidden>
+        <h2 id="bbDetalheTitulo">Detalhes do estabelecimento</h2>
+        <p class="muted" id="bbDetalheSubtitulo"></p>
+        <div class="linha" id="bbAcoes"></div>
+        <div class="linha" id="bbAbasDetalhe"></div>
+        <div id="bbConteudoDetalhe"></div>
       </div>
     </section>
 

@@ -16,6 +16,18 @@ export type ResultadoEnvio = {
 type Conf = { api_url?: string; id_instance?: string; api_token?: string; [chave: string]: unknown };
 
 const ESTADO_TTL = 180_000;
+
+/** Um JPEG de 1x1: é a foto que o modo teste entrega, para o caminho da imagem poder ser
+ *  provado de ponta a ponta sem depender do GreenAPI. */
+const PIXEL_JPEG = new Uint8Array([
+  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01,
+  0x00, 0x01, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+  0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+  0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+  0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+  0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xda, 0x00, 0x08,
+  0x01, 0x01, 0x00, 0x00, 0x3f, 0x00, 0x7b, 0x50, 0xff, 0xd9,
+]);
 const cacheEstado = new Map<string, { valor: Record<string, unknown>; quando: number }>();
 
 function base(conf: Conf): string {
@@ -209,6 +221,48 @@ export async function enviarRecuperacao(conf: Conf, phone: string, texto: string
   const resultado = await enviarTexto(conf, phone, texto);
   resultado.com_foto = false;
   return resultado;
+}
+
+// ------------------------------------------------------------------ baixar o que chegou
+
+export type Midia = { ok: boolean; bytes?: Uint8Array; nome?: string; erro?: string; simulado?: boolean };
+
+/** A foto que o cliente mandou: o GreenAPI devolve um link assinado no host `.media` — que é
+ *  exatamente para isso que ele serve — e o arquivo vem dele, não da API de envio. */
+export async function baixarMidia(conf: Conf, chatId: string, idMessage: string): Promise<Midia> {
+  if (!idMessage) return { ok: false, erro: "sem id da mensagem" };
+  if (modoTeste()) return { ok: true, simulado: true, bytes: PIXEL_JPEG, nome: "teste.jpg" };
+  if (!(base(conf) && conf.id_instance && conf.api_token)) return { ok: false, erro: "sem configuracao" };
+  const chat = normalizarWhatsapp(chatId);
+  let corpo: unknown;
+  try {
+    const resp = await fetch(`${base(conf)}/waInstance${conf.id_instance}/getMediaByMessage/${conf.api_token}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chatId: `${chat}@c.us`, messageId: idMessage }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    corpo = await resp.json().catch(() => ({}));
+    if (resp.status >= 400) return { ok: false, erro: `getMediaByMessage ${resp.status}` };
+  } catch (exc) {
+    return { ok: false, erro: String(exc).slice(0, 160) };
+  }
+
+  const itens = Array.isArray(corpo) ? corpo : [corpo];
+  const item = (itens[0] || {}) as Record<string, unknown>;
+  const link = String(item.downloadLink || "");
+  if (!link) return { ok: false, erro: "sem link de midia" };
+  try {
+    const baixa = await fetch(link, { signal: AbortSignal.timeout(60_000) });
+    if (!baixa.ok) return { ok: false, erro: `download ${baixa.status}` };
+    const bytes = new Uint8Array(await baixa.arrayBuffer());
+    if (!bytes.length) return { ok: false, erro: "midia vazia" };
+    const tipo = String(item.mimetype || baixa.headers.get("content-type") || "image/jpeg");
+    const extensao = tipo.includes("png") ? ".png" : tipo.includes("webp") ? ".webp" : ".jpg";
+    return { ok: true, bytes, nome: `${String(item.fileNameSha || "foto").slice(0, 40)}${extensao}` };
+  } catch (exc) {
+    return { ok: false, erro: String(exc).slice(0, 160) };
+  }
 }
 
 // ---------------------------------------------------------------- leitura dos erros
