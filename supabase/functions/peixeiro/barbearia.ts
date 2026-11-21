@@ -2227,6 +2227,8 @@ export async function importarPaginaAppBarber(
   telefoneBruto: string,
   urlBruto: string,
   conteudoBruto = "",
+  fotosBruto: unknown[] = [],
+  imagensBruto: unknown[] = [],
 ): Promise<{ ok: boolean; telefone: string; nome: string; slug: string; servicos: number;
   horarios: number; pagamentos: number; publicado: boolean; url: string; erro?: string }> {
   const telefone = normalizarWhatsapp(telefoneBruto);
@@ -2244,6 +2246,9 @@ export async function importarPaginaAppBarber(
   let nome = conta.nome || "Estabelecimento";
 
   if (!texto) {
+    if (fotosBruto.length || imagensBruto.length) {
+      nome = conta.nome || "Estabelecimento";
+    } else {
     let html = "";
     try {
       const response = await fetch(url, {
@@ -2273,6 +2278,7 @@ export async function importarPaginaAppBarber(
       .replace(/&quot;/gi, '"')
       .replace(/[ \t]+\n/g, "\n")
       .replace(/\n{3,}/g, "\n\n");
+    }
   }
 
   if (conteudoBruto) {
@@ -2330,7 +2336,9 @@ export async function importarPaginaAppBarber(
     }
   }
 
-  const slug = slugDe(nome, telefone);
+  const slug = (fotosBruto.length || imagensBruto.length)
+    ? (conta.slug || slugDe(nome, telefone))
+    : slugDe(nome, telefone);
   await consultar(
     `update public.barber_contas
         set nome = $2, slug = $3, endereco = coalesce(nullif($4, ''), endereco),
@@ -2368,6 +2376,54 @@ export async function importarPaginaAppBarber(
          values ($1, $2, $3, $4, true)`,
         [telefone, servico.nome, servico.preco, servico.duracao_min],
       );
+    }
+  }
+
+  if (fotosBruto.length) {
+    await consultar(`delete from public.barber_foto where telefone = $1`, [telefone]);
+    for (let i = 0; i < fotosBruto.length; i++) {
+      const item = fotosBruto[i] && typeof fotosBruto[i] === "object"
+        ? fotosBruto[i] as Bruto : {};
+      const brutoFoto = String(item.b64 || "").replace(/^data:[^;]+;base64,/i, "");
+      if (!brutoFoto) continue;
+      try {
+        const bytes = Uint8Array.from(atob(brutoFoto), (c) => c.charCodeAt(0));
+        if (!bytes.length || bytes.length > TAMANHO_MAX_FOTO) continue;
+        const nomeFoto = `foto-${i + 1}-${Date.now()}.jpg`;
+        const gravada = await publicarFoto(telefone, nomeFoto, bytes);
+        if (!gravada.ok || !gravada.caminho) continue;
+        await consultar(
+          `insert into public.barber_foto (telefone, arquivo, legenda, ordem)
+           values ($1, $2, $3, $4)`,
+          [telefone, gravada.caminho, String(item.legenda || "Foto do estabelecimento").slice(0, 120), i],
+        );
+      } catch {
+        // Foto inválida não impede a importação dos dados textuais.
+      }
+    }
+  }
+
+  if (imagensBruto.length) {
+    await consultar(`delete from public.barber_foto where telefone = $1`, [telefone]);
+    for (let i = 0; i < imagensBruto.length; i++) {
+      const imagemUrl = String(imagensBruto[i] || "").trim();
+      if (!/^https:\/\//i.test(imagemUrl)) continue;
+      try {
+        const resposta = await fetch(imagemUrl, { signal: AbortSignal.timeout(30_000) });
+        if (!resposta.ok) continue;
+        const bytes = new Uint8Array(await resposta.arrayBuffer());
+        if (!bytes.length || bytes.length > TAMANHO_MAX_FOTO) continue;
+        const nomeFoto = `foto-${i + 1}-${Date.now()}.jpg`;
+        const gravada = await publicarFoto(telefone, nomeFoto, bytes);
+        if (!gravada.ok || !gravada.caminho) continue;
+        await consultar(
+          `insert into public.barber_foto (telefone, arquivo, legenda, ordem)
+           values ($1, $2, $3, $4)`,
+          [telefone, gravada.caminho, "Foto do estabelecimento", i],
+        );
+      } catch {
+        // URL privada ou temporária não impede os dados já importados.
+      }
     }
   }
 

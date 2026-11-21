@@ -112,7 +112,7 @@ import {
   tirarDaFila as barbTirarDaFila,
   TRIAL_DIAS_PADRAO,
 } from "./barbearia.ts";
-import { publicarPagina } from "./estabelecimento.ts";
+import { publicarFoto, publicarPagina, publicarPainelBarbearia } from "./estabelecimento.ts";
 import { escreverCsv, lerCsv } from "./csv.ts";
 import { gravarPix, parsearPix } from "./pix.ts";
 import {
@@ -1779,6 +1779,8 @@ export async function barbPaginaImportar(dados: Registro): Promise<Saida> {
     telefone,
     txt(dados.url),
     typeof dados.conteudo === "string" ? dados.conteudo : "",
+    Array.isArray(dados.fotos) ? dados.fotos : [],
+    Array.isArray(dados.imagens) ? dados.imagens : [],
   );
   if (!feito.ok) {
     const erro = feito.erro === "url_appbarber" ? "url_appbarber"
@@ -1799,6 +1801,208 @@ export async function barbPaginaPublicar(dados: Registro): Promise<Saida> {
   const feito = await publicarPagina(telefone);
   if (!feito.ok) return falha(String(feito.erro || "banco"), 502);
   return ok(feito);
+}
+
+async function barbPainelValidar(dados: Registro): Promise<{ telefone: string; slug: string } | null> {
+  const chave = txt(dados.chave).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
+  const slug = txt(dados.slug).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
+  if (chave.length < 20 || !slug) return null;
+  const linha = await consultar1(
+    `select p.telefone, c.slug
+       from public.barber_painel p
+       join public.barber_contas c on c.telefone = p.telefone
+      where p.chave = $1 and p.ativo and c.slug = $2 limit 1`,
+    [chave, slug],
+  );
+  if (!linha) return null;
+  return { telefone: String(linha.telefone || ""), slug };
+}
+
+export async function barbPainelGerar(dados: Registro): Promise<Saida> {
+  const telefone = normalizarWhatsapp(txt(dados.telefone));
+  if (telefone.length < 10) return falha("telefone_invalido");
+  const conta = await contaDeTelefone(telefone);
+  if (!conta) return falha("sem_barbearia", 404);
+  const chave = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+  await consultar(
+    `insert into public.barber_painel (telefone, chave, ativo, criado_em, atualizado_em)
+     values ($1, $2, true, now(), now())
+     on conflict (telefone) do update set chave = excluded.chave, ativo = true,
+       atualizado_em = now()`,
+    [telefone, chave],
+  );
+  const publicado = await publicarPainelBarbearia(telefone, chave);
+  if (!publicado.ok) return falha(publicado.erro || "banco", 502);
+  await publicarPagina(telefone);
+  return ok({ chave, url: publicado.url });
+}
+
+export async function barbPainelVer(dados: Registro): Promise<Saida> {
+  const acesso = await barbPainelValidar(dados);
+  if (!acesso) return falha("acesso_painel_invalido", 403);
+  const conta = await contaDeTelefone(acesso.telefone);
+  if (!conta) return falha("sem_barbearia", 404);
+  const cat = await catalogo(acesso.telefone);
+  const horarios = await consultar(
+    `select dia, to_char(abre, 'HH24:MI') as abre, to_char(fecha, 'HH24:MI') as fecha
+       from public.barber_horario where telefone = $1 order by dia`,
+    [acesso.telefone],
+  );
+  const pagamentos = await consultar(
+    `select id, nome, detalhe, ordem from public.barber_pagamento
+      where telefone = $1 order by ordem, nome`,
+    [acesso.telefone],
+  );
+  const fotos = await consultar(
+    `select id, arquivo, legenda, ordem from public.barber_foto
+      where telefone = $1 order by ordem, id`,
+    [acesso.telefone],
+  );
+  return ok({
+    conta: await barbContaParaTela(acesso.telefone),
+    servicos: cat.servicos,
+    produtos: cat.produtos,
+    horarios: horarios.rows,
+    pagamentos: pagamentos.rows,
+    fotos: fotos.rows,
+  });
+}
+
+export async function barbPainelSalvar(dados: Registro): Promise<Saida> {
+  const acesso = await barbPainelValidar(dados);
+  if (!acesso) return falha("acesso_painel_invalido", 403);
+  const telefone = acesso.telefone;
+  if ("nome" in dados || "telefone_publico" in dados || "endereco" in dados) {
+    const nome = txt(dados.nome).trim().slice(0, 120);
+    const telefonePublico = txt(dados.telefone_publico).trim();
+    const endereco = txt(dados.endereco).trim().slice(0, 200);
+    await consultar(
+      `update public.barber_contas
+          set nome = coalesce(nullif($2, ''), nome),
+              telefone_publico = coalesce(nullif($3, ''), telefone_publico),
+              endereco = coalesce(nullif($4, ''), endereco),
+              atualizado_em = now()
+        where telefone = $1`,
+      [telefone, nome, telefonePublico, endereco],
+    );
+  }
+  if (txt(dados.acao) === "servico" && txt(dados.nome)) {
+    const preco = Number(txt(dados.preco) || 0);
+    const duracao = Math.max(10, Math.min(600, Number(txt(dados.duracao_min) || 30)));
+    await consultar(
+      `insert into public.barber_servico (telefone, nome, preco, duracao_min, ativo)
+       values ($1, $2, $3, $4, true)
+       on conflict (telefone, lower(nome)) do update
+         set preco = excluded.preco, duracao_min = excluded.duracao_min,
+             ativo = true, atualizado_em = now()`,
+      [telefone, txt(dados.nome).trim().slice(0, 120), preco, duracao],
+    );
+  }
+  if (txt(dados.acao) === "produto" && txt(dados.nome)) {
+    const preco = Number(txt(dados.preco) || 0);
+    await consultar(
+      `insert into public.barber_produto (telefone, nome, preco, ativo)
+       values ($1, $2, $3, true)
+       on conflict (telefone, lower(nome)) do update
+         set preco = excluded.preco, ativo = true, atualizado_em = now()`,
+      [telefone, txt(dados.nome).trim().slice(0, 120), preco],
+    );
+  }
+  if (txt(dados.acao) === "servico_editar") {
+    const id = Number(txt(dados.id) || 0);
+    if (id) {
+      await consultar(
+        `update public.barber_servico
+            set nome = $3, preco = $4, duracao_min = $5, ativo = $6, atualizado_em = now()
+          where id = $1 and telefone = $2`,
+        [id, telefone, txt(dados.nome).trim().slice(0, 120),
+         Number(txt(dados.preco) || 0),
+         Math.max(10, Math.min(600, Number(txt(dados.duracao_min) || 30))),
+         !booleano(dados.ativo) ? true : true],
+      );
+    }
+  }
+  if (txt(dados.acao) === "servico_apagar") {
+    const id = Number(txt(dados.id) || 0);
+    if (id) await consultar(`delete from public.barber_servico where id = $1 and telefone = $2`, [id, telefone]);
+  }
+  if (txt(dados.acao) === "produto_editar") {
+    const id = Number(txt(dados.id) || 0);
+    if (id) {
+      await consultar(
+        `update public.barber_produto
+            set nome = $3, preco = $4, ativo = true, atualizado_em = now()
+          where id = $1 and telefone = $2`,
+        [id, telefone, txt(dados.nome).trim().slice(0, 120), Number(txt(dados.preco) || 0)],
+      );
+    }
+  }
+  if (txt(dados.acao) === "produto_apagar") {
+    const id = Number(txt(dados.id) || 0);
+    if (id) await consultar(`delete from public.barber_produto where id = $1 and telefone = $2`, [id, telefone]);
+  }
+  if (Array.isArray(dados.horarios)) {
+    await consultar(`delete from public.barber_horario where telefone = $1`, [telefone]);
+    for (const item of dados.horarios as Registro[]) {
+      const dia = Number(item.dia);
+      const abre = txt(item.abre);
+      const fecha = txt(item.fecha);
+      if (dia < 0 || dia > 6 || !/^\d{2}:\d{2}$/.test(abre) || !/^\d{2}:\d{2}$/.test(fecha)) continue;
+      await consultar(
+        `insert into public.barber_horario (telefone, dia, abre, fecha, intervalo)
+         values ($1, $2, $3, $4, 30)
+         on conflict (telefone, dia) do update set abre = excluded.abre, fecha = excluded.fecha`,
+        [telefone, dia, abre, fecha],
+      );
+    }
+  }
+  if (Array.isArray(dados.pagamentos)) {
+    await consultar(`delete from public.barber_pagamento where telefone = $1`, [telefone]);
+    for (let i = 0; i < dados.pagamentos.length; i++) {
+      const nome = String(dados.pagamentos[i] ?? "").trim().slice(0, 60);
+      if (!nome) continue;
+      await consultar(
+        `insert into public.barber_pagamento (telefone, nome, detalhe, ordem)
+         values ($1, $2, '', $3)`,
+        [telefone, nome, i],
+      );
+    }
+  }
+  await publicarPagina(telefone);
+  return ok({ salvo: true });
+}
+
+export async function barbPainelFoto(dados: Registro): Promise<Saida> {
+  const acesso = await barbPainelValidar(dados);
+  if (!acesso) return falha("acesso_painel_invalido", 403);
+  const bruto = txt(dados.b64).replace(/^data:[^;]+;base64,/i, "");
+  if (!bruto) return falha("sem_foto");
+  let bytes: Uint8Array;
+  try {
+    bytes = Uint8Array.from(atob(bruto), (c) => c.charCodeAt(0));
+  } catch {
+    return falha("sem_foto");
+  }
+  if (!bytes.length || bytes.length > 900_000) return falha("foto_grande");
+  const gravada = await publicarFoto(acesso.telefone, `foto-${Date.now()}.jpg`, bytes);
+  if (!gravada.ok || !gravada.caminho) return falha("banco", 502);
+  await consultar(
+    `insert into public.barber_foto (telefone, arquivo, legenda, ordem)
+     values ($1, $2, '', coalesce((select max(ordem) from public.barber_foto where telefone = $1), 0) + 1)`,
+    [acesso.telefone, gravada.caminho],
+  );
+  await publicarPagina(acesso.telefone);
+  return ok({ arquivo: gravada.caminho });
+}
+
+export async function barbPainelFotoApagar(dados: Registro): Promise<Saida> {
+  const acesso = await barbPainelValidar(dados);
+  if (!acesso) return falha("acesso_painel_invalido", 403);
+  const id = Number(txt(dados.id) || 0);
+  if (!id) return falha("sem_foto");
+  await consultar(`delete from public.barber_foto where id = $1 and telefone = $2`, [id, acesso.telefone]);
+  await publicarPagina(acesso.telefone);
+  return ok({ apagado: true });
 }
 
 export async function barbInteressados(): Promise<Saida> {

@@ -11,7 +11,10 @@ import type { Handler, Registro } from "./acoes.ts";
 // sessão do painel — e só pede o endereço para onde o link dele já mandava. O webhook do
 // GreenAPI é a mesma coisa: quem bate aqui é o servidor dele, e a chave vai na URL.
 // `site_gerar` entra no mesmo grupo: é o botão do clone do site, apertado pelo cliente.
-const SEM_SESSAO = new Set(["ping", "entrar", "aviso_cron", "barb_cron", "links_destino", "chat_webhook", "site_gerar"]);
+const SEM_SESSAO = new Set([
+  "ping", "entrar", "aviso_cron", "barb_cron", "links_destino", "chat_webhook", "site_gerar",
+  "barb_painel_ver", "barb_painel_salvar", "barb_painel_foto", "barb_painel_foto_apagar",
+]);
 
 /** O contrato público do painel: cada rota do Flask vira uma action com nome de rota.
  *  Escrita à mão de propósito — assim dá para conferir, linha por linha, que nenhuma
@@ -107,6 +110,11 @@ const ACAO: Record<string, Handler> = {
   barb_conta_importar: acoes.barbContaImportar,
   barb_pagina_importar: acoes.barbPaginaImportar,
   barb_pagina_publicar: acoes.barbPaginaPublicar,
+  barb_painel_gerar: acoes.barbPainelGerar,
+  barb_painel_ver: acoes.barbPainelVer,
+  barb_painel_salvar: acoes.barbPainelSalvar,
+  barb_painel_foto: acoes.barbPainelFoto,
+  barb_painel_foto_apagar: acoes.barbPainelFotoApagar,
   barb_interessados: acoes.barbInteressados,
   barb_detalhe: acoes.barbDetalhe,
   barb_conversas: acoes.barbConversas,

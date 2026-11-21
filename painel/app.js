@@ -3114,6 +3114,23 @@
       });
     });
     acoes.appendChild(alternar);
+    var painel = criar("button", "segundo", "Gerar painel privado");
+    painel.type = "button";
+    painel.addEventListener("click", function () {
+      if (!window.confirm("Criar ou trocar o painel privado deste estabelecimento?")) return;
+      chamar("barb_painel_gerar", { telefone: telefone }, 90).then(function (r) {
+        if (!r.ok) { recado(r.erro, r.detalhe); return; }
+        var link = criar("a", "", r.url);
+        link.href = r.url;
+        link.target = "_blank";
+        link.rel = "noopener";
+        var linha = criar("p", "ok", "Painel privado criado: ");
+        linha.appendChild(link);
+        $("bbConteudoDetalhe").prepend(linha);
+        recado("gravado");
+      });
+    });
+    acoes.appendChild(painel);
     var boasVindas = criar("button", "segundo", "Enviar boas-vindas");
     boasVindas.type = "button";
     boasVindas.addEventListener("click", function () {
