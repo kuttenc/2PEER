@@ -31,6 +31,19 @@ Arquivos novos:
 - `assets/resvg_bg.wasm` e `assets/DejaVuSans-Bold.ttf` — a função baixa estes dois arquivos
   daqui para desenhar a imagem do aviso de vencimento. Sem eles, o aviso sai só com texto.
 
+## Aba Bloquear
+
+A antiga lista **Bloqueados** passa a se chamar **Bloquear**. Ela mantém a pesquisa por telefone,
+nome, usuário ou motivo e permite cadastrar manualmente um telefone, nome opcional e motivo. A
+ação exige confirmação e grava na tabela global `clientes_bloqueados`, a mesma usada pelo
+webhook e pelas filas.
+
+Os envios GreenAPI de texto e arquivo também consultam essa tabela no ponto central de envio.
+Assim, um número bloqueado deixa de receber respostas do chatbot e mensagens automáticas/manuais
+enviadas por esses caminhos; desbloquear o devolve ao fluxo. A mudança não precisa de migration.
+Publicação no Pages, deploy da Edge Function e confirmação do bloqueio inicial solicitado ficam
+pendentes até a validação no projeto 2PEER.
+
 ## Onde cada projeto está hoje
 
 | Projeto Supabase | Ref | O que roda nele |
@@ -1487,3 +1500,28 @@ As actions do catálogo agora ficam separadas da atualização dos dados da cont
 campo `nome` de um serviço altere o nome público do estabelecimento. O nome público de
 `Jailtonbarbershop` foi restaurado ao valor anterior às tentativas de alteração de preço, mantendo
 Selage em R$ 90,00 e Relaxamento em R$ 60,00.
+
+### Consulta sobre produtos — enviada em 22/11/2026
+
+Foi enviada uma pergunta individual às 30 contas ativas de barbeiros, incluindo Jailton, sobre
+venda de produtos como gel, pomada ou shampoo e interesse em adicioná-los à página. As 30 chamadas
+foram aceitas pelo provedor; nenhuma ficou simulada, bloqueada ou com erro. Nenhum produto foi
+cadastrado: aguardar a confirmação e o nome/preço informados por cada barbeiro.
+
+### Instruções para adicionar a página ao WhatsApp Business — publicado em 22/11/2026
+
+Depois que a página pública puder receber agendamentos (nome, contato, agendamento online,
+serviço, expediente e forma de pagamento preenchidos) e a publicação for bem-sucedida, o backend
+tenta enviar uma única mensagem ao telefone cadastrado do responsável. A mensagem orienta abrir
+WhatsApp Business → Ferramentas comerciais → Perfil comercial → Site, colar o link público e
+salvar. O link privado do painel não é usado. Não se considera envio concluído quando GreenAPI
+está em modo simulado; falha de envio deixa a tentativa liberada para novo salvamento/publicação.
+
+A deduplicação usa duas colunas aditivas em `barber_contas`. A migration
+`../tools/20261122_barber_site_whatsapp_instrucoes.sql` foi aplicada e verificada no projeto
+`ggufcvrwctieacvbbwim`. A Edge Function `peixeiro` foi publicada nesse projeto na versão 34.
+`GET /healthz` e a action `ping` responderam com sucesso; nenhum WhatsApp real foi enviado.
+
+Os testes focados passaram (15/15), a suíte completa `node --test --test-reporter=dot`,
+`node --check` do helper e `git diff --check` passaram. O guia operacional consolidado está em
+`./guia-operacional-chatbot-barbearias.md`.

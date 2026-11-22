@@ -116,5 +116,7 @@ test("mudanças no catálogo avisam o barbeiro e não renomeiam a conta", async 
   }
   assert.equal((salvar.match(/mensagemCatalogo = mensagemAlteracaoCatalogo/g) || []).length, 6);
   assert.ok(salvar.indexOf("await publicarPagina(telefone)") < salvar.indexOf("enviarParaBarbeiro(telefone, mensagemCatalogo)"));
-  assert.match(salvar, /falha\("aviso_whatsapp_nao_enviado", 502, \{\s*salvo: true/s);
+  assert.match(salvar, /avisosFalhos\.includes\("catalogo"\)/);
+  assert.match(salvar, /"aviso_whatsapp_nao_enviado"/);
+  assert.match(salvar, /salvo: true,\s*pagina_publicada: pagina\.ok,\s*avisos: avisosFalhos/s);
 });

@@ -110,6 +110,7 @@ const ACAO: Record<string, Handler> = {
   chat_treino_exportar: acoes.chatTreino,
 
   bloqueados_ver: acoes.bloqueadosVer,
+  bloqueados_bloquear: acoes.bloqueadosBloquear,
   bloqueados_desbloquear: acoes.bloqueadosDesbloquear,
 
   // ------------------------------------------------------------------ barbearias

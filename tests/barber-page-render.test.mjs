@@ -33,6 +33,7 @@ function salon(servicos = [], horarios = [{ dia: 1, abre: "09:00", fecha: "18:00
     cep: "",
     telefone_publico: "5511999999999",
     mostra_barbeiro: false,
+    aceita_agendamento: true,
     servicos,
     produtos: [],
     horarios,

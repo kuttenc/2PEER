@@ -2,6 +2,7 @@
 import { baseDaApi } from "./banco.ts";
 import { b64ParaBytes, normalizarWhatsapp } from "./texto.ts";
 import { modoTeste } from "./mcapi.ts";
+import { estaBloqueado } from "./bloqueados.ts";
 
 export type ResultadoEnvio = {
   ok: boolean;
@@ -168,6 +169,7 @@ export async function enviarArquivo(
   const chat = normalizarWhatsapp(phone);
   const bloqueado = semConfig(conf, chat);
   if (bloqueado) return bloqueado;
+  if (await estaBloqueado(chat)) return { ok: false, skipped: true, error: "bloqueado" };
   if (modoTeste()) {
     return { ok: true, simulado: true, status_code: 200, response: { chatId: `${chat}@c.us`, simulado: true } };
   }
@@ -194,6 +196,7 @@ export async function enviarTexto(conf: Conf, phone: string, message: string): P
   const chat = normalizarWhatsapp(phone);
   const bloqueado = semConfig(conf, chat);
   if (bloqueado) return bloqueado;
+  if (await estaBloqueado(chat)) return { ok: false, skipped: true, error: "bloqueado" };
   if (modoTeste()) {
     // O mesmo desenho da resposta de verdade, para o resto do código (guarda da conversa,
     // prova de entrega) ser provado no modo teste sem precisar de um envio real.

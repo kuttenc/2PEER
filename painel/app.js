@@ -46,7 +46,8 @@
     mensagem_enviada: "Mensagem enviada pelo WhatsApp (sem link e sem painel MC no meio).",
     chat_nao_salvo: "Resposta do \u201cnão\u201d salva. Na primeira vez que o cliente escrever só isso, ele sai das filas.",
     chat_nao_desligado: "Resposta do \u201cnão\u201d desligada. Ninguém mais é bloqueado por responder isso.",
-    desbloqueado: "Desbloqueado: o número volta para a fila do Não recuperados, para o aviso das 6h e para a renovação.",
+    bloqueado_manual: "Bloqueio salvo. O chatbot e os envios pela GreenAPI serão desviados deste telefone.",
+    desbloqueado: "Desbloqueado: o telefone volta a poder receber respostas e mensagens pela GreenAPI.",
   };
 
   var MSG_ERRO = {
@@ -103,6 +104,8 @@
     sem_texto: "Escreva a mensagem antes de contar ou enviar.",
     texto_grande: "Texto grande demais: são até 1200 caracteres.",
     bloqueado: "Este número está na aba Bloqueados (respondeu \u201cnão\u201d). Desbloqueie lá para mandar de novo.",
+    ja_bloqueado: "Este telefone já está bloqueado.",
+    bloqueio_falhou: "Não consegui salvar o bloqueio. Tente novamente.",
     nao_esta_bloqueado: "Este número já não estava bloqueado.",
     url_appbarber: "Use o endereço público completo de um site AppBarber.",
     pagina_inacessivel: "Não consegui abrir a página atual agora. Confira o endereço e tente novamente.",
@@ -2801,6 +2804,31 @@
       desenharBloqueados(d.itens || [], Number(d.total || 0));
     });
   }
+
+  $("formBloquear").addEventListener("submit", function (evento) {
+    evento.preventDefault();
+    var telefone = $("blTelefone").value.trim();
+    if (!telefone) { recado("telefone_invalido"); return; }
+    if (!window.confirm("Bloquear este telefone para respostas do chatbot e mensagens pela GreenAPI?")) return;
+    var botao = $("blBloquear");
+    botao.disabled = true;
+    botao.textContent = "bloqueando…";
+    chamar("bloqueados_bloquear", {
+      telefone: telefone,
+      nome: $("blNome").value.trim(),
+      motivo: $("blMotivo").value.trim(),
+    }, 45).then(function (d) {
+      botao.disabled = false;
+      botao.textContent = "Bloquear chatbot e mensagens";
+      if (!d.ok) { recado(d.erro, d.detalhe); return; }
+      $("blTelefone").value = "";
+      $("blNome").value = "";
+      blBusca = "";
+      $("blBusca").value = "";
+      recado("bloqueado_manual", d.telefone);
+      desenharBloqueados(d.itens || [], Number(d.total || 0));
+    });
+  });
 
   function desenharBloqueados(itens, total) {
     $("blTotal").textContent = total;

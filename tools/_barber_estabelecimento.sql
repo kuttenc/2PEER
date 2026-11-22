@@ -22,6 +22,9 @@ alter table public.barber_contas add column if not exists mostra_barbeiro  boole
 -- Página publicada no GitHub: quando, e com que número de chamada (o `sha` do arquivo).
 alter table public.barber_contas add column if not exists site_publicado_em timestamptz;
 alter table public.barber_contas add column if not exists site_sha         text not null default '';
+-- Controle para enviar uma única vez as instruções de inclusão do link no WhatsApp Business.
+alter table public.barber_contas add column if not exists site_instrucoes_whatsapp_tentativa_em timestamptz;
+alter table public.barber_contas add column if not exists site_instrucoes_whatsapp_enviado_em  timestamptz;
 -- O telefone que a página mostra para o cliente falar (nem todo salão usa o do dono).
 alter table public.barber_contas add column if not exists telefone_publico text not null default '';
 

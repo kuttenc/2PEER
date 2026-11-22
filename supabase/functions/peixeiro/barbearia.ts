@@ -2187,6 +2187,9 @@ function rodapeDaPagina(url: string, campo: Campo): string {
 export async function guiaDaPagina(conta: Conta, textos: Textos): Promise<string> {
   const publicado = await publicarPagina(conta.telefone);
   const url = publicado.ok ? publicado.url || urlDaPagina(conta) : urlDaPagina(conta);
+  const avisoInstrucoes = publicado.instrucoes_whatsapp === "falha"
+    ? "\n\nA página foi publicada, mas não consegui enviar as instruções do WhatsApp Business. Salve a página novamente para tentar outra vez."
+    : "";
   const base = (textos.boas_vindas_site || "").trim() ||
     `Olá, sou seu novo chatbot do estabelecimento {nome}!\n\n` +
       `Sua página já está no ar: {site}\n\n` +
@@ -2214,7 +2217,7 @@ export async function guiaDaPagina(conta: Conta, textos: Textos): Promise<string
     "BARBEIRO SIM — mostra a foto de quem vai cortar antes de agendar",
   ];
   return publicado.ok
-    ? `${corpo}\n\n${comandos.map((c) => `  ${c}`).join("\n")}${url ? `\n\nDá uma olhada: ${url}` : ""}`
+    ? `${corpo}\n\n${comandos.map((c) => `  ${c}`).join("\n")}${url ? `\n\nDá uma olhada: ${url}` : ""}${avisoInstrucoes}`
     : `${corpo}\n\n${comandos.map((c) => `  ${c}`).join("\n")}\n\n` +
       `A página ainda não subiu (${publicado.erro || "sem resposta"}). Manda SITE de novo que eu tento outra vez.`;
 }
@@ -2564,7 +2567,10 @@ async function respostaComPagina(conta: Conta, texto: string, campo: Campo): Pro
       tipo: "pagina",
     };
   }
-  return { texto: `${texto}${rodapeDaPagina(url, campo)}`, tipo: "pagina" };
+  const avisoInstrucoes = publicado.instrucoes_whatsapp === "falha"
+    ? "\n\nA página foi publicada, mas não consegui enviar as instruções do WhatsApp Business. Salve a página novamente para tentar outra vez."
+    : "";
+  return { texto: `${texto}${rodapeDaPagina(url, campo)}${avisoInstrucoes}`, tipo: "pagina" };
 }
 
 /** NOMESITE barbeariadooleiro — o único lugar em que o espaço não é permitido, porque a URL
@@ -2595,10 +2601,13 @@ async function mostrarSite(conta: Conta, textos: Textos): Promise<Resposta> {
     };
   }
   void textos;
+  const avisoInstrucoes = publicado.instrucoes_whatsapp === "falha"
+    ? "\n\nA página foi publicada, mas não consegui enviar as instruções do WhatsApp Business. Salve a página novamente para tentar outra vez."
+    : "";
   return {
     texto: `Sua página: ${url}\n` +
       `É só mandar o link para o cliente: ele escolhe o dia, a hora livre e quem corta.\n\n` +
-      `Para mudar qualquer coisa: ${Object.values(ROTULO_CAMPO).join(", ")}.`,
+      `Para mudar qualquer coisa: ${Object.values(ROTULO_CAMPO).join(", ")}.${avisoInstrucoes}`,
     tipo: "site",
   };
 }
@@ -2612,7 +2621,8 @@ export async function importarPaginaAppBarber(
   fotosBruto: unknown[] = [],
   imagensBruto: unknown[] = [],
 ): Promise<{ ok: boolean; telefone: string; nome: string; slug: string; servicos: number;
-  horarios: number; pagamentos: number; publicado: boolean; url: string; erro?: string }> {
+  horarios: number; pagamentos: number; publicado: boolean; url: string;
+  instrucoes_whatsapp?: string; erro?: string }> {
   const telefone = normalizarWhatsapp(telefoneBruto);
   const conta = await contaDeTelefone(telefone);
   if (!conta) return { ok: false, telefone, nome: "", slug: "", servicos: 0, horarios: 0,
@@ -2810,7 +2820,9 @@ export async function importarPaginaAppBarber(
   }
 
   const atualizada = await contaDeTelefone(telefone);
-  const publicado = atualizada ? await publicarPagina(telefone) : { ok: false, url: "" };
+  const publicado = atualizada
+    ? await publicarPagina(telefone)
+    : { ok: false, url: "", instrucoes_whatsapp: "incompleta" as const };
   const destino = publicado.ok ? publicado.url || urlDaPagina(atualizada || conta) : urlDaPagina(atualizada || conta);
   return {
     ok: true,
@@ -2822,6 +2834,7 @@ export async function importarPaginaAppBarber(
     pagamentos: pagamentos.length,
     publicado: Boolean(publicado.ok),
     url: destino,
+    instrucoes_whatsapp: publicado.instrucoes_whatsapp,
   };
 }
 

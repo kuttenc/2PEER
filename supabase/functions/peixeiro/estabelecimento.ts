@@ -13,6 +13,10 @@ import { enviarTexto } from "./greenapi.ts";
 import { modoTeste } from "./mcapi.ts";
 import { hashCodigoCancelamento, instanteDoAgendamento, novoCodigoCancelamento } from "./cancelamento.mjs";
 import {
+  mensagemPerfilWhatsApp,
+  paginaProntaParaAgendamento,
+} from "../_shared/barber-site-onboarding.mjs";
+import {
   BRAZIL_OFFSET_MS,
   bytesParaB64,
   formatarTelefone,
@@ -1085,7 +1089,13 @@ h1{color:var(--gold);font-size:clamp(25px,5vw,36px)}ul{padding:0;list-style:none
 /** A página é sempre o retrato do banco: quem muda texto, preço ou foto republica. */
 export async function publicarPagina(
   telefoneBruto: string,
-): Promise<{ ok: boolean; url?: string; erro?: string; slug?: string }> {
+): Promise<{
+  ok: boolean;
+  url?: string;
+  erro?: string;
+  slug?: string;
+  instrucoes_whatsapp?: "incompleta" | "ja_enviada" | "enviada" | "falha";
+}> {
   const telefone = normalizarWhatsapp(telefoneBruto);
   if (!telefoneValido(telefone)) return { ok: false, erro: "telefone_invalido" };
   const d = await dadosDaPagina(telefone);
@@ -1105,7 +1115,51 @@ export async function publicarPagina(
     [telefone, d.slug, gravado.sha || ""],
   );
   await publicarIndice();
-  return { ok: true, url: d.url, slug: d.slug };
+  const instrucoes = await enviarOrientacaoWhatsApp(d);
+  return { ok: true, url: d.url, slug: d.slug, instrucoes_whatsapp: instrucoes };
+}
+
+async function enviarOrientacaoWhatsApp(d: DadosPagina): Promise<"incompleta" | "ja_enviada" | "enviada" | "falha"> {
+  if (!paginaProntaParaAgendamento(d)) return "incompleta";
+
+  const reivindicada = await consultar1(
+    `update public.barber_contas
+        set site_instrucoes_whatsapp_tentativa_em = now()
+      where telefone = $1
+        and site_instrucoes_whatsapp_enviado_em is null
+        and (site_instrucoes_whatsapp_tentativa_em is null
+             or site_instrucoes_whatsapp_tentativa_em <= now() - interval '15 minutes')
+      returning site_instrucoes_whatsapp_tentativa_em`,
+    [d.telefone],
+  );
+  if (!reivindicada) return "ja_enviada";
+
+  const tentativa = reivindicada.site_instrucoes_whatsapp_tentativa_em;
+  const conf = await obterConfig();
+  const envio = conf
+    ? await enviarTexto(conf, d.telefone, mensagemPerfilWhatsApp(d.url))
+    : { ok: false, simulado: false };
+
+  if (envio.ok && !envio.simulado) {
+    await consultar(
+      `update public.barber_contas
+          set site_instrucoes_whatsapp_enviado_em = now(),
+              site_instrucoes_whatsapp_tentativa_em = null
+        where telefone = $1 and site_instrucoes_whatsapp_tentativa_em = $2
+          and site_instrucoes_whatsapp_enviado_em is null`,
+      [d.telefone, tentativa],
+    );
+    return "enviada";
+  }
+
+  await consultar(
+    `update public.barber_contas
+        set site_instrucoes_whatsapp_tentativa_em = null
+      where telefone = $1 and site_instrucoes_whatsapp_tentativa_em = $2
+        and site_instrucoes_whatsapp_enviado_em is null`,
+    [d.telefone, tentativa],
+  );
+  return "falha";
 }
 
 /** Página privada de edição, protegida por uma chave longa na própria URL.

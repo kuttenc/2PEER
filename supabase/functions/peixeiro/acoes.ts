@@ -21,6 +21,7 @@ import {
 } from "./banco.ts";
 import { consultar, consultar1 } from "./db.ts";
 import {
+  bloquear,
   desbloquear,
   estaBloqueado,
   listarBloqueados,
@@ -1627,6 +1628,27 @@ export async function bloqueadosVer(dados: Registro): Promise<Saida> {
   return ok(await listarBloqueados(txt(dados.q)));
 }
 
+/** Bloqueia um telefone no mesmo controle global usado pelo chatbot e pelos envios GreenAPI. */
+export async function bloqueadosBloquear(dados: Registro, ctx: Contexto): Promise<Saida> {
+  const telefone = normalizarWhatsapp(txt(dados.telefone));
+  if (telefone.length < 10 || telefone.length > 15) return falha("telefone_invalido");
+  if (await estaBloqueado(telefone)) {
+    return falha("ja_bloqueado", 409, { telefone: formatarTelefone(telefone) });
+  }
+  const nome = txt(dados.nome).trim().slice(0, 120);
+  const motivo = txt(dados.motivo).trim().slice(0, 160) || "bloqueio manual no painel";
+  const inserido = await bloquear(telefone, "", nome, motivo);
+  if (!inserido) return falha("bloqueio_falhou", 500);
+  await gravarEvento({
+    event_type: "cliente_bloqueado_manual",
+    status_code: 200,
+    request_payload: { origem: "painel_bloquear" },
+    response_payload: { bloqueado: true },
+    client_ip: ctx.ip,
+  });
+  return ok({ telefone: formatarTelefone(telefone), ...await listarBloqueados("") });
+}
+
 /** Devolve o número para as filas: o robô volta a responder e o lote "Não recuperados" volta a
  *  alcançar. Só um DELETE nesta linha, sem tocar em nada do painel MC. */
 export async function bloqueadosDesbloquear(dados: Registro, ctx: Contexto): Promise<Saida> {
@@ -1800,6 +1822,12 @@ export async function barbPaginaPublicar(dados: Registro): Promise<Saida> {
   if (telefone.length < 10) return falha("telefone_invalido");
   const feito = await publicarPagina(telefone);
   if (!feito.ok) return falha(String(feito.erro || "banco"), 502);
+  if (feito.instrucoes_whatsapp === "falha") {
+    return falha("aviso_instrucoes_whatsapp_nao_enviado", 502, {
+      pagina_publicada: true,
+      url: feito.url,
+    });
+  }
   return ok(feito);
 }
 
@@ -1833,8 +1861,12 @@ export async function barbPainelGerar(dados: Registro): Promise<Saida> {
   );
   const publicado = await publicarPainelBarbearia(telefone, chave);
   if (!publicado.ok) return falha(publicado.erro || "banco", 502);
-  await publicarPagina(telefone);
-  return ok({ chave, url: publicado.url });
+  const pagina = await publicarPagina(telefone);
+  return ok({
+    chave,
+    url: publicado.url,
+    instrucoes_whatsapp: pagina.instrucoes_whatsapp,
+  });
 }
 
 export async function barbPainelVer(dados: Registro): Promise<Saida> {
@@ -2060,15 +2092,33 @@ export async function barbPainelSalvar(dados: Registro): Promise<Saida> {
       );
     }
   }
-  await publicarPagina(telefone);
+  const pagina = await publicarPagina(telefone);
+  const avisosFalhos: string[] = [];
+  let catalogoSimulado = false;
+  if (!pagina.ok) avisosFalhos.push("pagina");
   if (mensagemCatalogo) {
     const envio = await enviarParaBarbeiro(telefone, mensagemCatalogo);
     if (!envio.ok || envio.simulado) {
-      return falha("aviso_whatsapp_nao_enviado", 502, {
-        salvo: true,
-        simulado: Boolean(envio.simulado),
-      });
+      avisosFalhos.push("catalogo");
+      catalogoSimulado = Boolean(envio.simulado);
     }
+  }
+  if (pagina.ok && pagina.instrucoes_whatsapp === "falha") avisosFalhos.push("instrucoes_site");
+  if (avisosFalhos.length) {
+    return falha(
+      !pagina.ok
+        ? "pagina_nao_publicada"
+        : avisosFalhos.includes("catalogo")
+          ? "aviso_whatsapp_nao_enviado"
+          : "aviso_instrucoes_whatsapp_nao_enviado",
+      502,
+      {
+        salvo: true,
+        pagina_publicada: pagina.ok,
+        avisos: avisosFalhos,
+        simulado: catalogoSimulado,
+      },
+    );
   }
   return ok({ salvo: true });
 }
@@ -2092,7 +2142,14 @@ export async function barbPainelFoto(dados: Registro): Promise<Saida> {
      values ($1, $2, '', coalesce((select max(ordem) from public.barber_foto where telefone = $1), 0) + 1)`,
     [acesso.telefone, gravada.caminho],
   );
-  await publicarPagina(acesso.telefone);
+  const pagina = await publicarPagina(acesso.telefone);
+  if (!pagina.ok) return falha("pagina_nao_publicada", 502, { foto_salva: true });
+  if (pagina.instrucoes_whatsapp === "falha") {
+    return falha("aviso_instrucoes_whatsapp_nao_enviado", 502, {
+      foto_salva: true,
+      pagina_publicada: true,
+    });
+  }
   return ok({ arquivo: gravada.caminho });
 }
 
@@ -2102,7 +2159,14 @@ export async function barbPainelFotoApagar(dados: Registro): Promise<Saida> {
   const id = Number(txt(dados.id) || 0);
   if (!id) return falha("sem_foto");
   await consultar(`delete from public.barber_foto where id = $1 and telefone = $2`, [id, acesso.telefone]);
-  await publicarPagina(acesso.telefone);
+  const pagina = await publicarPagina(acesso.telefone);
+  if (!pagina.ok) return falha("pagina_nao_publicada", 502, { foto_apagada: true });
+  if (pagina.instrucoes_whatsapp === "falha") {
+    return falha("aviso_instrucoes_whatsapp_nao_enviado", 502, {
+      foto_apagada: true,
+      pagina_publicada: true,
+    });
+  }
   return ok({ apagado: true });
 }
 

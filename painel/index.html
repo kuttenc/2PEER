@@ -40,7 +40,7 @@
       <a href="#chat" data-tela="chat">Chat</a>
       <a href="#chatbarbearia" data-tela="chatbarbearia">Chat Barbearias</a>
       <a href="#clientesbarbearia" data-tela="clientesbarbearia">Clientes Barbearia</a>
-      <a href="#bloqueados" data-tela="bloqueados">Bloqueados</a>
+      <a href="#bloqueados" data-tela="bloqueados">Bloquear</a>
       <a href="#senha" data-tela="senha">Senha</a>
       <a href="#sair" data-tela="sair">Sair</a>
     </nav>
@@ -822,12 +822,27 @@
     <!-- ----------------------------------------------------- BLOQUEADOS -->
     <section data-pagina="bloqueados" hidden>
       <div class="card">
-        <h2>Bloqueados</h2>
-        <p class="muted" style="margin-top:0">Quem respondeu <b>n&atilde;o</b> no WhatsApp entra aqui
-          &mdash; e n&atilde;o recebe mais mensagem autom&aacute;tica nenhuma: sai da fila do
-          <b>N&atilde;o recuperados</b>, do aviso das 6h, da renova&ccedil;&atilde;o e da mensagem avulsa,
-          mesmo que a fila j&aacute; esteja andando. &Eacute; o que protege o n&uacute;mero do
-          bloqueio do WhatsApp. Tocar em <b>desbloquear</b> devolve a pessoa para todas as filas.</p>
+        <h2>Bloquear chatbot</h2>
+        <p class="muted" style="margin-top:0">Pesquise os bloqueios existentes ou inclua um telefone abaixo.
+          Enquanto estiver bloqueado, o chatbot n&atilde;o responde e nenhum envio autom&aacute;tico ou manual
+          novo pela GreenAPI &eacute; realizado para esse n&uacute;mero. Mensagens que a GreenAPI j&aacute;
+          aceitou antes do bloqueio podem ainda ser entregues.</p>
+        <form id="formBloquear" class="card" style="margin:12px 0;padding:14px">
+          <h3 style="margin-top:0">Adicionar bloqueio</h3>
+          <div class="linha">
+            <label style="flex:1;min-width:190px">Telefone com DDD
+              <input class="maq" id="blTelefone" type="tel" inputmode="tel" autocomplete="tel"
+                     placeholder="(12) 91234-5678" maxlength="24" required>
+            </label>
+            <label style="flex:1;min-width:190px">Nome ou estabelecimento (opcional)
+              <input id="blNome" type="text" maxlength="120" autocomplete="off">
+            </label>
+          </div>
+          <label>Motivo (opcional)
+            <input id="blMotivo" type="text" maxlength="160" value="bloqueio manual no painel">
+          </label>
+          <button class="verm" id="blBloquear" type="submit">Bloquear chatbot e mensagens</button>
+        </form>
         <div class="numeros">
           <div><span class="rotulo">bloqueados agora</span><b id="blTotal">?</b></div>
         </div>
@@ -1103,6 +1118,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=20261122-agendamentos-clientes"></script>
+<script src="app.js?v=20261122-bloquear-chatbot"></script>
 </body>
 </html>
