@@ -604,14 +604,23 @@ function proximoDia(rel: Relogio, _agora: Date, frente: number): Relogio {
 
 // -------------------------------------------------------------------------- catálogo
 
-export type ItemCatalogo = { nome: string; preco: number };
+export type ItemCatalogo = { id: number; nome: string; preco: number; duracao_min?: number };
+type TabelaCatalogo = "barber_servico" | "barber_produto";
 
-async function lerCatalogo(tabela: string, telefone: string): Promise<ItemCatalogo[]> {
+async function lerCatalogo(tabela: TabelaCatalogo, telefone: string): Promise<ItemCatalogo[]> {
+  const colunas = tabela === "barber_servico"
+    ? "id, nome, preco, duracao_min"
+    : "id, nome, preco";
   const r = await consultar(
-    `select nome, preco from public.${tabela} where telefone = $1 order by lower(nome) limit 200`,
+    `select ${colunas} from public.${tabela} where telefone = $1 order by lower(nome) limit 200`,
     [telefone],
   );
-  return r.rows.map((l) => ({ nome: String(l.nome || ""), preco: Number(l.preco || 0) }));
+  return r.rows.map((l) => ({
+    id: Number(l.id),
+    nome: String(l.nome || ""),
+    preco: Number(l.preco || 0),
+    ...(tabela === "barber_servico" ? { duracao_min: Number(l.duracao_min || 30) } : {}),
+  }));
 }
 
 export async function catalogo(telefone: string): Promise<{ servicos: ItemCatalogo[]; produtos: ItemCatalogo[]; pacotes: Bruto[] }> {
