@@ -168,8 +168,16 @@ async function listar(caminho: string): Promise<Bruto[]> {
 // ------------------------------------------------------------------------ os dados
 
 export type Servico = { nome: string; preco: number; duracao_min: number; descricao: string };
-export type Horario = { dia: number; abre: string; fecha: string; intervalo: number; primeiro: string };
-export type Funcionario = { telefone: string; nome: string; cargo: string; foto: string };
+export type Horario = {
+  dia: number;
+  abre: string;
+  fecha: string;
+  almoco_inicio: string;
+  almoco_fim: string;
+  intervalo: number;
+  primeiro: string;
+};
+export type Funcionario = { id: number; telefone: string; nome: string; cargo: string; foto: string };
 export type DadosPagina = {
   telefone: string;
   nome: string;
@@ -181,6 +189,8 @@ export type DadosPagina = {
   cep: string;
   telefone_publico: string;
   mostra_barbeiro: boolean;
+  aceita_agendamento: boolean;
+  aviso_publico: string;
   servicos: Servico[];
   produtos: { nome: string; preco: number }[];
   horarios: Horario[];
@@ -197,6 +207,8 @@ export function mapearHorarios(rows: Bruto[]): Horario[] {
     dia: Number(h.dia),
     abre: String(h.abre || ""),
     fecha: String(h.fecha || ""),
+    almoco_inicio: String(h.almoco_inicio || ""),
+    almoco_fim: String(h.almoco_fim || ""),
     intervalo: Math.max(10, Math.min(120, Number(h.intervalo || 30))),
     primeiro: String(h.primeiro || ""),
   }));
@@ -205,6 +217,7 @@ export function mapearHorarios(rows: Bruto[]): Horario[] {
 export async function dadosDaPagina(telefone: string): Promise<DadosPagina | null> {
   const conta = await consultar1(
     `select telefone, nome, slug, endereco, cidade, uf, cep, telefone_publico, mostra_barbeiro,
+            aceita_agendamento, aviso_publico,
             to_char(atualizado_em at time zone 'America/Sao_Paulo', 'DD/MM/YYYY "às" HH24:MI') as atualizado_em
        from public.barber_contas where telefone = $1`,
     [telefone],
@@ -223,6 +236,8 @@ export async function dadosDaPagina(telefone: string): Promise<DadosPagina | nul
   );
   const horarios = await consultar(
     `select dia, to_char(abre, 'HH24:MI') as abre, to_char(fecha, 'HH24:MI') as fecha,
+            coalesce(to_char(almoco_inicio, 'HH24:MI'), '') as almoco_inicio,
+            coalesce(to_char(almoco_fim, 'HH24:MI'), '') as almoco_fim,
             intervalo, coalesce(to_char(primeiro, 'HH24:MI'), '') as primeiro
        from public.barber_horario where telefone = $1 order by dia`,
     [telefone],
@@ -232,7 +247,7 @@ export async function dadosDaPagina(telefone: string): Promise<DadosPagina | nul
     [telefone],
   );
   const funcionarios = await consultar(
-    `select telefone, nome, cargo, foto_arquivo from public.barber_funcionario
+    `select id, telefone, nome, cargo, foto_arquivo from public.barber_funcionario
       where barbearia = $1 and ativo and na_pagina order by lower(nome)`,
     [telefone],
   );
@@ -254,6 +269,8 @@ export async function dadosDaPagina(telefone: string): Promise<DadosPagina | nul
     cep: String(conta.cep || ""),
     telefone_publico: String(conta.telefone_publico || "") || telefone,
     mostra_barbeiro: Boolean(conta.mostra_barbeiro),
+    aceita_agendamento: conta.aceita_agendamento !== false,
+    aviso_publico: String(conta.aviso_publico || ""),
     servicos: servicos.rows.map((s) => ({
       nome: String(s.nome || ""),
       preco: Number(s.preco || 0),
@@ -264,6 +281,7 @@ export async function dadosDaPagina(telefone: string): Promise<DadosPagina | nul
     horarios: mapearHorarios(horarios.rows),
     pagamentos: pagamentos.rows.map((p) => String(p.nome || "")),
     funcionarios: funcionarios.rows.map((f) => ({
+      id: Number(f.id || 0),
       telefone: String(f.telefone || ""),
       nome: String(f.nome || ""),
       cargo: String(f.cargo || "barbeiro"),
@@ -323,60 +341,206 @@ function instanteDeBrasilia(base: Date, minuto: number): Date {
   return new Date(base.getTime() + (minuto - emBrasilia(base).hora * 60 - emBrasilia(base).minuto) * 60_000);
 }
 
-/** Os horários livres de um dia: o que a agenda do salão ainda aceita, com a duração do
- *  serviço e a reserva de quem vai cortar. É a única conta que importa — e é por isso que a
- *  página pede, ela não inventa vaga. */
-export async function vagasDoDia(
+export function conflitaComAlmoco(
+  hora: string,
+  duracaoMin: number,
+  almocoInicio: string,
+  almocoFim: string,
+): boolean {
+  const inicio = minutosDaHora(hora);
+  const pausaInicio = minutosDaHora(almocoInicio);
+  const pausaFim = minutosDaHora(almocoFim);
+  if (inicio < 0 || pausaInicio < 0 || pausaFim <= pausaInicio) return false;
+  const fim = inicio + Math.max(10, Math.min(600, Math.trunc(Number(duracaoMin) || 30)));
+  return inicio < pausaFim && fim > pausaInicio;
+}
+
+export async function horarioNoAlmoco(
   telefone: string,
   diaIso: string,
+  hora: string,
   duracaoMin: number,
-  funcionario: string,
-  agora: Date = new Date(),
-): Promise<{ vagas: string[]; fechado: boolean; dia: string; rotulo: string }> {
+): Promise<boolean> {
   const dia = diaDaGrava(diaIso);
-  if (!dia) return { vagas: [], fechado: true, dia: diaIso, rotulo: "" };
-  const horarios = await consultar(
-    `select dia, to_char(abre, 'HH24:MI') as abre, to_char(fecha, 'HH24:MI') as fecha,
-            intervalo, coalesce(to_char(primeiro, 'HH24:MI'), '') as primeiro
+  const inicio = minutosDaHora(hora);
+  if (!dia || inicio < 0) return false;
+  const linha = await consultar1(
+    `select to_char(almoco_inicio, 'HH24:MI') as almoco_inicio,
+            to_char(almoco_fim, 'HH24:MI') as almoco_fim
        from public.barber_horario where telefone = $1 and dia = $2`,
     [telefone, dia.semana],
   );
-  const rotulo = NOMES_DIA[dia.semana];
-  if (!horarios.rows.length) return { vagas: [], fechado: true, dia: diaIso, rotulo };
+  return conflitaComAlmoco(
+    hora, duracaoMin, String(linha?.almoco_inicio || ""), String(linha?.almoco_fim || ""),
+  );
+}
 
-  const h = horarios.rows[0];
-  const abre = minutosDaHora(String(h.abre || "09:00"));
-  const fecha = minutosDaHora(String(h.fecha || "19:00"));
+/** Os horários livres de um dia: o que a agenda do salão ainda aceita, com a duração do
+ *  serviço e a reserva de quem vai cortar. É a única conta que importa — e é por isso que a
+ *  página pede, ela não inventa vaga. */
+export function calcularVagasDoExpediente(
+  h: Horario,
+  base: Date,
+  duracaoMin: number,
+  blocos: { desde: number; duracao_min: number }[],
+  agora: Date = new Date(),
+): string[] {
+  const abre = minutosDaHora(h.abre);
+  const fecha = minutosDaHora(h.fecha);
   const passo = Math.max(10, Math.min(120, Number(h.intervalo || 30)));
-  const primeiro = minutosDaHora(String(h.primeiro || "")) >= 0 ? minutosDaHora(String(h.primeiro || "")) : abre;
+  const primeiro = minutosDaHora(h.primeiro || "") >= 0 ? minutosDaHora(h.primeiro || "") : abre;
   const duracao = Math.max(10, Math.min(600, Math.trunc(Number(duracaoMin) || 30)));
+  const agoraRel = emBrasilia(agora);
+  const diaRel = emBrasilia(base);
+  const hojeMesmo = agoraRel.ano === diaRel.ano && agoraRel.mes === diaRel.mes && agoraRel.dia === diaRel.dia;
+  const agoraMinuto = agoraRel.hora * 60 + agoraRel.minuto;
+  const vagas: string[] = [];
+
+  for (let m = primeiro; m + duracao <= fecha; m += passo) {
+    if (hojeMesmo && m < agoraMinuto + 30) continue;
+    if (conflitaComAlmoco(horaDeMinutos(m), duracao, h.almoco_inicio, h.almoco_fim)) continue;
+    if (blocos.some((b) =>
+      m < b.desde + Math.max(10, Number(b.duracao_min || 30)) && m + duracao > b.desde
+    )) continue;
+    vagas.push(horaDeMinutos(m));
+  }
+  return vagas;
+}
+
+async function vagasDeFuncionario(
+  telefone: string,
+  dia: { base: Date; semana: number },
+  duracaoMin: number,
+  funcionarioId: number | null,
+  funcionarioTelefone: string,
+  agora: Date,
+): Promise<{ vagas: string[]; fechado: boolean }> {
+  let linha: Bruto | null = null;
+  let horarioIndividual = false;
+
+  if (funcionarioId !== null) {
+    const individual = await consultar(
+      `select dia, to_char(abre, 'HH24:MI') as abre, to_char(fecha, 'HH24:MI') as fecha,
+              coalesce(to_char(almoco_inicio, 'HH24:MI'), '') as almoco_inicio,
+              coalesce(to_char(almoco_fim, 'HH24:MI'), '') as almoco_fim,
+              intervalo, coalesce(to_char(primeiro, 'HH24:MI'), '') as primeiro
+         from public.barber_funcionario_horario where funcionario_id = $1`,
+      [funcionarioId],
+    );
+    horarioIndividual = individual.rows.length > 0;
+    linha = individual.rows.find((h) => Number(h.dia) === dia.semana) || null;
+    if (horarioIndividual && (!linha || !linha.abre || !linha.fecha)) {
+      return { vagas: [], fechado: true };
+    }
+  }
+
+  if (!horarioIndividual) {
+    linha = await consultar1(
+      `select dia, to_char(abre, 'HH24:MI') as abre, to_char(fecha, 'HH24:MI') as fecha,
+              coalesce(to_char(almoco_inicio, 'HH24:MI'), '') as almoco_inicio,
+              coalesce(to_char(almoco_fim, 'HH24:MI'), '') as almoco_fim,
+              intervalo, coalesce(to_char(primeiro, 'HH24:MI'), '') as primeiro
+         from public.barber_horario where telefone = $1 and dia = $2`,
+      [telefone, dia.semana],
+    );
+  }
+  if (!linha || !linha.abre || !linha.fecha) return { vagas: [], fechado: true };
 
   const ocupado = await consultar(
     `select extract(epoch from data_hora)::bigint as seg, duracao_min
        from public.barber_agendamento
       where telefone = $1 and status = 'marcado'
         and data_hora >= $2 and data_hora < $3
-        and ($4 = '' or funcionario_telefone = $4)`,
-    [telefone, dia.base.toISOString(), new Date(dia.base.getTime() + 86_400_000).toISOString(),
-     funcionario ? normalizarWhatsapp(funcionario) : ""],
+        and (
+          ($4::integer is null and ($5 = '' or funcionario_telefone = $5))
+          or funcionario_id = $4
+          or ($4::integer is not null and funcionario_id is null and funcionario_telefone = $5)
+          or ($4::integer is not null and funcionario_id is null and funcionario_telefone = '')
+        )`,
+    [
+      telefone,
+      dia.base.toISOString(),
+      new Date(dia.base.getTime() + 86_400_000).toISOString(),
+      funcionarioId,
+      funcionarioTelefone,
+    ],
   );
   const blocos = ocupado.rows.map((o) => {
     const rel = emBrasilia(new Date(Number(o.seg) * 1000));
-    return { desde: rel.hora * 60 + rel.minuto, ate: rel.hora * 60 + rel.minuto + Math.max(10, Number(o.duracao_min || 30)) };
+    return { desde: rel.hora * 60 + rel.minuto, duracao_min: Number(o.duracao_min || 30) };
   });
+  const horario = mapearHorarios([linha])[0];
+  return {
+    vagas: calcularVagasDoExpediente(horario, dia.base, duracaoMin, blocos, agora),
+    fechado: false,
+  };
+}
 
-  const agoraRel = emBrasilia(agora);
-  const hojeMesmo = agoraRel.ano === emBrasilia(dia.base).ano &&
-    agoraRel.mes === emBrasilia(dia.base).mes && agoraRel.dia === emBrasilia(dia.base).dia;
-  const agoraMinuto = agoraRel.hora * 60 + agoraRel.minuto;
-
-  const vagas: string[] = [];
-  for (let m = primeiro; m + duracao <= fecha; m += passo) {
-    if (hojeMesmo && m < agoraMinuto + 30) continue;
-    if (blocos.some((b) => m < b.ate && m + duracao > b.desde)) continue;
-    vagas.push(horaDeMinutos(m));
+export async function vagasDoDia(
+  telefone: string,
+  diaIso: string,
+  duracaoMin: number,
+  funcionario: string | number | null,
+  agora: Date = new Date(),
+): Promise<{ vagas: string[]; fechado: boolean; dia: string; rotulo: string }> {
+  const dia = diaDaGrava(diaIso);
+  if (!dia) return { vagas: [], fechado: true, dia: diaIso, rotulo: "" };
+  const conta = await consultar1(
+    `select aceita_agendamento from public.barber_contas where telefone = $1`,
+    [telefone],
+  );
+  if (!conta || conta.aceita_agendamento === false) {
+    return { vagas: [], fechado: true, dia: diaIso, rotulo: NOMES_DIA[dia.semana] };
   }
-  return { vagas, fechado: false, dia: diaIso, rotulo };
+  const rotulo = NOMES_DIA[dia.semana];
+  let funcionarioId: number | null = null;
+  let funcionarioTelefone = "";
+
+  if (typeof funcionario === "number") {
+    funcionarioId = Number.isSafeInteger(funcionario) && funcionario > 0 ? funcionario : null;
+    if (funcionarioId === null) return { vagas: [], fechado: true, dia: diaIso, rotulo };
+    const pessoa = await consultar1(
+      `select telefone from public.barber_funcionario
+        where id = $1 and barbearia = $2 and ativo`,
+      [funcionarioId, telefone],
+    );
+    if (!pessoa) return { vagas: [], fechado: true, dia: diaIso, rotulo };
+    funcionarioTelefone = String(pessoa.telefone || "");
+  } else if (funcionario) {
+    funcionarioTelefone = normalizarWhatsapp(funcionario);
+    const pessoa = await consultar1(
+      `select id from public.barber_funcionario where barbearia = $1 and telefone = $2 and ativo`,
+      [telefone, funcionarioTelefone],
+    );
+    if (pessoa) funcionarioId = Number(pessoa.id || 0) || null;
+  }
+
+  if (funcionarioId !== null || funcionarioTelefone) {
+    const resultado = await vagasDeFuncionario(
+      telefone, dia, duracaoMin, funcionarioId, funcionarioTelefone, agora,
+    );
+    return { ...resultado, dia: diaIso, rotulo };
+  }
+
+  const equipe = await consultar(
+    `select f.id, coalesce(f.telefone, '') as telefone,
+            exists (select 1 from public.barber_funcionario_horario h where h.funcionario_id = f.id) as horario_individual
+       from public.barber_funcionario f
+      where f.barbearia = $1 and f.ativo and f.na_pagina`,
+    [telefone],
+  );
+  if (equipe.rows.some((f) => Boolean(f.horario_individual))) {
+    const resultados = await Promise.all(equipe.rows.map((f) =>
+      vagasDeFuncionario(
+        telefone, dia, duracaoMin, Number(f.id || 0), String(f.telefone || ""), agora,
+      )
+    ));
+    const vagas = [...new Set(resultados.flatMap((r) => r.vagas))].sort();
+    return { vagas, fechado: resultados.every((r) => r.fechado), dia: diaIso, rotulo };
+  }
+
+  const resultado = await vagasDeFuncionario(telefone, dia, duracaoMin, null, "", agora);
+  return { ...resultado, dia: diaIso, rotulo };
 }
 
 /** Onde a vaga se encaixa na agenda: é o horário do cliente, não o do robô. */
@@ -384,15 +548,15 @@ export async function marcarDoSite(
   telefone: string,
   dados: {
     cliente_nome: string; cliente_telefone: string; servico: string;
-    data_hora: Date; duracao_min: number; funcionario?: string;
+    data_hora: Date; duracao_min: number; funcionario?: string; funcionario_id?: number;
   },
 ): Promise<{ id: number; numero: number } | null> {
   const r = await consultar1(
     `insert into public.barber_agendamento
        (telefone, numero, cliente_telefone, cliente_nome, servico, data_hora, duracao_min,
-        funcionario_telefone, origem)
+          funcionario_telefone, funcionario_id, origem)
      values ($1, coalesce((select max(numero) from public.barber_agendamento where telefone = $1), 0) + 1,
-             $2, $3, $4, $5, $6, $7, 'site')
+               $2, $3, $4, $5, $6, $7, $8, 'site')
      returning id, numero`,
     [
       telefone,
@@ -402,6 +566,7 @@ export async function marcarDoSite(
       dados.data_hora.toISOString(),
       Math.max(10, Math.min(600, Math.trunc(Number(dados.duracao_min) || 30))),
       dados.funcionario ? normalizarWhatsapp(dados.funcionario) : "",
+      dados.funcionario_id || null,
     ],
   );
   if (!r) return null;
@@ -453,6 +618,7 @@ h2{margin:0 0 14px;font-size:20px;color:var(--ouro);letter-spacing:.1px}
 .item b{font-weight:600}
 .item span{color:var(--apago);font-size:13px;white-space:nowrap}
 .mini{color:var(--apago);font-size:13px;margin:6px 0 0}
+.aviso-publico{white-space:pre-line}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{padding:7px 12px;border:1px solid var(--linha);border-radius:999px;font-size:14px;background:#1b2b35}
 grade{display:grid}
@@ -570,7 +736,7 @@ function jsDaPagina(api: string): string {
         var lista = caixaPessoa.children;
         for (var k = 0; k < lista.length; k++) lista[k].className = lista[k].className.indexOf('pessoa') >= 0 ? 'pessoa' : 'op';
         b.className = 'pessoa ativo';
-        escolha.pessoa = f.telefone; escolha.hora = '';
+        escolha.pessoa = f.id; escolha.hora = '';
         montarHoras();
       };
       caixaPessoa.appendChild(b);
@@ -581,6 +747,7 @@ function jsDaPagina(api: string): string {
   var escolhido = null;
   function montarDias() {
     limpar(caixaDias); escolhido = null;
+    var agendaPorProfissional = d.mostra_barbeiro && (d.funcionarios || []).length > 0;
     if (!(d.servicos || []).length) {
       var avisoServico = document.createElement('p'); avisoServico.className = 'mini';
       avisoServico.textContent = 'A agenda estará disponível assim que o salão cadastrar serviços.';
@@ -593,7 +760,7 @@ function jsDaPagina(api: string): string {
       var partes = iso.split('-');
       var data = new Date(Date.UTC(Number(partes[0]), Number(partes[1]) - 1, Number(partes[2])));
       var n = data.getUTCDay();
-      if (!aberto[n]) return;
+      if (!aberto[n] && !agendaPorProfissional) return;
       var rotulo = i === 0 ? 'hoje' : (i === 1 ? 'amanhã' : semana[n]);
       var texto = rotulo + ' ' + partes[2] + '/' + partes[1];
       var b = botao(texto, i === 0);
@@ -620,7 +787,7 @@ function jsDaPagina(api: string): string {
     var p = document.createElement('p'); p.className = 'mini';
     p.textContent = 'Procurando horários livres...'; caixaHoras.appendChild(p);
     var url = api + '?action=estab_vagas&slug=' + encodeURIComponent(d.slug) + '&dia=' + escolhido +
-      '&duracao=' + duracao + '&funcionario=' + encodeURIComponent(escolha.pessoa);
+      '&duracao=' + duracao + '&profissional=' + encodeURIComponent(escolha.pessoa);
     if (!api) { p.textContent = 'Agenda indisponível agora. Chame no WhatsApp.'; return; }
     fetch(url).then(function (r) { return r.json(); }).then(function (s) {
       limpar(caixaHoras);
@@ -665,7 +832,7 @@ function jsDaPagina(api: string): string {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         slug: d.slug, dia: escolhido, hora: escolha.hora, servico: escolha.servico.nome,
-        duracao: escolha.servico.duracao_min, funcionario: escolha.pessoa, nome: nome, telefone: fone
+        duracao: escolha.servico.duracao_min, profissional: escolha.pessoa, nome: nome, telefone: fone
       })
     }).then(function (r) { return r.json(); }).then(function (s) {
       el('gravar').disabled = false;
@@ -773,44 +940,21 @@ export function htmlDaPagina(d: DadosPagina, api: string): string {
   const linhaHorario = [0, 1, 2, 3, 4, 5, 6]
     .map((n) => {
       const h = d.horarios.find((x) => x.dia === n);
-      return `<div class="hora"><b>${NOMES_DIA[n]}</b><span>${h ? `${esc(h.abre)} às ${esc(h.fecha)}` : "fechado"}</span></div>`;
+      const expediente = h
+        ? `${esc(h.abre)} às ${esc(h.fecha)}${h.almoco_inicio && h.almoco_fim
+          ? ` · almoço ${esc(h.almoco_inicio)}–${esc(h.almoco_fim)}` : ""}`
+        : "fechado";
+      return `<div class="hora"><b>${NOMES_DIA[n]}</b><span>${expediente}</span></div>`;
     })
     .join("\n");
-  const chips = (lista: string[], vazio: string) =>
-    lista.length
-      ? `<div class="chips">${lista.map((x) => `<span class="chip">${esc(x)}</span>`).join("")}</div>`
-      : `<p class="mini">${esc(vazio)}</p>`;
-  const galeria = d.fotos.length
-    ? `<div class="galeria">${d.fotos
-      .map((f) => `<figure><img src="${esc(f.arquivo)}" alt="${esc(f.legenda || d.nome)}" loading="lazy">` +
-        `${f.legenda ? `<figcaption>${esc(f.legenda)}</figcaption>` : ""}</figure>`)
-      .join("")}</div>`
+  const avisoPublico = String(d.aviso_publico || "").trim()
+    ? `<section><h2>Informações</h2><p class="mini aviso-publico">${esc(d.aviso_publico)}</p></section>`
     : "";
-  const endereco = [d.endereco, d.cidade && `${d.cidade}/${d.uf}`, d.cep].filter(Boolean).join(" — ");
-  const zap = `https://wa.me/${d.telefone_publico.replace(/\D/g, "")}`;
-
-  return `<!doctype html>
-<html lang="pt-BR">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(d.nome || "Estabelecimento")} — agende seu horário</title>
-<meta name="description" content="${esc(`Agende horário em ${d.nome}${endereco ? ` (${endereco})` : ""}.`)}">
-<style>${CSS}</style>
-</head>
-<body>
-<header class="cabeca">
-  <h1>${esc(d.nome || "Estabelecimento")}</h1>
-  <p>${esc(endereco || "Endereço e ponto de referência no WhatsApp")}</p>
-  <div class="acoes">
-    <a href="#agendar">Agendar</a>
-    <a href="#cancelar">Cancelar horário</a>
-    <a class="zap" href="${esc(zap)}" rel="noopener">Chamar no WhatsApp</a>
-    ${endereco ? `<a href="${esc(mapaEndereco(d))}" rel="noopener nofollow">Como chegar</a>` : ""}
-  </div>
-</header>
-<main>
-  <section id="agendar">
+  const linksAgenda = d.aceita_agendamento
+    ? `<a href="#agendar">Agendar</a><a href="#cancelar">Cancelar horário</a>`
+    : "";
+  const agenda = d.aceita_agendamento
+    ? `<section id="agendar">
     <h2>Agendar horário</h2>
     <span class="rotulo">Serviço</span>
     <div class="opcoes" id="servicos-escolha">${d.servicos.length ? "" : `<p class="mini">Cadastre os serviços pelo WhatsApp e a página se atualiza sozinha.</p>`}</div>
@@ -855,7 +999,42 @@ export function htmlDaPagina(d: DadosPagina, api: string): string {
       <p class="mini">O código expira em 10 minutos. Após a confirmação, o horário será cancelado.</p>
       <button class="gravar" id="cancelar-confirmar" type="button">Confirmar cancelamento</button>
     </div>
-  </section>
+  </section>`
+    : `<section><h2>Atendimento</h2><p class="mini">Este estabelecimento não oferece agendamento online.</p></section>`;
+  const chips = (lista: string[], vazio: string) =>
+    lista.length
+      ? `<div class="chips">${lista.map((x) => `<span class="chip">${esc(x)}</span>`).join("")}</div>`
+      : `<p class="mini">${esc(vazio)}</p>`;
+  const galeria = d.fotos.length
+    ? `<div class="galeria">${d.fotos
+      .map((f) => `<figure><img src="${esc(f.arquivo)}" alt="${esc(f.legenda || d.nome)}" loading="lazy">` +
+        `${f.legenda ? `<figcaption>${esc(f.legenda)}</figcaption>` : ""}</figure>`)
+      .join("")}</div>`
+    : "";
+  const endereco = [d.endereco, d.cidade && `${d.cidade}/${d.uf}`, d.cep].filter(Boolean).join(" — ");
+  const zap = `https://wa.me/${d.telefone_publico.replace(/\D/g, "")}`;
+
+  return `<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(d.nome || "Estabelecimento")} — ${d.aceita_agendamento ? "agende seu horário" : "informações"}</title>
+<meta name="description" content="${esc(`${d.aceita_agendamento ? "Agende horário em" : "Informações de"} ${d.nome}${endereco ? ` (${endereco})` : ""}.`)}">
+<style>${CSS}</style>
+</head>
+<body>
+<header class="cabeca">
+  <h1>${esc(d.nome || "Estabelecimento")}</h1>
+  <p>${esc(endereco || "Endereço e ponto de referência no WhatsApp")}</p>
+  <div class="acoes">
+    ${linksAgenda}
+    <a class="zap" href="${esc(zap)}" rel="noopener">Chamar no WhatsApp</a>
+    ${endereco ? `<a href="${esc(mapaEndereco(d))}" rel="noopener nofollow">Como chegar</a>` : ""}
+  </div>
+</header>
+<main>
+  ${agenda}
 
   ${d.servicos.length ? `<section><h2>Serviços</h2>${linhaServico}</section>` : ""}
   ${d.produtos.length ? `<section><h2>Produtos</h2>${linhaProduto}</section>` : ""}
@@ -865,11 +1044,12 @@ export function htmlDaPagina(d: DadosPagina, api: string): string {
     .map((f) => `<div class="item"><div>${f.foto ? `<img src="${esc(f.foto)}" alt="${esc(f.nome)}" style="width:38px;height:38px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:9px">` : ""}<b>${esc(f.nome || "barbeiro")}</b></div><span>${esc(f.cargo || "barbeiro")}</span></div>`)
     .join("")}</div></section>` : ""}
   ${galeria ? `<section><h2>Fotos</h2>${galeria}</section>` : ""}
+  ${avisoPublico}
 
   <p class="pés">${esc(d.nome || "")}${d.atualizado_em ? ` · atualizado em ${esc(d.atualizado_em)}` : ""}</p>
 </main>
 <script id="dados" type="application/json">${snapshot}</script>
-<script>${jsDaPagina(api)}</script>
+${d.aceita_agendamento ? `<script>${jsDaPagina(api)}</script>` : ""}
 </body>
 </html>
 `;
@@ -967,6 +1147,8 @@ button:hover{filter:brightness(1.12);transform:translateY(-1px)}button:disabled{
 <label>Nome</label><input id="nome" maxlength="120">
 <label>Telefone público</label><input id="telefone_publico" inputmode="numeric">
 <label>Endereço</label><input id="endereco" maxlength="200">
+<label><input id="aceita_agendamento" type="checkbox"> Aceita agendamento online</label>
+<label>Aviso exibido na página</label><textarea id="aviso_publico" maxlength="1500" rows="5"></textarea>
 <button id="salvarDados">Salvar dados</button></section>
 <section class="card"><h2>Serviços</h2><div id="servicos"></div>
 <div class="linha"><input id="novoServico" placeholder="Nome do serviço"><input id="novoPreco" type="number" step="0.01" placeholder="Preço"><input id="novoDuracao" type="number" placeholder="Minutos"></div>
@@ -974,7 +1156,7 @@ button:hover{filter:brightness(1.12);transform:translateY(-1px)}button:disabled{
 <section class="card"><h2>Produtos</h2><div id="produtos"></div>
 <div class="linha"><input id="novoProduto" placeholder="Nome do produto"><input id="novoProdutoPreco" type="number" step="0.01" placeholder="Preço"></div>
 <button id="adicionarProduto">Adicionar produto</button></section>
-<section class="card"><h2>Horários</h2><p class="muted">Informe abertura e fechamento. Para marcar um dia como fechado, deixe os dois campos vazios.</p><div id="horarios"></div><button id="salvarHorarios">Salvar horários</button></section>
+<section class="card"><h2>Horários</h2><p class="muted">Informe abertura e fechamento. Para bloquear o almoço, preencha início e fim. Para marcar um dia como fechado, deixe todos os campos vazios.</p><div id="horarios"></div><button id="salvarHorarios">Salvar horários</button></section>
 <section class="card"><h2>Pagamento</h2><textarea id="pagamentos" rows="4" placeholder="Dinheiro, PIX, Cartão"></textarea><button id="salvarPagamentos">Salvar formas de pagamento</button></section>
 <section class="card"><h2>Fotos</h2><div id="fotos"></div><input id="foto" type="file" accept="image/jpeg,image/png,image/webp"><button id="enviarFoto">Enviar foto</button></section>
 </main>
@@ -982,14 +1164,14 @@ button:hover{filter:brightness(1.12);transform:translateY(-1px)}button:disabled{
 (function(){const API=${JSON.stringify(api)};const SLUG=${JSON.stringify(d.slug)};const CHAVE=${JSON.stringify(chave)};
 async function call(action,data){const r=await fetch(API,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,slug:SLUG,chave:CHAVE,...(data||{})})});return r.json()}
 function status(t,erro){const el=document.getElementById('status');el.className=erro?'erro':'ok';el.textContent=t||''}
-async function ver(){const d=await call('barb_painel_ver');if(!d.ok){status(d.erro||'Acesso inválido',true);return}const c=d.conta||{};document.getElementById('nome').value=c.nome||'';document.getElementById('telefone_publico').value=c.telefone_publico||'';document.getElementById('endereco').value=c.endereco||'';desenhar(d)}
+async function ver(){const d=await call('barb_painel_ver');if(!d.ok){status(d.erro||'Acesso inválido',true);return}const c=d.conta||{};document.getElementById('nome').value=c.nome||'';document.getElementById('telefone_publico').value=c.telefone_publico||'';document.getElementById('endereco').value=c.endereco||'';document.getElementById('aceita_agendamento').checked=c.aceita_agendamento!==false;document.getElementById('aviso_publico').value=c.aviso_publico||'';desenhar(d)}
 function criar(tag,cls,text){const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n}
-function desenhar(d){const serv=document.getElementById('servicos');serv.innerHTML='';(d.servicos||[]).forEach(s=>{const box=criar('div','item linha');const nome=document.createElement('input');nome.value=s.nome||'';const preco=document.createElement('input');preco.type='number';preco.value=s.preco||0;const duracao=document.createElement('input');duracao.type='number';duracao.value=s.duracao_min||30;const editar=criar('button','', 'Salvar');editar.onclick=async()=>{const r=await call('barb_painel_salvar',{acao:'servico_editar',id:s.id,nome:nome.value,preco:preco.value,duracao_min:duracao.value});status(r.ok?'Serviço atualizado':'Não consegui atualizar',!r.ok);if(r.ok)ver()};const apagar=criar('button','', 'Apagar');apagar.onclick=async()=>{if(!confirm('Apagar este serviço?'))return;const r=await call('barb_painel_salvar',{acao:'servico_apagar',id:s.id});status(r.ok?'Serviço apagado':'Não consegui apagar',!r.ok);if(r.ok)ver()};box.append(nome,preco,duracao,editar,apagar);serv.append(box)});const prod=document.getElementById('produtos');prod.innerHTML='';(d.produtos||[]).forEach(p=>{const box=criar('div','item linha');const nome=document.createElement('input');nome.value=p.nome||'';const preco=document.createElement('input');preco.type='number';preco.value=p.preco||0;const editar=criar('button','', 'Salvar');editar.onclick=async()=>{const r=await call('barb_painel_salvar',{acao:'produto_editar',id:p.id,nome:nome.value,preco:preco.value});status(r.ok?'Produto atualizado':'Não consegui atualizar',!r.ok);if(r.ok)ver()};const apagar=criar('button','', 'Apagar');apagar.onclick=async()=>{if(!confirm('Apagar este produto?'))return;const r=await call('barb_painel_salvar',{acao:'produto_apagar',id:p.id});status(r.ok?'Produto apagado':'Não consegui apagar',!r.ok);if(r.ok)ver()};box.append(nome,preco,editar,apagar);prod.append(box)});const h=document.getElementById('horarios');h.innerHTML='';const nomes=['domingo','segunda','terça','quarta','quinta','sexta','sábado'];const por={};(d.horarios||[]).forEach(x=>por[Number(x.dia)]=x);for(let i=0;i<7;i++){const x=por[i]||{};const row=criar('div','item linha');row.append(criar('b','',nomes[i]));const abre=document.createElement('input');abre.type='time';abre.className='abre';abre.dataset.dia=i;abre.value=x.abre||'';abre.setAttribute('aria-label','Abertura '+nomes[i]);const fecha=document.createElement('input');fecha.type='time';fecha.className='fecha';fecha.dataset.dia=i;fecha.value=x.fecha||'';fecha.setAttribute('aria-label','Fechamento '+nomes[i]);row.append(abre,fecha);h.append(row)}document.getElementById('pagamentos').value=(d.pagamentos||[]).map(p=>p.nome).join(', ');const fotos=document.getElementById('fotos');fotos.innerHTML='';(d.fotos||[]).forEach(f=>{const box=criar('div','item linha');if(f.arquivo){const img=document.createElement('img');img.src=${JSON.stringify(baseDoSite())}+'/'+SLUG+'/'+f.arquivo;box.append(img)}const remover=criar('button','', 'Remover');remover.onclick=async()=>{const r=await call('barb_painel_foto_apagar',{id:f.id});status(r.ok?'Foto removida':'Não consegui remover',!r.ok);if(r.ok)ver()};box.append(remover);fotos.append(box)})
+function desenhar(d){const serv=document.getElementById('servicos');serv.innerHTML='';(d.servicos||[]).forEach(s=>{const box=criar('div','item linha');const nome=document.createElement('input');nome.value=s.nome||'';const preco=document.createElement('input');preco.type='number';preco.value=s.preco||0;const duracao=document.createElement('input');duracao.type='number';duracao.value=s.duracao_min||30;const editar=criar('button','', 'Salvar');editar.onclick=async()=>{const r=await call('barb_painel_salvar',{acao:'servico_editar',id:s.id,nome:nome.value,preco:preco.value,duracao_min:duracao.value});status(r.ok?'Serviço atualizado':'Não consegui atualizar',!r.ok);if(r.ok)ver()};const apagar=criar('button','', 'Apagar');apagar.onclick=async()=>{if(!confirm('Apagar este serviço?'))return;const r=await call('barb_painel_salvar',{acao:'servico_apagar',id:s.id});status(r.ok?'Serviço apagado':'Não consegui apagar',!r.ok);if(r.ok)ver()};box.append(nome,preco,duracao,editar,apagar);serv.append(box)});const prod=document.getElementById('produtos');prod.innerHTML='';(d.produtos||[]).forEach(p=>{const box=criar('div','item linha');const nome=document.createElement('input');nome.value=p.nome||'';const preco=document.createElement('input');preco.type='number';preco.value=p.preco||0;const editar=criar('button','', 'Salvar');editar.onclick=async()=>{const r=await call('barb_painel_salvar',{acao:'produto_editar',id:p.id,nome:nome.value,preco:preco.value});status(r.ok?'Produto atualizado':'Não consegui atualizar',!r.ok);if(r.ok)ver()};const apagar=criar('button','', 'Apagar');apagar.onclick=async()=>{if(!confirm('Apagar este produto?'))return;const r=await call('barb_painel_salvar',{acao:'produto_apagar',id:p.id});status(r.ok?'Produto apagado':'Não consegui apagar',!r.ok);if(r.ok)ver()};box.append(nome,preco,editar,apagar);prod.append(box)});const h=document.getElementById('horarios');h.innerHTML='';const nomes=['domingo','segunda','terça','quarta','quinta','sexta','sábado'];const por={};(d.horarios||[]).forEach(x=>por[Number(x.dia)]=x);for(let i=0;i<7;i++){const x=por[i]||{};const row=criar('div','item linha');row.append(criar('b','',nomes[i]));const abre=document.createElement('input');abre.type='time';abre.className='abre';abre.dataset.dia=i;abre.value=x.abre||'';abre.setAttribute('aria-label','Abertura '+nomes[i]);const fecha=document.createElement('input');fecha.type='time';fecha.className='fecha';fecha.dataset.dia=i;fecha.value=x.fecha||'';fecha.setAttribute('aria-label','Fechamento '+nomes[i]);const almocoInicio=document.createElement('input');almocoInicio.type='time';almocoInicio.className='almoco-inicio';almocoInicio.dataset.dia=i;almocoInicio.value=x.almoco_inicio||'';almocoInicio.setAttribute('aria-label','Início do almoço '+nomes[i]);const almocoFim=document.createElement('input');almocoFim.type='time';almocoFim.className='almoco-fim';almocoFim.dataset.dia=i;almocoFim.value=x.almoco_fim||'';almocoFim.setAttribute('aria-label','Fim do almoço '+nomes[i]);row.append(abre,fecha,almocoInicio,almocoFim);h.append(row)}document.getElementById('pagamentos').value=(d.pagamentos||[]).map(p=>p.nome).join(', ');const fotos=document.getElementById('fotos');fotos.innerHTML='';(d.fotos||[]).forEach(f=>{const box=criar('div','item linha');if(f.arquivo){const img=document.createElement('img');img.src=${JSON.stringify(baseDoSite())}+'/'+SLUG+'/'+f.arquivo;box.append(img)}const remover=criar('button','', 'Remover');remover.onclick=async()=>{const r=await call('barb_painel_foto_apagar',{id:f.id});status(r.ok?'Foto removida':'Não consegui remover',!r.ok);if(r.ok)ver()};box.append(remover);fotos.append(box)})
 }
-document.getElementById('salvarDados').onclick=async()=>{const r=await call('barb_painel_salvar',{nome:document.getElementById('nome').value,telefone_publico:document.getElementById('telefone_publico').value,endereco:document.getElementById('endereco').value});status(r.ok?'Dados salvos':'Não consegui salvar',!r.ok);if(r.ok)ver()}
+document.getElementById('salvarDados').onclick=async()=>{const r=await call('barb_painel_salvar',{nome:document.getElementById('nome').value,telefone_publico:document.getElementById('telefone_publico').value,endereco:document.getElementById('endereco').value,aceita_agendamento:document.getElementById('aceita_agendamento').checked,aviso_publico:document.getElementById('aviso_publico').value});status(r.ok?'Dados salvos':'Não consegui salvar',!r.ok);if(r.ok)ver()}
 document.getElementById('adicionarServico').onclick=async()=>{const nome=document.getElementById('novoServico').value.trim(),preco=Number(document.getElementById('novoPreco').value||0),duracao=Number(document.getElementById('novoDuracao').value||30);if(!nome)return status('Escreva o nome do serviço',true);const r=await call('barb_painel_salvar',{acao:'servico',nome,preco,duracao_min:duracao});status(r.ok?'Serviço salvo':'Não consegui salvar',!r.ok);if(r.ok)ver()}
 document.getElementById('adicionarProduto').onclick=async()=>{const nome=document.getElementById('novoProduto').value.trim(),preco=Number(document.getElementById('novoProdutoPreco').value||0);if(!nome)return status('Escreva o nome do produto',true);const r=await call('barb_painel_salvar',{acao:'produto',nome,preco});status(r.ok?'Produto salvo':'Não consegui salvar',!r.ok);if(r.ok)ver()}
-document.getElementById('salvarHorarios').onclick=async()=>{const horarios=[];let incompleto=false;document.querySelectorAll('#horarios .item').forEach(row=>{const abre=row.querySelector('.abre'),fecha=row.querySelector('.fecha');if(!abre||!fecha)return;if(Boolean(abre.value)!==Boolean(fecha.value)){incompleto=true;return}if(abre.value&&fecha.value)horarios.push({dia:Number(abre.dataset.dia),abre:abre.value,fecha:fecha.value})});if(incompleto)return status('Preencha abertura e fechamento do mesmo dia',true);if(!horarios.length&&!confirm('Salvar todos os dias como fechados e remover os horários atuais?'))return;const r=await call('barb_painel_salvar',{horarios});status(r.ok?'Horários salvos':'Não consegui salvar',!r.ok);if(r.ok)ver()}
+document.getElementById('salvarHorarios').onclick=async()=>{const horarios=[];let incompleto=false,almocoIncompleto=false,almocoFora=false;document.querySelectorAll('#horarios .item').forEach(row=>{const abre=row.querySelector('.abre'),fecha=row.querySelector('.fecha'),almocoInicio=row.querySelector('.almoco-inicio'),almocoFim=row.querySelector('.almoco-fim');if(!abre||!fecha||!almocoInicio||!almocoFim)return;if(Boolean(abre.value)!==Boolean(fecha.value)){incompleto=true;return}if(Boolean(almocoInicio.value)!==Boolean(almocoFim.value)){almocoIncompleto=true;return}if(almocoInicio.value&&(!abre.value||almocoInicio.value<abre.value||almocoFim.value>fecha.value||almocoInicio.value>=almocoFim.value)){almocoFora=true;return}if(abre.value&&fecha.value)horarios.push({dia:Number(abre.dataset.dia),abre:abre.value,fecha:fecha.value,almoco_inicio:almocoInicio.value,almoco_fim:almocoFim.value})});if(incompleto)return status('Preencha abertura e fechamento do mesmo dia',true);if(almocoIncompleto)return status('Preencha início e fim do almoço do mesmo dia',true);if(almocoFora)return status('O intervalo de almoço deve ficar dentro do horário de atendimento',true);if(!horarios.length&&!confirm('Salvar todos os dias como fechados e remover os horários atuais?'))return;const r=await call('barb_painel_salvar',{horarios});status(r.ok?'Horários salvos':'Não consegui salvar',!r.ok);if(r.ok)ver()}
 document.getElementById('salvarPagamentos').onclick=async()=>{const pagamentos=document.getElementById('pagamentos').value.split(/[,;]/).map(x=>x.trim()).filter(Boolean);const r=await call('barb_painel_salvar',{pagamentos});status(r.ok?'Formas de pagamento salvas':'Não consegui salvar',!r.ok);if(r.ok)ver()}
 document.getElementById('enviarFoto').onclick=async()=>{const file=document.getElementById('foto').files[0];if(!file)return status('Escolha uma foto',true);const b64=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file)});const r=await call('barb_painel_foto',{b64:String(b64)});status(r.ok?'Foto enviada':'Não consegui enviar',!r.ok);if(r.ok)ver()}
 ver();
@@ -1093,14 +1275,29 @@ export const estabVagas: Handler = async (dados) => {
   const telefone = String(conta.telefone || "");
   const duracao = Math.max(10, Math.min(600, Math.trunc(Number(dados.duracao || 30)) || 30));
   const funcionario = String(dados.funcionario || "").replace(/\D/g, "");
-  if (funcionario) {
+  const profissionalTexto = String(dados.profissional || "").trim();
+  const profissional = profissionalTexto ? Number(profissionalTexto) : 0;
+  if ((funcionario && profissionalTexto) ||
+      (profissionalTexto && (!Number.isSafeInteger(profissional) || profissional < 1))) {
+    return { ok: false, erro: "sem_funcionario" };
+  }
+  if (profissional) {
+    const e = await consultar1(
+      `select id from public.barber_funcionario
+        where barbearia = $1 and id = $2 and ativo and na_pagina`,
+      [telefone, profissional],
+    );
+    if (!e) return { ok: false, erro: "sem_funcionario" };
+  } else if (funcionario) {
     const e = await consultar1(
       `select telefone from public.barber_funcionario where barbearia = $1 and telefone = $2 and ativo`,
       [telefone, funcionario],
     );
     if (!e) return { ok: false, erro: "sem_funcionario" };
   }
-  const r = await vagasDoDia(telefone, String(dados.dia || ""), duracao, funcionario);
+  const r = await vagasDoDia(
+    telefone, String(dados.dia || ""), duracao, profissional || funcionario || null,
+  );
   return { ok: true, ...r };
 };
 
@@ -1317,10 +1514,16 @@ export const estabMarcar: Handler = async (dados, ctx) => {
   const hora = String(dados.hora || "");
   const duracao = Math.max(10, Math.min(600, Math.trunc(Number(dados.duracao || 30)) || 30));
   const funcionario = String(dados.funcionario || "").replace(/\D/g, "");
+  const profissionalTexto = String(dados.profissional || "").trim();
+  const profissional = profissionalTexto ? Number(profissionalTexto) : 0;
   const servico = String(dados.servico || "").replace(/\s+/g, " ").trim().slice(0, 80);
   if (nome.length < 2) return { ok: false, erro: "sem_nome" };
   if (!telefoneValido(cliente)) return { ok: false, erro: "sem_telefone" };
   if (!/^\d{1,2}:\d{2}$/.test(hora)) return { ok: false, erro: "sem_hora" };
+  if ((funcionario && profissionalTexto) ||
+      (profissionalTexto && (!Number.isSafeInteger(profissional) || profissional < 1))) {
+    return { ok: false, erro: "sem_funcionario" };
+  }
 
   const item = await consultar1(
     `select nome, duracao_min from public.barber_servico
@@ -1328,15 +1531,31 @@ export const estabMarcar: Handler = async (dados, ctx) => {
     [telefone, servico],
   );
   if (!item) return { ok: false, erro: "sem_servico" };
+  let funcionarioId = 0;
+  let profissionalNome = "";
   if (funcionario) {
     const e = await consultar1(
-      `select telefone from public.barber_funcionario where barbearia = $1 and telefone = $2 and ativo`,
+      `select id, nome from public.barber_funcionario
+        where barbearia = $1 and telefone = $2 and ativo`,
       [telefone, funcionario],
     );
     if (!e) return { ok: false, erro: "sem_funcionario" };
+    funcionarioId = Number(e.id || 0);
+    profissionalNome = String(e.nome || "");
+  } else if (profissional) {
+    const e = await consultar1(
+      `select id, nome from public.barber_funcionario
+        where barbearia = $1 and id = $2 and ativo and na_pagina`,
+      [telefone, profissional],
+    );
+    if (!e) return { ok: false, erro: "sem_funcionario" };
+    funcionarioId = Number(e.id || 0);
+    profissionalNome = String(e.nome || "");
   }
 
-  const livre = await vagasDoDia(telefone, dia, duracao, funcionario);
+  const livre = await vagasDoDia(
+    telefone, dia, duracao, funcionarioId || funcionario || null,
+  );
   if (livre.fechado) return { ok: false, erro: "sem_horario" };
   const marca = /^\d{1,2}:\d{2}$/.test(hora) ? `${hora.padStart(5, "0")}` : "";
   if (!marca || !livre.vagas.includes(marca)) return { ok: false, erro: "ocupado" };
@@ -1352,16 +1571,18 @@ export const estabMarcar: Handler = async (dados, ctx) => {
     data_hora: instante,
     duracao_min: duracao,
     funcionario,
+    funcionario_id: funcionarioId || undefined,
   });
   if (!criado) return { ok: false, erro: "banco" };
 
   await avisarDono(telefone, {
     nome, cliente, servico: servicoGravado, horario: marca, dia: livre.rotulo,
-    numero: criado.numero, funcionario,
+    numero: criado.numero, funcionario, funcionarioId: funcionarioId || undefined,
   });
   return {
     ok: true, numero: criado.numero,
-    texto: `Pronto, ${nome.split(" ")[0]}! ${livre.rotulo} às ${marca} — ${servicoGravado}.`,
+    texto: `Pronto, ${nome.split(" ")[0]}! ${livre.rotulo} às ${marca}` +
+      `${profissionalNome ? ` com ${profissionalNome}` : ""} — ${servicoGravado}.`,
   };
 };
 
@@ -1370,7 +1591,7 @@ async function avisarDono(
   telefone: string,
   reserva: {
     nome: string; cliente: string; servico: string; horario: string;
-    dia: string; numero: number; funcionario: string;
+    dia: string; numero: number; funcionario: string; funcionarioId?: number;
   },
 ): Promise<void> {
   const conf = await obterConfig();
@@ -1383,10 +1604,13 @@ async function textoDoAviso(
   telefone: string,
   reserva: {
     nome: string; cliente: string; servico: string; horario: string;
-    dia: string; numero: number; funcionario: string;
+    dia: string; numero: number; funcionario: string; funcionarioId?: number;
   },
 ): Promise<string> {
-  const quem = reserva.funcionario
+  const quem = reserva.funcionarioId
+    ? await consultar1(`select nome from public.barber_funcionario where barbearia = $1 and id = $2`,
+      [telefone, reserva.funcionarioId])
+    : reserva.funcionario
     ? await consultar1(`select nome from public.barber_funcionario where barbearia = $1 and telefone = $2`,
       [telefone, reserva.funcionario])
     : null;

@@ -3083,6 +3083,75 @@
     return caixa;
   }
 
+  function bbRenderAgendamentosClientes() {
+    var caixa = criar("section", "card");
+    caixa.appendChild(criar("h3", "", "Agendamentos dos clientes"));
+    var agendamentos = Array.isArray(bbDetalheAtual.agendamentos_clientes)
+      ? bbDetalheAtual.agendamentos_clientes
+      : [];
+    if (!agendamentos.length) {
+      caixa.appendChild(criar("p", "muted",
+        "Sem agendamentos. Peça para seu cliente agendar pelo link da página."));
+    } else {
+      var colunas = [
+        ["dia", "Data"], ["hora", "Hora"], ["nome", "Cliente"], ["telefone", "Telefone"],
+        ["servico", "Serviço"], ["status", "Situação"], ["pagamento", "Pagamento"],
+        ["compareceu", "Compareceu"],
+      ];
+      var tabela = document.createElement("table");
+      tabela.setAttribute("aria-label", "Agendamentos dos clientes");
+      var thead = document.createElement("thead");
+      var cabecalho = document.createElement("tr");
+      colunas.forEach(function (coluna) { cabecalho.appendChild(criar("th", "", coluna[1])); });
+      thead.appendChild(cabecalho);
+      tabela.appendChild(thead);
+      var corpo = document.createElement("tbody");
+      agendamentos.forEach(function (agendamento) {
+        var linha = document.createElement("tr");
+        colunas.forEach(function (coluna) {
+          linha.appendChild(criar("td", "", bbValor(agendamento[coluna[0]])));
+        });
+        corpo.appendChild(linha);
+      });
+      tabela.appendChild(corpo);
+      caixa.appendChild(tabela);
+    }
+
+    var pagina = "";
+    try {
+      var url = new URL(String(bbDetalheAtual.pagina_url || ""));
+      if (url.protocol === "https:") pagina = url.href;
+    } catch (e) { pagina = ""; }
+    if (pagina) {
+      var link = criar("a", "", pagina);
+      link.href = pagina;
+      link.target = "_blank";
+      link.rel = "noopener";
+      caixa.appendChild(link);
+      var copiar = criar("button", "segundo", "Copiar link da página");
+      copiar.type = "button";
+      var estado = criar("span", "muted", "");
+      estado.setAttribute("role", "status");
+      estado.setAttribute("aria-live", "polite");
+      copiar.addEventListener("click", function () {
+        if (!navigator.clipboard || !navigator.clipboard.writeText) {
+          estado.textContent = "Não foi possível copiar automaticamente; copie o link acima.";
+          return;
+        }
+        navigator.clipboard.writeText(pagina).then(function () {
+          estado.textContent = "Link copiado.";
+        }).catch(function () {
+          estado.textContent = "Não foi possível copiar automaticamente; copie o link acima.";
+        });
+      });
+      caixa.appendChild(copiar);
+      caixa.appendChild(estado);
+    } else {
+      caixa.appendChild(criar("p", "muted", "O link público desta página ainda não está disponível."));
+    }
+    return caixa;
+  }
+
   var BB_ABAS_DETALHE = [
     { id: "conta", rotulo: "Cadastro", dado: "conta" },
     { id: "servicos", rotulo: "Serviços", dado: "servicos" },
@@ -3111,7 +3180,13 @@
       abas.appendChild(botao);
     });
     var abaAtiva = BB_ABAS_DETALHE.find(function (aba) { return aba.id === bbAbaDetalhe; }) || BB_ABAS_DETALHE[0];
-    limpar($("bbConteudoDetalhe")).appendChild(bbRenderTabela(bbDetalheAtual[abaAtiva.dado]));
+    var conteudo = limpar($("bbConteudoDetalhe"));
+    if (abaAtiva.id === "agendamentos") {
+      conteudo.appendChild(bbRenderAgendamentosClientes());
+    } else {
+      conteudo.appendChild(bbRenderTabela(bbDetalheAtual[abaAtiva.dado]));
+      conteudo.appendChild(bbRenderAgendamentosClientes());
+    }
     $("bbDetalheTitulo").textContent = "Detalhes — " + (bbDetalheAtual.conta.nome || bbDetalheAtual.conta.telefone);
     $("bbDetalheSubtitulo").textContent = (bbDetalheAtual.conta.telefone || "") +
       (bbDetalheAtual.conta.slug ? " · página: " + bbDetalheAtual.conta.slug : "");

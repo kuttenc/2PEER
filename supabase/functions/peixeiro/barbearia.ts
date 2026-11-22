@@ -11,10 +11,12 @@ import { aleatorio, consultar, consultar1, igual } from "./db.ts";
 import { clientePorTelefone, interpretar, interpretarStatus, receberWebhook, tokenChat } from "./chat.ts";
 import { escreverCsv } from "./csv.ts";
 import { baixarMidia, enviarTexto, type ResultadoEnvio } from "./greenapi.ts";
+import { interpretarRetornoPagamento } from "../_shared/barber-payment-feedback.mjs";
 import {
   baseDoSite,
   dadosDaPagina,
   htmlDaPagina,
+  horarioNoAlmoco,
   publicarFoto,
   publicarPagina,
   publicarPainelBarbearia,
@@ -146,13 +148,16 @@ export type Conta = {
   cep: string;
   telefone_publico: string;
   mostra_barbeiro: boolean;
+  aceita_agendamento: boolean;
+  aviso_publico: string;
   publicado_em: Date | null;
   modelo_equipe: string;
   divide_lucro: boolean | null;
 };
 
 const COLUNAS_CONTA = `telefone, nome, nota, ativo, expira_em, criado_em, slug, endereco, cidade, uf,
-  cep, telefone_publico, mostra_barbeiro, site_publicado_em, modelo_equipe, divide_lucro`;
+  cep, telefone_publico, mostra_barbeiro, aceita_agendamento, aviso_publico,
+  site_publicado_em, modelo_equipe, divide_lucro`;
 
 function linhaParaConta(linha: Bruto): Conta {
   return {
@@ -169,6 +174,8 @@ function linhaParaConta(linha: Bruto): Conta {
     cep: String(linha.cep || ""),
     telefone_publico: String(linha.telefone_publico || ""),
     mostra_barbeiro: Boolean(linha.mostra_barbeiro),
+    aceita_agendamento: linha.aceita_agendamento !== false,
+    aviso_publico: String(linha.aviso_publico || ""),
     publicado_em: linha.site_publicado_em ? new Date(String(linha.site_publicado_em)) : null,
     modelo_equipe: String(linha.modelo_equipe || ""),
     divide_lucro: linha.divide_lucro === null || linha.divide_lucro === undefined
@@ -749,6 +756,9 @@ export function textoResumo(resumo: Resumo, rotulo: string, extras = ""): string
 export type Agendamento = {
   id: number; numero: number; cliente_telefone: string; cliente_nome: string;
   servico: string; data_hora: Date; status: string; lembrete: boolean;
+  duracao_min: number; forma_pagamento: "pix" | "cartao" | "";
+  compareceu: boolean | null;
+  funcionario_id: number | null; funcionario_nome: string;
 };
 
 function linhaAgendamento(l: Bruto): Agendamento {
@@ -757,10 +767,19 @@ function linhaAgendamento(l: Bruto): Agendamento {
     cliente_telefone: String(l.cliente_telefone || ""), cliente_nome: String(l.cliente_nome || ""),
     servico: String(l.servico || ""), data_hora: new Date(String(l.data_hora)), status: String(l.status || "marcado"),
     lembrete: Boolean(l.lembrete_enviado_em),
+    duracao_min: Math.max(10, Math.min(600, Number(l.duracao_min || 30))),
+    forma_pagamento: l.forma_pagamento === "pix" || l.forma_pagamento === "cartao"
+      ? l.forma_pagamento
+      : "",
+    compareceu: l.compareceu === null || l.compareceu === undefined ? null : Boolean(l.compareceu),
+    funcionario_id: Number(l.funcionario_id || 0) || null,
+    funcionario_nome: String(l.funcionario_nome || ""),
   };
 }
 
-const COLUNAS_AGENDA = `id, numero, cliente_telefone, cliente_nome, servico, data_hora, status, lembrete_enviado_em`;
+const COLUNAS_AGENDA = `id, numero, cliente_telefone, cliente_nome, servico, data_hora, status,
+                         lembrete_enviado_em, duracao_min, forma_pagamento, compareceu,
+                         funcionario_id, funcionario_telefone`;
 
 export async function criarAgendamento(
   telefone: string, dados: { cliente_telefone: string; cliente_nome: string; servico: string; data_hora: Date },
@@ -779,10 +798,15 @@ export async function agendamentosDe(
   telefone: string, desde: Date, ate: Date, status = "", limite = 50,
 ): Promise<Agendamento[]> {
   const r = await consultar(
-    `select ${COLUNAS_AGENDA} from public.barber_agendamento
-      where telefone = $1 and data_hora >= $2 and data_hora < $3
-        and ($4 = '' or status = $4)
-      order by data_hora limit $5`,
+    `select a.id, a.numero, a.cliente_telefone, a.cliente_nome, a.servico, a.data_hora,
+            a.status, a.lembrete_enviado_em, a.duracao_min, a.forma_pagamento, a.compareceu,
+            a.funcionario_id, a.funcionario_telefone,
+            coalesce(f.nome, '') as funcionario_nome
+       from public.barber_agendamento a
+       left join public.barber_funcionario f on f.id = a.funcionario_id
+      where a.telefone = $1 and a.data_hora >= $2 and a.data_hora < $3
+        and ($4 = '' or a.status = $4)
+      order by a.data_hora limit $5`,
     [telefone, desde.toISOString(), ate.toISOString(), status, limite],
   );
   return r.rows.map(linhaAgendamento);
@@ -790,7 +814,13 @@ export async function agendamentosDe(
 
 async function agendamentoPorNumero(telefone: string, numero: number): Promise<Agendamento | null> {
   const l = await consultar1(
-    `select ${COLUNAS_AGENDA} from public.barber_agendamento where telefone = $1 and numero = $2`,
+    `select a.id, a.numero, a.cliente_telefone, a.cliente_nome, a.servico, a.data_hora,
+            a.status, a.lembrete_enviado_em, a.duracao_min, a.forma_pagamento, a.compareceu,
+            a.funcionario_id, a.funcionario_telefone,
+            coalesce(f.nome, '') as funcionario_nome
+       from public.barber_agendamento a
+       left join public.barber_funcionario f on f.id = a.funcionario_id
+      where a.telefone = $1 and a.numero = $2`,
     [telefone, numero],
   );
   return l ? linhaAgendamento(l) : null;
@@ -820,7 +850,21 @@ export function textoAgenda(lista: Agendamento[], agora: Date, titulo: string): 
   if (!lista.length) return `${titulo}: nada marcado. Para marcar, mande\n  AGENDA João 11999998888 sábado 15h`;
   const linhas = lista.map((a) => {
     const dia = rotuloDoDia(a.data_hora, agora);
-    return `  ${a.numero} · ${dia === "hoje" ? "hoje" : `${dia}, `}${horaDe(a.data_hora)} · ${a.cliente_nome || "sem nome"}${a.servico ? ` (${a.servico})` : ""}`;
+    const situacao = a.status === "feito"
+      ? " · FEITO"
+      : a.status === "cancelado"
+        ? " · CANCELADO"
+        : a.status === "remarcado"
+          ? " · REMARCADO"
+          : "";
+    const retorno = a.compareceu === false
+      ? " · NÃO VEIO"
+      : a.forma_pagamento
+        ? ` · PAGOU ${a.forma_pagamento === "pix" ? "PIX" : "CARTÃO"}`
+        : "";
+    return `  ${a.numero} · ${dia === "hoje" ? "hoje" : `${dia}, `}${horaDe(a.data_hora)} · ${a.cliente_nome || "sem nome"}` +
+      `${a.funcionario_nome ? ` · ${a.funcionario_nome}` : ""}${a.servico ? ` (${a.servico})` : ""}` +
+      `${situacao}${retorno}`;
   });
   return `${titulo}:\n${linhas.join("\n")}\n\nSe você não puder atender um deles, responda com o número da linha.`;
 }
@@ -921,6 +965,9 @@ export async function responder(
 
   if (!t) return { texto: "", tipo: "vazio" };
 
+  const retornoPagamento = await responderRetornoPagamento(telefone, bruto);
+  if (retornoPagamento) return retornoPagamento;
+
   // 1) Resposta de uma pergunta que o robô fez. A foto é a única pergunta que não se responde
   //    com texto — quem responde é o webhook quando a imagem chega, e a espera continua viva.
   const pendencia = await pendenciaViva(telefone);
@@ -988,6 +1035,8 @@ export async function responder(
     if (sub === "agenda") {
       const texto = `Menu da agenda:\n  AGENDA — lista os próximos horários\n` +
           `  AGENDA hoje — lista os horários de hoje\n` +
+          `  VER AGENDAMENTOS — lista os horários de hoje\n` +
+          `  VER AGENDAMENTOS SEMANAL — lista os próximos sete dias\n` +
           `  AGENDA João 11999998888 sábado 15h — marca um horário\n` +
           `  AVISA 1 — avisa o cliente\n  REMARCAR 1 sexta 16h — muda o horário\n` +
           `  FEITO 1 — registra o atendimento\n  CANCELAR 1 — cancela o horário\n\n` +
@@ -1083,6 +1132,21 @@ export async function responder(
     return { texto: `Salvei o pacote: ${nome} por R$ ${formatarValor(valor)}. Veja em PACOTES.`, tipo: "pacote" };
   }
 
+  if (t === "ver agendamentos" || t === "ver agendamentos semanal") {
+    const hojeLocal = relogio(agora);
+    const hoje = instanteDe({ ...hojeLocal, hora: 0, minuto: 0 });
+    const semanal = t === "ver agendamentos semanal";
+    const periodo = semanal
+      ? {
+        desde: hoje,
+        ate: instanteDe({ ...hojeLocal, dia: hojeLocal.dia + 7, hora: 0, minuto: 0 }),
+        rotulo: "Próximos sete dias",
+      }
+      : { desde: hoje, ate: new Date(hoje.getTime() + 86_400_000), rotulo: "Hoje" };
+    const lista = await agendamentosDe(telefone, periodo.desde, periodo.ate, "", 500);
+    return { texto: textoAgenda(lista, agora, periodo.rotulo), tipo: "agenda" };
+  }
+
   // 6) A lista dele primeiro: "AGENDA", "LISTA" e "AGENDA hoje" mostram, não marcam.
   if (t === "agenda" || /^(lista|proximos|proximos dias)\b/.test(t) || /^agenda\s+(hoje|semana)\b/.test(t)) {
     const hoje = instanteDe({ ...relogio(agora), hora: 0, minuto: 0 });
@@ -1119,6 +1183,46 @@ export async function responder(
   };
 }
 
+async function responderRetornoPagamento(telefone: string, frase: string): Promise<Resposta | null> {
+  const resposta = interpretarRetornoPagamento(frase);
+  if (!resposta) return null;
+
+  const pendente = await consultar1(
+    `select id, cliente_nome, servico
+       from public.barber_agendamento
+      where telefone = $1
+        and feedback_solicitado_em is not null
+        and feedback_registrado_em is null
+        and compareceu is null
+        and forma_pagamento is null
+      order by feedback_solicitado_em desc, id desc
+      limit 1`,
+    [telefone],
+  );
+  if (!pendente) return null;
+
+  const forma = resposta === "nao_veio" ? null : resposta;
+  const compareceu = resposta !== "nao_veio";
+  const salvo = await consultar1(
+    `update public.barber_agendamento
+        set forma_pagamento = $2, compareceu = $3, feedback_registrado_em = now(),
+            atualizado_em = now()
+      where id = $1
+        and telefone = $4
+        and feedback_registrado_em is null
+      returning cliente_nome, servico`,
+    [Number(pendente.id), forma, compareceu, telefone],
+  );
+  if (!salvo) return { texto: "Esse retorno já foi registrado.", tipo: "feedback_duplicado" };
+
+  const cliente = String(salvo.cliente_nome || "cliente");
+  const servico = String(salvo.servico || "serviço");
+  const texto = resposta === "nao_veio"
+    ? `Anotado: ${cliente} não veio para ${servico}.`
+    : `Anotado: ${cliente} pagou ${servico} com ${resposta === "pix" ? "PIX" : "cartão"}.`;
+  return { texto, tipo: "feedback_pagamento" };
+}
+
 async function confirmarLancamento(
   telefone: string, dados: { tipo: string; descricao: string; valor: number }, agora: Date,
 ): Promise<Resposta> {
@@ -1152,6 +1256,19 @@ async function aplicarPendencia(
     return { texto: `Gravado.\n\n${textoResumo(r, p.rotulo)}`, tipo: "gravado" };
   }
   if (pendencia.acao === "agenda") {
+    const conta = await contaDeTelefone(telefone);
+    if (!conta?.aceita_agendamento) {
+      return { texto: "Este estabelecimento não aceita agendamentos online.", tipo: "agenda_desativada" };
+    }
+    const quando = new Date(String(d.data_hora || ""));
+    if (!Number.isFinite(quando.getTime()) || quando.getTime() <= agora.getTime()) {
+      return { texto: "Esse horário já passou ou é inválido. Manda o dia e a hora novamente.", tipo: "erro" };
+    }
+    const rel = relogio(quando);
+    const diaIso = `${rel.ano}-${String(rel.mes).padStart(2, "0")}-${String(rel.dia).padStart(2, "0")}`;
+    if (await horarioNoAlmoco(telefone, diaIso, horaDe(quando), 30)) {
+      return { texto: "Esse horário fica dentro do intervalo de almoço e não pode ser marcado.", tipo: "agenda_almoco" };
+    }
     const criado = await criarAgendamento(telefone, {
       cliente_telefone: String(d.cliente_telefone || ""),
       cliente_nome: String(d.cliente_nome || ""),
@@ -1167,12 +1284,27 @@ async function aplicarPendencia(
     };
   }
   if (pendencia.acao === "remarcar") {
+    const conta = await contaDeTelefone(telefone);
+    if (!conta?.aceita_agendamento) {
+      return { texto: "Este estabelecimento não aceita agendamentos online.", tipo: "agenda_desativada" };
+    }
+    const quando = new Date(String(d.data_hora || ""));
+    if (!Number.isFinite(quando.getTime()) || quando.getTime() <= agora.getTime()) {
+      return { texto: "Esse horário já passou ou é inválido. Manda o dia e a hora novamente.", tipo: "erro" };
+    }
+    const rel = relogio(quando);
+    const diaIso = `${rel.ano}-${String(rel.mes).padStart(2, "0")}-${String(rel.dia).padStart(2, "0")}`;
+    if (await horarioNoAlmoco(telefone, diaIso, horaDe(quando), 30)) {
+      return { texto: "Esse horário fica dentro do intervalo de almoço e não pode ser marcado.", tipo: "agenda_almoco" };
+    }
     const agendamento = await agendamentoPorNumero(telefone, Number(d.numero));
     if (!agendamento) return { texto: "Aquele horário não existe mais.", tipo: "erro" };
-    await remarcarAgendamento(agendamento.id, telefone, new Date(String(d.data_hora)));
+    if (!await remarcarAgendamento(agendamento.id, telefone, quando)) {
+      return { texto: "Não consegui remarcar esse horário. Confira a agenda e tente de novo.", tipo: "erro" };
+    }
     return {
-      texto: `Remarcado: horário ${agendamento.numero} para ${rotuloDoDia(new Date(String(d.data_hora)), agora)}, ` +
-        `${horaDe(new Date(String(d.data_hora)))}.\n\nManda AVISA ${agendamento.numero} que eu aviso o ${agendamento.cliente_nome || "cliente"}.`,
+      texto: `Remarcado: horário ${agendamento.numero} para ${rotuloDoDia(quando, agora)}, ` +
+        `${horaDe(quando)}.\n\nManda AVISA ${agendamento.numero} que eu aviso o ${agendamento.cliente_nome || "cliente"}.`,
       tipo: "remarcado",
     };
   }
@@ -1231,6 +1363,14 @@ async function tratarHorario(
         : `Para remarcar, me diga o dia novo e a hora:\n  REMARCAR ${agendamento.numero} sexta 16h`,
       tipo: "pergunta",
     };
+  }
+  if (!conta.aceita_agendamento) {
+    return { texto: "Este estabelecimento não aceita agendamentos online.", tipo: "agenda_desativada" };
+  }
+  const relHorario = relogio(quando.instant);
+  const diaIsoHorario = `${relHorario.ano}-${String(relHorario.mes).padStart(2, "0")}-${String(relHorario.dia).padStart(2, "0")}`;
+  if (await horarioNoAlmoco(conta.telefone, diaIsoHorario, horaDe(quando.instant), 30)) {
+    return { texto: "Esse horário fica dentro do intervalo de almoço. Escolha outro horário.", tipo: "agenda_almoco" };
   }
   await gravarPendencia(telefone, "remarcar", { numero: agendamento.numero, data_hora: quando.instant.toISOString() });
   return {
@@ -1369,6 +1509,7 @@ export function agendamentosParaTela(lista: Agendamento[]): Bruto[] {
     servico: a.servico,
     dia: dataDe(a.data_hora),
     hora: horaDe(a.data_hora),
+    profissional: a.funcionario_nome,
     status: a.status,
     lembrete: a.lembrete ? "sim" : "",
   }));
@@ -1569,9 +1710,11 @@ async function salvarSolicitacao(telefone: string, texto: string): Promise<void>
 async function agendamentosDoCliente(telefone: string): Promise<Bruto[]> {
   const r = await consultar(
     `select a.id, a.numero, a.telefone as barbearia, c.nome as estabelecimento,
-            a.servico, a.data_hora, a.duracao_min, a.funcionario_telefone
+            a.servico, a.data_hora, a.duracao_min, a.funcionario_id, a.funcionario_telefone,
+            coalesce(f.nome, '') as funcionario_nome
        from public.barber_agendamento a
        join public.barber_contas c on c.telefone = a.telefone
+       left join public.barber_funcionario f on f.id = a.funcionario_id
       where a.cliente_telefone = $1 and a.status = 'marcado' and a.data_hora >= now()
       order by a.data_hora limit 10`,
     [telefone],
@@ -1584,7 +1727,9 @@ async function agendamentosDoCliente(telefone: string): Promise<Bruto[]> {
     servico: String(linha.servico || ""),
     data_hora: String(linha.data_hora || ""),
     duracao_min: Number(linha.duracao_min || 30),
+    funcionario_id: Number(linha.funcionario_id || 0) || null,
     funcionario_telefone: String(linha.funcionario_telefone || ""),
+    funcionario_nome: String(linha.funcionario_nome || ""),
   }));
 }
 
@@ -1613,7 +1758,7 @@ async function confirmarAcaoCliente(
   const barbearia = String(estado.dados.barbearia || "");
   const agendamento = await consultar1(
     `select id, numero, cliente_nome, cliente_telefone, servico, data_hora,
-            duracao_min, funcionario_telefone
+            duracao_min, funcionario_id, funcionario_telefone
        from public.barber_agendamento
       where id = $1 and telefone = $2 and cliente_telefone = $3 and status = 'marcado'
         and data_hora >= now()`,
@@ -1673,8 +1818,9 @@ async function confirmarAcaoCliente(
   const rel = relogio(novoHorario);
   const diaIso = `${rel.ano}-${String(rel.mes).padStart(2, "0")}-${String(rel.dia).padStart(2, "0")}`;
   const funcionario = String(agendamento.funcionario_telefone || "");
+  const funcionarioId = Number(agendamento.funcionario_id || 0) || null;
   const duracao = Math.max(10, Math.min(600, Number(agendamento.duracao_min || 30)));
-  const disponibilidade = await vagasDoDia(barbearia, diaIso, duracao, funcionario, agora);
+  const disponibilidade = await vagasDoDia(barbearia, diaIso, duracao, funcionarioId || funcionario, agora);
   if (disponibilidade.fechado || !disponibilidade.vagas.includes(horaDe(novoHorario))) {
     await apagarEstadoEntrada(telefone);
     return await responderEntrada(telefone,
@@ -1691,12 +1837,19 @@ async function confirmarAcaoCliente(
           select 1 from public.barber_agendamento ocupado
            where ocupado.telefone = a.telefone and ocupado.id <> a.id
              and ocupado.status = 'marcado'
-             and ($5 = '' or ocupado.funcionario_telefone = $5)
-             and ocupado.data_hora < ($4 + make_interval(mins => $6))
+             and (
+               ($5::integer is null and ($6 = '' or ocupado.funcionario_telefone = $6))
+               or ocupado.funcionario_id = $5
+               or ($5::integer is not null and ocupado.funcionario_id is null
+                   and ocupado.funcionario_telefone = $6)
+               or ($5::integer is not null and ocupado.funcionario_id is null
+                   and ocupado.funcionario_telefone = '')
+             )
+             and ocupado.data_hora < ($4 + make_interval(mins => $7))
              and ocupado.data_hora + make_interval(mins => greatest(10, ocupado.duracao_min)) > $4
         )
       returning a.numero, a.servico`,
-    [id, barbearia, telefone, novoHorario.toISOString(), funcionario, duracao],
+    [id, barbearia, telefone, novoHorario.toISOString(), funcionarioId, funcionario, duracao],
   );
   if (!atualizado) {
     await apagarEstadoEntrada(telefone);
@@ -1947,7 +2100,7 @@ async function processarEntrada(
       const diaIso = `${rel.ano}-${String(rel.mes).padStart(2, "0")}-${String(rel.dia).padStart(2, "0")}`;
       const disponibilidade = await vagasDoDia(
         String(item.barbearia), diaIso, Number(item.duracao_min || 30),
-        String(item.funcionario_telefone || ""), new Date(),
+        Number(item.funcionario_id || 0) || String(item.funcionario_telefone || ""), new Date(),
       );
       if (disponibilidade.fechado || !disponibilidade.vagas.includes(horaDe(quando.instant))) {
         return await responderEntrada(telefone,
@@ -1992,7 +2145,8 @@ export async function listarInteressados(limite = 300): Promise<Bruto[]> {
 // manda e o funcionário que conversa com o bot pelo próprio número. Nada aqui escreve em
 // `barber_contas` de outra barbearia, e nada escreve no robô do Peixeiro.
 
-type Campo = "nome" | "site" | "endereco" | "telefone" | "horario" | "pagamento" | "barbeiro";
+type Campo = "nome" | "site" | "endereco" | "telefone" | "horario" | "pagamento" | "barbeiro" |
+  "agendamento";
 
 const PERGUNTA: Record<Campo, string> = {
   nome: "Como o salão se chama na página? Manda só o nome, por exemplo: Barbearia do Oleiro.",
@@ -2002,11 +2156,12 @@ const PERGUNTA: Record<Campo, string> = {
   horario: "Como funciona o horário? Manda no formato: segunda a quinta 10 as 19, sexta e sábado 10 as 20, domingo fechado.",
   pagamento: "Quais formas de pagamento você aceita? Manda separado por vírgula: dinheiro, pix, cartão.",
   barbeiro: "Mostrar a foto de quem vai cortar antes do cliente agendar? Responda SIM ou NÃO.",
+  agendamento: "Aceita agendamento online? Responda SIM ou NÃO. O site continuará mostrando o endereço e os horários.",
 };
 
 const ROTULO_CAMPO: Record<Campo, string> = {
   nome: "NOME", site: "SITE", endereco: "ENDERECO", telefone: "TELEFONE",
-  horario: "HORARIO", pagamento: "PAGAMENTO", barbeiro: "BARBEIRO",
+  horario: "HORARIO", pagamento: "PAGAMENTO", barbeiro: "BARBEIRO", agendamento: "AGENDAMENTO",
 };
 
 function urlDaPagina(conta: Conta): string {
@@ -2040,6 +2195,8 @@ export async function guiaDaPagina(conta: Conta, textos: Textos): Promise<string
     "EDITAR SITE — troca o final do endereço (NOMESITE barbeariadooleiro, tudo junto)",
     "EDITAR ENDERECO — muda a rua e o mapa",
     "EDITAR HORARIO — segunda 10 as 19, domingo fechado",
+    "ALMOCO segunda a sexta 12 as 13 — bloqueia esse intervalo na agenda",
+    "EDITAR AGENDAMENTO — SIM ou NÃO",
     "EDITAR PAGAMENTO — dinheiro, pix, cartão",
     "EDITAR TELEFONE — o número que o cliente vê na página",
     "FOTO — manda uma foto da barbearia para a página",
@@ -2127,6 +2284,78 @@ export function parseHorarios(texto: string): { dia: number; abre: string; fecha
     for (const dia of dias) saida.push({ dia, ...hora, fechado });
   }
   return saida;
+}
+
+export function parseAlmocos(texto: string): {
+  dia: number; inicio: string | null; fim: string | null;
+}[] {
+  const saida: { dia: number; inicio: string | null; fim: string | null }[] = [];
+  for (const linha of String(texto || "").split(/[,;\n]+/)) {
+    const pedaco = semAcento(linha).toLowerCase().replace(/-?feira\b/g, "").replace(/\s+/g, " ").trim();
+    if (!pedaco) continue;
+    const dias = new Set<number>();
+    DIAS_ORDEM.forEach((dia, i) => {
+      if (new RegExp(`(^|\\s)${dia}s?(\\s|$)`).test(pedaco)) dias.add(i);
+    });
+    const alcance = new RegExp(`(${DIAS_ORDEM.join("|")})s?\\s+(?:a|ate|-)\\s+(${DIAS_ORDEM.join("|")})s?`)
+      .exec(pedaco);
+    if (alcance) {
+      const inicio = DIAS_ORDEM.indexOf(alcance[1]);
+      const fim = DIAS_ORDEM.indexOf(alcance[2]);
+      for (let i = inicio; ; i = (i + 1) % DIAS_ORDEM.length) {
+        dias.add(i);
+        if (i === fim) break;
+      }
+    }
+    if (!dias.size) continue;
+    const remover = /\b(remover|sem\s+pausa|limpar)\b/.test(pedaco);
+    if (remover) {
+      for (const dia of [...dias].sort((a, b) => a - b)) saida.push({ dia, inicio: null, fim: null });
+      continue;
+    }
+    const horas = [...pedaco.matchAll(/\b(\d{1,2})(?:(?:\s*(?::|\.|h|e)\s*(\d{1,2}))|(?:\s*h))?\b/g)]
+      .map((m) => ({ hora: Number(m[1]), minuto: Number(m[2] || 0) }));
+    if (horas.length < 2) continue;
+    const [a, b] = horas;
+    if (
+      a.hora > 23 || b.hora > 23 || a.minuto > 59 || b.minuto > 59 ||
+      a.hora * 60 + a.minuto >= b.hora * 60 + b.minuto
+    ) continue;
+    const formatar = (x: { hora: number; minuto: number }) =>
+      `${String(x.hora).padStart(2, "0")}:${String(x.minuto).padStart(2, "0")}`;
+    for (const dia of [...dias].sort((x, y) => x - y)) {
+      saida.push({ dia, inicio: formatar(a), fim: formatar(b) });
+    }
+  }
+  return saida;
+}
+
+export async function gravarAlmocos(
+  telefone: string,
+  lista: { dia: number; inicio: string | null; fim: string | null }[],
+): Promise<{ atualizados: number; semHorario: number[] }> {
+  const dias = [...new Set(lista.map((x) => x.dia))];
+  const diasComPausa = [...new Set(lista.filter((x) => x.inicio && x.fim).map((x) => x.dia))];
+  const horariosAbertos = await consultar(
+    `select dia from public.barber_horario where telefone = $1 and dia = any($2::int[])`,
+    [telefone, diasComPausa],
+  );
+  const comHorario = new Set(horariosAbertos.rows.map((x) => Number(x.dia)));
+  const semHorario = diasComPausa.filter((dia) => !comHorario.has(dia));
+  if (semHorario.length) return { atualizados: 0, semHorario };
+
+  let alterados = 0;
+  for (const almoco of lista) {
+    const atualizado = await consultar1(
+      `update public.barber_horario
+          set almoco_inicio = $3::time, almoco_fim = $4::time
+        where telefone = $1 and dia = $2
+        returning dia`,
+      [telefone, almoco.dia, almoco.inicio, almoco.fim],
+    );
+    if (atualizado) alterados++;
+  }
+  return { atualizados: alterados, semHorario: [] };
 }
 
 export async function gravarHorarios(
@@ -2280,6 +2509,20 @@ export async function aplicarEdicaoDePagina(
     }
     await gravarHorarios(telefone, lista);
     return await respostaComPagina(conta, `Horários gravados: ${lista.length} dia(s) na página.`, "horario");
+  }
+  if (campo === "agendamento") {
+    const resposta = semAcento(valor.toLowerCase());
+    if (!/^(sim|s|nao|n)$/.test(resposta)) return { texto: PERGUNTA.agendamento, tipo: "pergunta_pagina" };
+    const aceita = resposta === "sim" || resposta === "s";
+    await consultar(
+      `update public.barber_contas set aceita_agendamento = $2, atualizado_em = now() where telefone = $1`,
+      [telefone, aceita],
+    );
+    return await respostaComPagina(
+      conta,
+      aceita ? "A página agora aceita agendamento online." : "A página agora informa que não aceita agendamento online.",
+      "agendamento",
+    );
   }
   if (campo === "pagamento") {
     const nomes = valor.split(/[,;]|\se\s|\se\b/i).map((x) => x.trim()).filter(Boolean);
@@ -2655,6 +2898,44 @@ export async function comandoPagina(
   if (/^(pagamentos?|formas?\s+de\s+pagamento)\s+/.test(t)) {
     return await aplicarEdicaoDePagina(conta, "pagamento", original.replace(/^\s*(?:pagamentos?|formas?\s+de\s+pagamento)\b/i, ""), textos, new Date());
   }
+  if (/^almoco(?:\s|$)/.test(t)) {
+    const valor = original.replace(/^\s*almoco\b/i, "").trim();
+    if (!valor) {
+      return {
+        texto: "Para bloquear o almoço: ALMOCO segunda a sexta 12:00 as 13:00. " +
+          "Para liberar: ALMOCO REMOVER segunda.",
+        tipo: "pergunta_pagina",
+      };
+    }
+    const lista = parseAlmocos(valor);
+    if (!lista.length) {
+      return {
+        texto: "Não entendi os dias e o intervalo. Exemplo: ALMOCO segunda a sexta 12:00 as 13:00. " +
+          "Para remover: ALMOCO REMOVER segunda.",
+        tipo: "pergunta_pagina",
+      };
+    }
+    const resultado = await gravarAlmocos(conta.telefone, lista);
+    if (resultado.semHorario.length) {
+      const dias = resultado.semHorario.map((dia) => DIAS_ORDEM[dia]).join(", ");
+      return {
+        texto: `Não alterei nada: primeiro cadastre o horário de atendimento de ${dias} com EDITAR HORARIO.`,
+        tipo: "pergunta_pagina",
+      };
+    }
+    return await respostaComPagina(
+      conta,
+      `Intervalo de almoço atualizado para ${resultado.atualizados} dia(s); ele fica bloqueado na página e nas marcações pelo chatbot.`,
+      "horario",
+    );
+  }
+  if (/^(aceita\s+)?agendamento(?:\s+online)?\s+(sim|s|nao|n)\b/.test(t)) {
+    const resposta = /\b(sim|s)$/.test(t) || /\b(sim|s)\s*$/.test(t);
+    return await aplicarEdicaoDePagina(conta, "agendamento", resposta ? "sim" : "nao", textos, new Date());
+  }
+  if (/^aceita\s+agendamento$/.test(t) || t === "agendamento online") {
+    return await paginaPergunta(conta, "agendamento");
+  }
   if (/^barbeiro\s+(sim|nao)\b/.test(t) || /^foto\s+(do\s+)?barbeiro\s+(sim|nao)\b/.test(t)) {
     const sim = /\bsim\b/.test(t);
     return await aplicarEdicaoDePagina(conta, "barbeiro", sim ? "sim" : "nao", textos, new Date());
@@ -2736,6 +3017,7 @@ function campoDe(alvo: string): Campo | "" {
   if (/^(horario|horarios|horario de atendimento|funcionamento)$/.test(x)) return "horario";
   if (/^(pagamento|pagamentos|forma de pagamento|formas de pagamento)$/.test(x)) return "pagamento";
   if (/^(barbeiro|quem corta|foto do barbeiro|quem vai cortar)$/.test(x)) return "barbeiro";
+  if (/^(agendamento|agenda online|aceita agendamento)$/.test(x)) return "agendamento";
   return "";
 }
 
@@ -2942,6 +3224,12 @@ export async function responderFuncionario(
     if (dia.fechado) {
       return {
         texto: `A ${barbearia.nome} não abre no dia ${dataDe(quando.instant)}. Confirma com o dono ou marca em outro dia.`,
+        tipo: "pergunta",
+      };
+    }
+    if (await horarioNoAlmoco(barbearia.telefone, diaIso, horaDe(quando.instant), 30)) {
+      return {
+        texto: "Esse horário fica dentro do intervalo de almoço da barbearia. Escolha outro horário.",
         tipo: "pergunta",
       };
     }
@@ -3424,4 +3712,105 @@ export async function lembretesDoDia(
   }
 
   return { ok: true, ativo: true, enviados, avaliados: contas.rows.length, sem_agenda: semAgenda, falhas: falhas.slice(0, 10) };
+}
+
+export async function perguntarPagamentoPosServico(agora: Date = new Date()): Promise<Bruto> {
+  const textos = await obterTextos();
+  const conf = await obterConfig();
+  if (!conf) return { ok: false, error: "sem banco" };
+  if (!textos.ativo) return { ok: true, ativo: false, enviados: 0 };
+
+  const contas = await consultar(
+    `select ${COLUNAS_CONTA} from public.barber_contas where ativo order by telefone`,
+  );
+  let enviados = 0, semPendencia = 0;
+  const falhas: Bruto[] = [];
+
+  for (const linha of contas.rows) {
+    const conta = linhaParaConta(linha);
+    if (await estaBloqueado(conta.telefone)) { semPendencia++; continue; }
+
+    const agendamento = await consultar1(
+      `with candidato as (
+         select a.id
+           from public.barber_agendamento a
+           join public.barber_contas c on c.telefone = a.telefone and c.ativo
+          where a.telefone = $1
+            and a.data_hora >= c.feedback_inicio_em
+            and a.status in ('marcado', 'feito')
+            and a.forma_pagamento is null
+            and a.compareceu is null
+            and a.feedback_solicitado_em is null
+            and a.feedback_registrado_em is null
+            and (a.feedback_claim_em is null
+              or a.feedback_claim_em < $2::timestamptz - interval '2 minutes')
+            and a.data_hora + make_interval(
+              mins => greatest(10, least(coalesce(a.duracao_min, 30), 600)) + 40
+            ) <= $2::timestamptz
+            and not exists (
+              select 1 from public.barber_agendamento_pagamento p
+               where p.agendamento_id = a.id and p.telefone = a.telefone
+            )
+            and not exists (
+              select 1 from public.barber_agendamento pendente
+               where pendente.telefone = a.telefone
+                 and pendente.feedback_solicitado_em is not null
+                 and pendente.feedback_registrado_em is null
+                 and pendente.compareceu is null
+                 and pendente.forma_pagamento is null
+            )
+          order by a.data_hora, a.id
+          limit 1
+          for update of a skip locked
+       )
+       update public.barber_agendamento a
+          set feedback_claim_em = $2::timestamptz, atualizado_em = now()
+         from candidato
+        where a.id = candidato.id
+       returning a.id, a.cliente_nome, a.servico`,
+      [conta.telefone, agora.toISOString()],
+    );
+    if (!agendamento) { semPendencia++; continue; }
+
+    const cliente = String(agendamento.cliente_nome || "cliente");
+    const servico = String(agendamento.servico || "serviço");
+    const corpo = `O cliente ${cliente} fez ${servico}.\n` +
+      "Como foi o pagamento? Responda PIX, CARTÃO ou NÃO VEIO.";
+    const envio = await enviarTexto(conf, conta.telefone, corpo);
+    if (envio.ok) {
+      const registrado = await consultar1(
+        `update public.barber_agendamento
+            set feedback_solicitado_em = now(), feedback_claim_em = null, atualizado_em = now()
+          where id = $1 and telefone = $3 and feedback_claim_em = $2::timestamptz
+          returning id`,
+        [Number(agendamento.id), agora.toISOString(), conta.telefone],
+      );
+      if (!registrado) throw new Error("feedback_enviado_sem_registro");
+      enviados++;
+      await registrarMensagem(
+        conta.telefone,
+        "saida",
+        corpo,
+        `feedback-pagamento-${String(agendamento.id)}`,
+        textos.dias_retencao,
+      );
+    } else {
+      await consultar(
+        `update public.barber_agendamento
+            set feedback_claim_em = null, atualizado_em = now()
+          where id = $1 and telefone = $2 and feedback_solicitado_em is null`,
+        [Number(agendamento.id), conta.telefone],
+      );
+      falhas.push({ agendamento: Number(agendamento.id), erro: String(envio.error || "sem_resposta") });
+    }
+  }
+
+  return {
+    ok: true,
+    ativo: true,
+    enviados,
+    sem_pendencia: semPendencia,
+    avaliados: contas.rows.length,
+    falhas: falhas.slice(0, 10),
+  };
 }
