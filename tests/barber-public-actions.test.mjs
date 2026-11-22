@@ -92,3 +92,29 @@ test("edições de serviço e produto recusam IDs inválidos ou que não pertenc
   assert.match(salvar, /return falha\("servico_nao_encontrado", 404\)/);
   assert.match(salvar, /return falha\("produto_nao_encontrado", 404\)/);
 });
+
+test("mudanças no catálogo avisam o barbeiro e não renomeiam a conta", async () => {
+  const acoes = await readFile(
+    new URL("../supabase/functions/peixeiro/acoes.ts", import.meta.url),
+    "utf8",
+  );
+  const inicio = acoes.indexOf("export async function barbPainelSalvar");
+  const fim = acoes.indexOf("\nexport async function barbPainelFoto", inicio);
+  const salvar = acoes.slice(inicio, fim);
+  assert.ok(inicio >= 0);
+  assert.ok(fim > inicio);
+  assert.match(salvar, /if \(!acao && \("nome" in dados/);
+  for (const operacao of [
+    "servico",
+    "produto",
+    "servico_editar",
+    "produto_editar",
+    "servico_apagar",
+    "produto_apagar",
+  ]) {
+    assert.match(salvar, new RegExp(`if \\(acao === "${operacao}"\\)`));
+  }
+  assert.equal((salvar.match(/mensagemCatalogo = mensagemAlteracaoCatalogo/g) || []).length, 6);
+  assert.ok(salvar.indexOf("await publicarPagina(telefone)") < salvar.indexOf("enviarParaBarbeiro(telefone, mensagemCatalogo)"));
+  assert.match(salvar, /falha\("aviso_whatsapp_nao_enviado", 502, \{\s*salvo: true/s);
+});
