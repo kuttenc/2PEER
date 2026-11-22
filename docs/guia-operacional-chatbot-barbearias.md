@@ -185,8 +185,10 @@ Conforme o status técnico do checkout:
   responderam com sucesso; nenhum WhatsApp real foi enviado durante a validação.
 - A aba antiga **Bloqueados** está sendo ampliada para **Bloquear**, com cadastro manual e
   pesquisa da lista. O envio GreenAPI de texto e arquivo também passa a consultar o bloqueio
-  global antes de enviar. A alteração e o bloqueio inicial solicitado ainda precisam ser
-  publicados/verificados no projeto correto.
+  global antes de enviar. A aba foi publicada pelo commit `95d3637`; a Edge Function `peixeiro`
+  está na versão 35 do projeto `ggufcvrwctieacvbbwim`. O telefone solicitado foi confirmado como
+  cadastro da Barbearia Zamonelli e está na lista global de bloqueio; a leitura de verificação
+  confirmou a linha. Nenhuma mensagem de teste foi enviada.
 
 Antes de qualquer deploy:
 

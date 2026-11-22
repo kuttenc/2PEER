@@ -40,9 +40,14 @@ webhook e pelas filas.
 
 Os envios GreenAPI de texto e arquivo também consultam essa tabela no ponto central de envio.
 Assim, um número bloqueado deixa de receber respostas do chatbot e mensagens automáticas/manuais
-enviadas por esses caminhos; desbloquear o devolve ao fluxo. A mudança não precisa de migration.
-Publicação no Pages, deploy da Edge Function e confirmação do bloqueio inicial solicitado ficam
-pendentes até a validação no projeto 2PEER.
+novas enviadas por esses caminhos; desbloquear o devolve ao fluxo. Mensagens que a GreenAPI já
+aceitou antes do bloqueio ainda podem ser entregues. A mudança não precisa de migration.
+
+A aba foi publicada no GitHub Pages pelo commit `95d3637`; a Edge Function `peixeiro` foi
+publicada como versão 35 no projeto `ggufcvrwctieacvbbwim`. O health check respondeu com sucesso.
+O telefone indicado foi confirmado como o cadastro da Barbearia Zamonelli e incluído em
+`clientes_bloqueados`; uma consulta independente confirmou o bloqueio. Não foi enviada mensagem
+de teste para esse número.
 
 ## Onde cada projeto está hoje
 
