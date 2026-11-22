@@ -1474,3 +1474,16 @@ No painel do Jailton, `Selage` foi atualizado para R$ 90,00 e `Relaxamento` para
 Os valores foram relidos pela action autenticada do painel e confirmados também na página pública
 após a implantação do GitHub Pages concluir com sucesso. A correção é compartilhada pelo catálogo
 e pelo salvamento dos demais estabelecimentos; não exigiu migration.
+
+### Confirmações do catálogo pelo WhatsApp
+
+Após salvar ou excluir um serviço ou produto no painel privado, o sistema envia ao WhatsApp
+cadastrado do barbeiro uma confirmação com o item e os dados da operação. Alterações de perfil,
+horários e formas de pagamento não enviam esse aviso. Se o provedor não aceitar o envio, a action
+retorna `aviso_whatsapp_nao_enviado` e informa `salvo: true`, pois a alteração do catálogo já foi
+persistida. Não foi enviada mensagem manual de teste.
+
+As actions do catálogo agora ficam separadas da atualização dos dados da conta; isso evita que o
+campo `nome` de um serviço altere o nome público do estabelecimento. O nome público de
+`Jailtonbarbershop` foi restaurado ao valor anterior às tentativas de alteração de preço, mantendo
+Selage em R$ 90,00 e Relaxamento em R$ 60,00.

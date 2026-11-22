@@ -1868,12 +1868,26 @@ export async function barbPainelVer(dados: Registro): Promise<Saida> {
   });
 }
 
+function mensagemAlteracaoCatalogo(
+  tipo: "Serviço" | "Produto",
+  acao: "salvo" | "atualizado" | "removido",
+  nome: string,
+  preco?: number,
+  duracao?: number,
+): string {
+  const valor = preco === undefined ? "" : ` — R$ ${preco.toFixed(2).replace(".", ",")}`;
+  const tempo = duracao === undefined ? "" : ` (${duracao} min)`;
+  return `${tipo} ${acao} no catálogo: ${nome}${valor}${tempo}.`;
+}
+
 export async function barbPainelSalvar(dados: Registro): Promise<Saida> {
   const acesso = await barbPainelValidar(dados);
   if (!acesso) return falha("acesso_painel_invalido", 403);
   const telefone = acesso.telefone;
-  if ("nome" in dados || "telefone_publico" in dados || "endereco" in dados ||
-      "aceita_agendamento" in dados || "aviso_publico" in dados) {
+  const acao = txt(dados.acao);
+  let mensagemCatalogo = "";
+  if (!acao && ("nome" in dados || "telefone_publico" in dados || "endereco" in dados ||
+      "aceita_agendamento" in dados || "aviso_publico" in dados)) {
     const nome = txt(dados.nome).trim().slice(0, 120);
     const telefonePublico = txt(dados.telefone_publico).trim();
     const endereco = txt(dados.endereco).trim().slice(0, 200);
@@ -1893,52 +1907,79 @@ export async function barbPainelSalvar(dados: Registro): Promise<Saida> {
        "aviso_publico" in dados, avisoPublico],
     );
   }
-  if (txt(dados.acao) === "servico" && txt(dados.nome)) {
+  if (acao === "servico") {
+    const nome = txt(dados.nome).trim().replace(/\s+/g, " ").slice(0, 120);
     const preco = Number(txt(dados.preco) || 0);
-    const duracao = Math.max(10, Math.min(600, Number(txt(dados.duracao_min) || 30)));
-    await consultar(
+    const duracao = Number(txt(dados.duracao_min) || 30);
+    if (!nome) return falha("servico_invalido");
+    if (!Number.isFinite(preco) || preco < 0) return falha("preco_invalido");
+    if (!Number.isInteger(duracao)) return falha("duracao_invalida");
+    const duracaoSalva = Math.max(10, Math.min(600, duracao));
+    const salvo = await consultar1(
       `insert into public.barber_servico (telefone, nome, preco, duracao_min, ativo)
        values ($1, $2, $3, $4, true)
        on conflict (telefone, lower(nome)) do update
          set preco = excluded.preco, duracao_min = excluded.duracao_min,
-             ativo = true, atualizado_em = now()`,
-      [telefone, txt(dados.nome).trim().slice(0, 120), preco, duracao],
+             ativo = true, atualizado_em = now()
+       returning id`,
+      [telefone, nome, preco, duracaoSalva],
     );
+    if (!salvo) return falha("servico_nao_salvo", 500);
+    mensagemCatalogo = mensagemAlteracaoCatalogo("Serviço", "salvo", nome, preco, duracaoSalva);
   }
-  if (txt(dados.acao) === "produto" && txt(dados.nome)) {
+  if (acao === "produto") {
+    const nome = txt(dados.nome).trim().replace(/\s+/g, " ").slice(0, 120);
     const preco = Number(txt(dados.preco) || 0);
-    await consultar(
+    if (!nome) return falha("produto_invalido");
+    if (!Number.isFinite(preco) || preco < 0) return falha("preco_invalido");
+    const salvo = await consultar1(
       `insert into public.barber_produto (telefone, nome, preco, ativo)
        values ($1, $2, $3, true)
        on conflict (telefone, lower(nome)) do update
-         set preco = excluded.preco, ativo = true, atualizado_em = now()`,
-      [telefone, txt(dados.nome).trim().slice(0, 120), preco],
+         set preco = excluded.preco, ativo = true, atualizado_em = now()
+       returning id`,
+      [telefone, nome, preco],
     );
+    if (!salvo) return falha("produto_nao_salvo", 500);
+    mensagemCatalogo = mensagemAlteracaoCatalogo("Produto", "salvo", nome, preco);
   }
-  if (txt(dados.acao) === "servico_editar") {
+  if (acao === "servico_editar") {
     const id = Number(txt(dados.id) || 0);
-    const nome = txt(dados.nome).trim().slice(0, 120);
+    const nome = txt(dados.nome).trim().replace(/\s+/g, " ").slice(0, 120);
     const preco = Number(txt(dados.preco) || 0);
     const duracao = Number(txt(dados.duracao_min) || 30);
     if (!Number.isSafeInteger(id) || id <= 0 || !nome) return falha("servico_invalido");
     if (!Number.isFinite(preco) || preco < 0) return falha("preco_invalido");
-    if (!Number.isFinite(duracao)) return falha("duracao_invalida");
+    if (!Number.isInteger(duracao)) return falha("duracao_invalida");
+    const duracaoSalva = Math.max(10, Math.min(600, duracao));
     const salvo = await consultar1(
       `update public.barber_servico
           set nome = $3, preco = $4, duracao_min = $5, ativo = true, atualizado_em = now()
         where id = $1 and telefone = $2
         returning id`,
-      [id, telefone, nome, preco, Math.max(10, Math.min(600, duracao))],
+      [id, telefone, nome, preco, duracaoSalva],
     );
     if (!salvo) return falha("servico_nao_encontrado", 404);
+    mensagemCatalogo = mensagemAlteracaoCatalogo("Serviço", "atualizado", nome, preco, duracaoSalva);
   }
-  if (txt(dados.acao) === "servico_apagar") {
+  if (acao === "servico_apagar") {
     const id = Number(txt(dados.id) || 0);
-    if (id) await consultar(`delete from public.barber_servico where id = $1 and telefone = $2`, [id, telefone]);
+    if (!Number.isSafeInteger(id) || id <= 0) return falha("servico_invalido");
+    const apagado = await consultar1(
+      `delete from public.barber_servico where id = $1 and telefone = $2 returning nome, preco`,
+      [id, telefone],
+    );
+    if (!apagado) return falha("servico_nao_encontrado", 404);
+    mensagemCatalogo = mensagemAlteracaoCatalogo(
+      "Serviço",
+      "removido",
+      String(apagado.nome || ""),
+      Number(apagado.preco || 0),
+    );
   }
-  if (txt(dados.acao) === "produto_editar") {
+  if (acao === "produto_editar") {
     const id = Number(txt(dados.id) || 0);
-    const nome = txt(dados.nome).trim().slice(0, 120);
+    const nome = txt(dados.nome).trim().replace(/\s+/g, " ").slice(0, 120);
     const preco = Number(txt(dados.preco) || 0);
     if (!Number.isSafeInteger(id) || id <= 0 || !nome) return falha("produto_invalido");
     if (!Number.isFinite(preco) || preco < 0) return falha("preco_invalido");
@@ -1950,10 +1991,22 @@ export async function barbPainelSalvar(dados: Registro): Promise<Saida> {
       [id, telefone, nome, preco],
     );
     if (!salvo) return falha("produto_nao_encontrado", 404);
+    mensagemCatalogo = mensagemAlteracaoCatalogo("Produto", "atualizado", nome, preco);
   }
-  if (txt(dados.acao) === "produto_apagar") {
+  if (acao === "produto_apagar") {
     const id = Number(txt(dados.id) || 0);
-    if (id) await consultar(`delete from public.barber_produto where id = $1 and telefone = $2`, [id, telefone]);
+    if (!Number.isSafeInteger(id) || id <= 0) return falha("produto_invalido");
+    const apagado = await consultar1(
+      `delete from public.barber_produto where id = $1 and telefone = $2 returning nome, preco`,
+      [id, telefone],
+    );
+    if (!apagado) return falha("produto_nao_encontrado", 404);
+    mensagemCatalogo = mensagemAlteracaoCatalogo(
+      "Produto",
+      "removido",
+      String(apagado.nome || ""),
+      Number(apagado.preco || 0),
+    );
   }
   if (Array.isArray(dados.horarios)) {
     const horarios: {
@@ -2008,6 +2061,15 @@ export async function barbPainelSalvar(dados: Registro): Promise<Saida> {
     }
   }
   await publicarPagina(telefone);
+  if (mensagemCatalogo) {
+    const envio = await enviarParaBarbeiro(telefone, mensagemCatalogo);
+    if (!envio.ok || envio.simulado) {
+      return falha("aviso_whatsapp_nao_enviado", 502, {
+        salvo: true,
+        simulado: Boolean(envio.simulado),
+      });
+    }
+  }
   return ok({ salvo: true });
 }
 
