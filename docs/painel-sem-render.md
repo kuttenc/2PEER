@@ -1462,3 +1462,15 @@ concluiu com sucesso e a página e o `app.js` responderam 200. A migration
 `../tools/20261123_barber_pos_servico_feedback_cron.sql` foi aplicada; o job
 `barber-post-service-feedback` está ativo a cada cinco minutos. Nenhuma mensagem de teste foi
 enviada. O retorno não lança receita automaticamente.
+
+### Salvamento de preços no painel privado — publicado
+
+O catálogo usado pelo painel privado agora devolve os IDs reais de serviços e produtos, além da
+duração dos serviços. As ações de edição validam nome, ID, preço e duração e retornam erro quando
+o registro não pertence ao estabelecimento, em vez de aparentar sucesso sem atualizar o banco.
+A Edge Function `peixeiro` foi publicada no projeto `ggufcvrwctieacvbbwim`.
+
+No painel do Jailton, `Selage` foi atualizado para R$ 90,00 e `Relaxamento` para R$ 60,00.
+Os valores foram relidos pela action autenticada do painel e confirmados também na página pública
+após a implantação do GitHub Pages concluir com sucesso. A correção é compartilhada pelo catálogo
+e pelo salvamento dos demais estabelecimentos; não exigiu migration.

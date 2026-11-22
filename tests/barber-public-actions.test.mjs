@@ -61,3 +61,34 @@ test("horários inválidos são rejeitados antes de apagar os horários atuais",
   assert.ok(fim > inicio);
   assert.ok(salvar.indexOf('falha("horario_invalido")') < salvar.indexOf("delete from public.barber_horario"));
 });
+
+test("o catálogo do painel inclui os IDs editáveis e a duração dos serviços", async () => {
+  const barbearia = await readFile(
+    new URL("../supabase/functions/peixeiro/barbearia.ts", import.meta.url),
+    "utf8",
+  );
+  const inicio = barbearia.indexOf("export type ItemCatalogo");
+  const fim = barbearia.indexOf("\nexport async function catalogo", inicio);
+  const leitor = barbearia.slice(inicio, fim);
+  assert.ok(inicio >= 0);
+  assert.ok(fim > inicio);
+  assert.match(leitor, /"id, nome, preco, duracao_min"/);
+  assert.match(leitor, /"id, nome, preco"/);
+  assert.match(leitor, /id: Number\(l\.id\)/);
+  assert.match(leitor, /duracao_min: Number\(l\.duracao_min/);
+});
+
+test("edições de serviço e produto recusam IDs inválidos ou que não pertencem à conta", async () => {
+  const acoes = await readFile(
+    new URL("../supabase/functions/peixeiro/acoes.ts", import.meta.url),
+    "utf8",
+  );
+  const inicio = acoes.indexOf("export async function barbPainelSalvar");
+  const fim = acoes.indexOf("\nexport async function barbPainelFoto", inicio);
+  const salvar = acoes.slice(inicio, fim);
+  assert.ok(inicio >= 0);
+  assert.ok(fim > inicio);
+  assert.match(salvar, /Number\.isSafeInteger\(id\)/);
+  assert.match(salvar, /return falha\("servico_nao_encontrado", 404\)/);
+  assert.match(salvar, /return falha\("produto_nao_encontrado", 404\)/);
+});

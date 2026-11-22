@@ -1917,17 +1917,20 @@ export async function barbPainelSalvar(dados: Registro): Promise<Saida> {
   }
   if (txt(dados.acao) === "servico_editar") {
     const id = Number(txt(dados.id) || 0);
-    if (id) {
-      await consultar(
-        `update public.barber_servico
-            set nome = $3, preco = $4, duracao_min = $5, ativo = $6, atualizado_em = now()
-          where id = $1 and telefone = $2`,
-        [id, telefone, txt(dados.nome).trim().slice(0, 120),
-         Number(txt(dados.preco) || 0),
-         Math.max(10, Math.min(600, Number(txt(dados.duracao_min) || 30))),
-         !booleano(dados.ativo) ? true : true],
-      );
-    }
+    const nome = txt(dados.nome).trim().slice(0, 120);
+    const preco = Number(txt(dados.preco) || 0);
+    const duracao = Number(txt(dados.duracao_min) || 30);
+    if (!Number.isSafeInteger(id) || id <= 0 || !nome) return falha("servico_invalido");
+    if (!Number.isFinite(preco) || preco < 0) return falha("preco_invalido");
+    if (!Number.isFinite(duracao)) return falha("duracao_invalida");
+    const salvo = await consultar1(
+      `update public.barber_servico
+          set nome = $3, preco = $4, duracao_min = $5, ativo = true, atualizado_em = now()
+        where id = $1 and telefone = $2
+        returning id`,
+      [id, telefone, nome, preco, Math.max(10, Math.min(600, duracao))],
+    );
+    if (!salvo) return falha("servico_nao_encontrado", 404);
   }
   if (txt(dados.acao) === "servico_apagar") {
     const id = Number(txt(dados.id) || 0);
@@ -1935,14 +1938,18 @@ export async function barbPainelSalvar(dados: Registro): Promise<Saida> {
   }
   if (txt(dados.acao) === "produto_editar") {
     const id = Number(txt(dados.id) || 0);
-    if (id) {
-      await consultar(
-        `update public.barber_produto
-            set nome = $3, preco = $4, ativo = true, atualizado_em = now()
-          where id = $1 and telefone = $2`,
-        [id, telefone, txt(dados.nome).trim().slice(0, 120), Number(txt(dados.preco) || 0)],
-      );
-    }
+    const nome = txt(dados.nome).trim().slice(0, 120);
+    const preco = Number(txt(dados.preco) || 0);
+    if (!Number.isSafeInteger(id) || id <= 0 || !nome) return falha("produto_invalido");
+    if (!Number.isFinite(preco) || preco < 0) return falha("preco_invalido");
+    const salvo = await consultar1(
+      `update public.barber_produto
+          set nome = $3, preco = $4, ativo = true, atualizado_em = now()
+        where id = $1 and telefone = $2
+        returning id`,
+      [id, telefone, nome, preco],
+    );
+    if (!salvo) return falha("produto_nao_encontrado", 404);
   }
   if (txt(dados.acao) === "produto_apagar") {
     const id = Number(txt(dados.id) || 0);
