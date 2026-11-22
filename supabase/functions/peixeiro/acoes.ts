@@ -106,13 +106,13 @@ import {
   adicionarBarbeiro, agendamentosDe, agendamentosParaTela, apagarBarbeiro, catalogo, clientesDoBarbeiro,
   contaDeTelefone, conversasBarbearia, exportarBarbeiros, exportarConversasBarbearia, fecharBarbeiro,
   filaTreinoBarbearia, importarBarbeiros, importarPaginaAppBarber, lancamentosDe, lembretesDoDia, ligarBarbeiro, listarBarbeiros,
-  listarInteressados, mensagensDoBarbeiro, montarFila, obterTextos, proximoDaFila, resumoBarbearia,
+  listarInteressados, mensagensDoBarbeiro, montarFila, obterTextos, perguntarPagamentoPosServico, proximoDaFila, resumoBarbearia,
   rotearWebhook, salvarTextos, statusFila, enviarParaBarbeiro, bomDiaTodos,
   limparFila as barbLimparFila,
   tirarDaFila as barbTirarDaFila,
   TRIAL_DIAS_PADRAO,
 } from "./barbearia.ts";
-import { publicarFoto, publicarPagina, publicarPainelBarbearia } from "./estabelecimento.ts";
+import { dadosDaPagina, publicarFoto, publicarPagina, publicarPainelBarbearia } from "./estabelecimento.ts";
 import { escreverCsv, lerCsv } from "./csv.ts";
 import { gravarPix, parsearPix } from "./pix.ts";
 import {
@@ -1872,18 +1872,25 @@ export async function barbPainelSalvar(dados: Registro): Promise<Saida> {
   const acesso = await barbPainelValidar(dados);
   if (!acesso) return falha("acesso_painel_invalido", 403);
   const telefone = acesso.telefone;
-  if ("nome" in dados || "telefone_publico" in dados || "endereco" in dados) {
+  if ("nome" in dados || "telefone_publico" in dados || "endereco" in dados ||
+      "aceita_agendamento" in dados || "aviso_publico" in dados) {
     const nome = txt(dados.nome).trim().slice(0, 120);
     const telefonePublico = txt(dados.telefone_publico).trim();
     const endereco = txt(dados.endereco).trim().slice(0, 200);
+    const aceitaAgendamento = booleano(dados.aceita_agendamento);
+    const avisoPublico = txt(dados.aviso_publico).trim().slice(0, 1500);
     await consultar(
       `update public.barber_contas
           set nome = coalesce(nullif($2, ''), nome),
               telefone_publico = coalesce(nullif($3, ''), telefone_publico),
               endereco = coalesce(nullif($4, ''), endereco),
+              aceita_agendamento = case when $5 then $6 else aceita_agendamento end,
+              aviso_publico = case when $7 then $8 else aviso_publico end,
               atualizado_em = now()
         where telefone = $1`,
-      [telefone, nome, telefonePublico, endereco],
+      [telefone, nome, telefonePublico, endereco,
+       "aceita_agendamento" in dados, aceitaAgendamento,
+       "aviso_publico" in dados, avisoPublico],
     );
   }
   if (txt(dados.acao) === "servico" && txt(dados.nome)) {
@@ -1942,29 +1949,42 @@ export async function barbPainelSalvar(dados: Registro): Promise<Saida> {
     if (id) await consultar(`delete from public.barber_produto where id = $1 and telefone = $2`, [id, telefone]);
   }
   if (Array.isArray(dados.horarios)) {
-    const horarios: { dia: number; abre: string; fecha: string }[] = [];
+    const horarios: {
+      dia: number; abre: string; fecha: string; almoco_inicio: string; almoco_fim: string;
+    }[] = [];
     for (const item of dados.horarios as Registro[]) {
       const dia = Number(item.dia);
       const abre = txt(item.abre);
       const fecha = txt(item.fecha);
-      if (!abre && !fecha) continue;
+      const almocoInicio = txt(item.almoco_inicio);
+      const almocoFim = txt(item.almoco_fim);
+      if (!abre && !fecha && !almocoInicio && !almocoFim) continue;
       if (
         !Number.isInteger(dia) || dia < 0 || dia > 6 ||
         !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(abre) ||
         !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(fecha) ||
-        abre >= fecha
+        abre >= fecha ||
+        Boolean(almocoInicio) !== Boolean(almocoFim) ||
+        (Boolean(almocoInicio) && (
+          !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(almocoInicio) ||
+          !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(almocoFim) ||
+          almocoInicio < abre || almocoInicio >= almocoFim || almocoFim > fecha
+        ))
       ) {
         return falha("horario_invalido");
       }
-      horarios.push({ dia, abre, fecha });
+      horarios.push({ dia, abre, fecha, almoco_inicio: almocoInicio, almoco_fim: almocoFim });
     }
     await consultar(`delete from public.barber_horario where telefone = $1`, [telefone]);
     for (const item of horarios) {
       await consultar(
-        `insert into public.barber_horario (telefone, dia, abre, fecha, intervalo)
-         values ($1, $2, $3, $4, 30)
-         on conflict (telefone, dia) do update set abre = excluded.abre, fecha = excluded.fecha`,
-        [telefone, item.dia, item.abre, item.fecha],
+        `insert into public.barber_horario
+           (telefone, dia, abre, fecha, almoco_inicio, almoco_fim, intervalo)
+         values ($1, $2, $3, $4, nullif($5, '')::time, nullif($6, '')::time, 30)
+         on conflict (telefone, dia) do update set
+           abre = excluded.abre, fecha = excluded.fecha,
+           almoco_inicio = excluded.almoco_inicio, almoco_fim = excluded.almoco_fim`,
+        [telefone, item.dia, item.abre, item.fecha, item.almoco_inicio, item.almoco_fim],
       );
     }
   }
@@ -2031,8 +2051,10 @@ export async function barbDetalhe(dados: Registro): Promise<Saida> {
   const cat = await catalogo(telefone);
   const desde = new Date(Date.now() - 30 * 86_400_000);
   const ate = new Date(Date.now() + 90 * 86_400_000);
-  const [agenda, funcionarios, horarios, pagamentos, fotos, lancamentos, clientes, mensagens] = await Promise.all([
+  const [agenda, agendaClientes, pagina, funcionarios, horarios, pagamentos, fotos, lancamentos, clientes, mensagens] = await Promise.all([
     agendamentosDe(telefone, desde, ate, "", 300),
+    agendamentosDe(telefone, new Date(), new Date("9999-12-31T23:59:59.999Z"), "marcado", 1000),
+    dadosDaPagina(telefone),
     consultar(
       `select telefone, nome, cargo, cor, foto_arquivo, na_pagina, ativo, criado_em
          from public.barber_funcionario where barbearia = $1 order by nome, telefone`,
@@ -2063,6 +2085,8 @@ export async function barbDetalhe(dados: Registro): Promise<Saida> {
     pacotes: cat.pacotes,
     lancamentos,
     agendamentos: agendamentosParaTela(agenda),
+    agendamentos_clientes: agendamentosParaTela(agendaClientes),
+    pagina_url: pagina?.url || "",
     clientes,
     mensagens,
     funcionarios: funcionarios.rows,
@@ -2197,4 +2221,22 @@ export async function barbCron(dados: Registro, ctx: Contexto): Promise<Saida> {
     client_ip: ctx.ip,
   });
   return ok({ bom_dia: bomDia, lembrete_agenda: feito, hora_brasilia: hora });
+}
+
+export async function barbPagamentoCron(dados: Registro, ctx: Contexto): Promise<Saida> {
+  const conf = await obterConfig();
+  const esperado = String(conf?.aviso_token || "").trim();
+  if (!esperado) return falha("sem_token", 503);
+  if (txt(dados.token) !== esperado) return falha("token", 401);
+
+  const feito = await perguntarPagamentoPosServico();
+  const status = feito.ok ? 200 : 503;
+  await gravarEvento({
+    event_type: "barbearia_cron_feedback_pagamento",
+    status_code: status,
+    request_payload: {},
+    response_payload: feito,
+    client_ip: ctx.ip,
+  });
+  return feito.ok ? ok({ feedback_pos_servico: feito }) : falha(String(feito.error || "cron_falhou"), status);
 }

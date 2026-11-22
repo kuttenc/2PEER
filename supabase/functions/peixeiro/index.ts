@@ -16,7 +16,7 @@ import type { Handler, Registro } from "./acoes.ts";
 // As páginas públicas de estabelecimento e o webhook do GreenAPI não têm sessão do painel:
 // as primeiras usam o slug e o telefone do cliente; o webhook traz sua chave na URL.
 const SEM_SESSAO = new Set([
-  "ping", "entrar", "aviso_cron", "barb_cron", "links_destino", "chat_webhook", "site_gerar",
+  "ping", "entrar", "aviso_cron", "barb_cron", "barb_pagamento_cron", "links_destino", "chat_webhook", "site_gerar",
   "barb_painel_ver", "barb_painel_salvar", "barb_painel_foto", "barb_painel_foto_apagar",
   "estab_vagas", "estab_marcar", "estab_cancelar_solicitar", "estab_cancelar_confirmar",
 ]);
@@ -146,6 +146,7 @@ const ACAO: Record<string, Handler> = {
   barb_lembrete: acoes.barbLembrete,
   barb_bom_dia: acoes.barbBomDia,
   barb_cron: acoes.barbCron,
+  barb_pagamento_cron: acoes.barbPagamentoCron,
 };
 
 function origensPermitidas(): string[] {
