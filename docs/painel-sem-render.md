@@ -1441,10 +1441,10 @@ salvar a semana toda fechada exige confirmação. Páginas sem expediente cadast
 mais um horário genérico de 09h–19h: exibem os dias como fechados e não oferecem vagas. A
 migration aditiva de códigos foi aplicada ao projeto `ggufcvrwctieacvbbwim` e a Edge Function
 `peixeiro` foi publicada com a correção. Os testes locais passaram (11/11). O frontend do painel
-e as páginas privadas dependem do push deste commit para o GitHub Pages; nenhuma nova página
-ou mensagem aos estabelecimentos foi publicada/enviada ainda.
+e as páginas privadas estão publicados no GitHub Pages; nenhuma nova página de estabelecimento ou
+mensagem aos estabelecimentos foi publicada/enviada nesta tarefa.
 
-### Comandos e retorno pós-serviço — função publicada
+### Comandos e retorno pós-serviço — publicado
 
 `VER AGENDAMENTOS` lista hoje e `VER AGENDAMENTOS SEMANAL` lista hoje e os próximos seis dias.
 Após o término previsto do serviço mais 40 minutos, o retorno pergunta se o cliente pagou com PIX,
@@ -1455,9 +1455,10 @@ Os detalhes dos estabelecimentos mostram a agenda futura e permitem copiar o lin
 A migration de esquema `../tools/20261122_barber_pos_servico_feedback.sql` foi aplicada e
 verificada no projeto `ggufcvrwctieacvbbwim`. A Edge Function `peixeiro` foi publicada sobre o
 código já implantado, preservando as funcionalidades existentes. O health check respondeu 200 e a
-action `barb_pagamento_cron`, sem token, respondeu 401; nenhuma mensagem de teste foi enviada.
+action `barb_pagamento_cron`, sem token, respondeu 401.
 
-O painel ainda depende do push deste commit para o GitHub Pages. O cron continua desligado e só
-será agendado após a publicação do painel, pela migration
-`../tools/20261123_barber_pos_servico_feedback_cron.sql`. O retorno não lança receita
-automaticamente.
+O painel está publicado em `https://kuttenc.github.io/2PEER/painel/`; a implantação do Pages
+concluiu com sucesso e a página e o `app.js` responderam 200. A migration
+`../tools/20261123_barber_pos_servico_feedback_cron.sql` foi aplicada; o job
+`barber-post-service-feedback` está ativo a cada cinco minutos. Nenhuma mensagem de teste foi
+enviada. O retorno não lança receita automaticamente.
