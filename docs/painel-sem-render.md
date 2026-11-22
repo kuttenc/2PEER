@@ -541,6 +541,15 @@ chegou no aparelho: o `POST` do GreenAPI responde 200 com `idMessage` quando **a
 WhatsApp* (webhook não instalado), *no servidor*, *entregue ao WhatsApp*, *chegou no celular*,
 *lida*, *o WhatsApp recusou*.
 
+Os lembretes repetitivos de bom-dia e agenda usam esse status em
+`barber_reminder_deliveries`, vinculando o `idMessage` Green API retornado no envio ao evento
+recebido. Confirmações `delivered` contam pela data do webhook em `America/Sao_Paulo`; quando o
+Green API informa diretamente `read`, conta-se o dia do envio, pois isso também confirma entrega.
+Depois de dois dias consecutivos confirmados, os próximos lembretes automáticos são ignorados até
+uma nova mensagem do responsável, que reinicia o ciclo. Envios manuais e avisos transacionais não
+passam por essa pausa. A migration `../tools/20261122_barber_reminder_delivery_pause.sql` foi
+aplicada ao projeto `ggufcvrwctieacvbbwim`; a Edge Function `peixeiro` foi publicada na versão 37.
+
 ## Provar sem mexer em cliente de verdade
 
 - Deixe `PEIXEIRO_MODO_TESTE=1`. Assim nada sai no WhatsApp e nada é apagado no MC, mas todas

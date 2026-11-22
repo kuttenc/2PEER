@@ -490,6 +490,7 @@ export type StatusEntrega = {
   telefone: string;
   status: string;
   detalhe: string;
+  timestamp: number;
 };
 
 export function interpretarStatus(bruto: Bruto): StatusEntrega | null {
@@ -505,6 +506,7 @@ export function interpretarStatus(bruto: Bruto): StatusEntrega | null {
     caminho(corpo, "state"),
     caminho(corpo, "data", "status"),
   ]).toUpperCase();
+  const timestamp = Number(caminho(corpo, "timestamp"));
   // Os dois juntos são a assinatura do evento de entrega: mensagem recebida não traz status.
   if (!idMessage || !status) return null;
   const chatId = primeira([
@@ -518,6 +520,9 @@ export function interpretarStatus(bruto: Bruto): StatusEntrega | null {
     telefone: normalizarWhatsapp(chatId),
     status,
     detalhe: primeira([corpo.description, corpo.error, corpo.message]).slice(0, 200),
+    timestamp: Number.isFinite(timestamp) && timestamp > 0
+      ? Math.floor(timestamp)
+      : Math.floor(Date.now() / 1000),
   };
 }
 

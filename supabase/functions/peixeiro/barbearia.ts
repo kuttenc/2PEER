@@ -8,9 +8,17 @@
 import { estaBloqueado, bloquear, MOTIVO_NAO } from "./bloqueados.ts";
 import { type Conf, obterConfig } from "./banco.ts";
 import { aleatorio, consultar, consultar1, igual } from "./db.ts";
-import { clientePorTelefone, interpretar, interpretarStatus, receberWebhook, tokenChat } from "./chat.ts";
+import {
+  clientePorTelefone,
+  interpretar,
+  interpretarStatus,
+  receberWebhook,
+  tokenChat,
+  type StatusEntrega,
+} from "./chat.ts";
 import { escreverCsv } from "./csv.ts";
 import { baixarMidia, enviarTexto, type ResultadoEnvio } from "./greenapi.ts";
+import { diasConsecutivosEntregues } from "../_shared/barber-reminder-pause.mjs";
 import { interpretarRetornoPagamento } from "../_shared/barber-payment-feedback.mjs";
 import {
   baseDoSite,
@@ -3377,7 +3385,11 @@ export async function rotearWebhook(bruto: Bruto, chave: string): Promise<{ stat
   if (!igual(String(chave || ""), esperado)) return { status: 401, dados: { ok: false, error: "token invalido" } };
 
   // Entrega de mensagem é assunto do chat_mensagens do Peixeiro; nada aqui decide por telefone.
-  if (interpretarStatus(bruto)) return receberWebhook(bruto, chave);
+  const statusEntrega = interpretarStatus(bruto);
+  if (statusEntrega) {
+    await registrarStatusLembrete(statusEntrega);
+    return receberWebhook(bruto, chave);
+  }
 
   const lida = interpretar(bruto);
   const foto = fotoRecebida(bruto);
@@ -3403,6 +3415,12 @@ export async function rotearWebhook(bruto: Bruto, chave: string): Promise<{ stat
 
   // A foto que ele mandou depois de "FOTO DO ..." é a única mensagem sem texto atendida aqui.
   if (conta && foto) {
+    const novaFoto = await registrarMensagem(
+      conta.telefone, "entrada", "[imagem]", foto.mensagemId, textos.dias_retencao,
+    );
+    if (novaFoto && !(await estaBloqueado(conta.telefone))) {
+      await reiniciarLembretesAposResposta(conta.telefone);
+    }
     if (!textos.ativo) return receberWebhook(bruto, chave);
     const resposta = await tratarFotoRecebida(conta, foto, conf);
     if (!resposta) return receberWebhook(bruto, chave);
@@ -3463,7 +3481,10 @@ export async function rotearWebhook(bruto: Bruto, chave: string): Promise<{ stat
     return await processarEntrada(m.telefone, m.texto, conf, textos, estado);
   }
 
-  await registrarMensagem(conta.telefone, "entrada", m.texto, m.chave || `ent-${conta.telefone}-${Date.now()}`, textos.dias_retencao);
+  const novaEntrada = await registrarMensagem(
+    conta.telefone, "entrada", m.texto,
+    m.chave || `ent-${conta.telefone}-${Date.now()}`, textos.dias_retencao,
+  );
   await consultar(`delete from public.barber_mensagens where expira_em < now()`);
 
   if (await estaBloqueado(conta.telefone)) {
@@ -3477,6 +3498,8 @@ export async function rotearWebhook(bruto: Bruto, chave: string): Promise<{ stat
     if (primeiro) await consultar(`update public.barber_contas set ativo = false, atualizado_em = now() where telefone = $1`, [conta.telefone]);
     return { status: 200, dados: { ok: true, bloqueado: Boolean(primeiro), barbearia: conta.telefone } };
   }
+
+  if (novaEntrada) await reiniciarLembretesAposResposta(conta.telefone);
 
   if (!textos.ativo) return { status: 200, dados: { ok: true, ignorado: "robô desligado", barbearia: conta.telefone } };
 
@@ -3595,11 +3618,90 @@ export async function limparFila(): Promise<number> {
 
 // ------------------------------------------------------------- o lembrete das 8 horas
 
+type TipoLembreteAutomatico = "bom_dia" | "agenda";
+
+function idMensagemGreenApi(envio: ResultadoEnvio): string {
+  return String(envio.response?.idMessage || "").trim();
+}
+
+async function lembreteAutomaticoPausado(telefone: string): Promise<boolean> {
+  const r = await consultar(
+    `select distinct (entregue_em at time zone 'America/Sao_Paulo')::date::text as dia
+       from public.barber_reminder_deliveries
+      where telefone = $1 and entregue_em is not null`,
+    [telefone],
+  );
+  return diasConsecutivosEntregues(r.rows.map((linha) => String(linha.dia || "")));
+}
+
+async function registrarLembreteEnviado(
+  idMessage: string,
+  telefone: string,
+  tipo: TipoLembreteAutomatico,
+  enviadoEm: Date,
+): Promise<void> {
+  await consultar(
+    `insert into public.barber_reminder_deliveries
+       (id_message, telefone, categoria, enviado_em, entregue_em)
+     select $1, $2, $3, $4::timestamptz,
+       (select case
+                 when upper(status) = 'DELIVERED' then atualizado_em
+                 when upper(status) = 'READ' then $4::timestamptz
+               end
+          from public.whatsapp_status where id_message = $1)
+      where not exists (
+        select 1 from public.barber_mensagens
+         where telefone = $2 and direcao = 'entrada' and criado_em > $4::timestamptz
+      )
+     on conflict (id_message) do nothing`,
+    [idMessage, telefone, tipo, enviadoEm.toISOString()],
+  );
+}
+
+async function registrarStatusLembrete(status: StatusEntrega): Promise<void> {
+  if (status.status !== "DELIVERED" && status.status !== "READ") return;
+  await consultar(
+    `update public.barber_reminder_deliveries d
+        set entregue_em = coalesce(
+          entregue_em,
+          case when $3 = 'READ' then d.enviado_em else to_timestamp($2) end
+        )
+      where d.id_message = $1
+        and not exists (
+          select 1 from public.barber_mensagens m
+           where m.telefone = d.telefone
+             and m.direcao = 'entrada'
+             and m.criado_em > d.enviado_em
+        )`,
+    [status.idMessage, status.timestamp, status.status],
+  );
+}
+
+async function reiniciarLembretesAposResposta(telefone: string): Promise<void> {
+  await consultar(
+    `delete from public.barber_reminder_deliveries where telefone = $1`,
+    [telefone],
+  );
+}
+
+async function registrarRastreamentoLembrete(
+  envio: ResultadoEnvio,
+  telefone: string,
+  tipo: TipoLembreteAutomatico,
+  enviadoEm: Date,
+): Promise<boolean> {
+  const idMessage = idMensagemGreenApi(envio);
+  if (!idMessage) return false;
+  await registrarLembreteEnviado(idMessage, telefone, tipo, enviadoEm);
+  return true;
+}
+
 /** Bom-dia diário às 8h: não depende de agendamento marcado. Uma mensagem por
  *  estabelecimento por dia, com página pública e painel privado atualizados. */
 export async function bomDiaTodos(
   forcar = false,
   agora: Date = new Date(),
+  automatico = false,
 ): Promise<Bruto> {
   const textos = await obterTextos();
   const conf = await obterConfig();
@@ -3613,11 +3715,17 @@ export async function bomDiaTodos(
       where ativo order by telefone`,
   );
   let enviados = 0;
+  let pausadosSemResposta = 0;
+  let semIdMensagem = 0;
   const falhas: string[] = [];
 
   for (const linha of r.rows) {
     const conta = linhaParaConta(linha);
     if (await estaBloqueado(conta.telefone)) continue;
+    if (automatico && await lembreteAutomaticoPausado(conta.telefone)) {
+      pausadosSemResposta++;
+      continue;
+    }
 
     const ultimo = linha.bom_dia_enviado_em
       ? new Date(String(linha.bom_dia_enviado_em))
@@ -3661,6 +3769,7 @@ export async function bomDiaTodos(
       "/menu mostra todas as opções",
     ].filter(Boolean);
     const corpo = partes.join("\n");
+    const enviadoEm = new Date();
     const envio = await enviarTexto(conf, conta.telefone, corpo);
     if (envio.ok) {
       enviados++;
@@ -3672,6 +3781,9 @@ export async function bomDiaTodos(
       await registrarMensagem(conta.telefone, "saida", corpo,
         `bom-dia-${conta.telefone}-${Math.round(inicioDia.getTime() / 1000)}`,
         textos.dias_retencao);
+      if (automatico && !await registrarRastreamentoLembrete(envio, conta.telefone, "bom_dia", enviadoEm)) {
+        semIdMensagem++;
+      }
     } else {
       falhas.push(`${conta.telefone}: ${envio.error || "sem resposta"}`);
     }
@@ -3681,6 +3793,8 @@ export async function bomDiaTodos(
     ok: true,
     ativo: true,
     enviados,
+    pausados_sem_resposta: pausadosSemResposta,
+    sem_id_para_confirmacao: semIdMensagem,
     avaliados: r.rows.length,
     falhas: falhas.slice(0, 10),
   };
@@ -3689,7 +3803,7 @@ export async function bomDiaTodos(
 /** Um aviso por barbearia, com a agenda do dia. O `lembrete_enviado_em` no agendamento é o que
  *  faz o cron poder ser chamado duas vezes no mesmo dia sem duplicar mensagem. */
 export async function lembretesDoDia(
-  forcar = false, agora: Date = new Date(),
+  forcar = false, agora: Date = new Date(), automatico = false,
 ): Promise<Bruto> {
   const textos = await obterTextos();
   const conf = await obterConfig();
@@ -3701,12 +3815,16 @@ export async function lembretesDoDia(
   const contas = await consultar(
     `select ${COLUNAS_CONTA} from public.barber_contas where ativo order by telefone`,
   );
-  let enviados = 0, semAgenda = 0;
+  let enviados = 0, semAgenda = 0, pausadosSemResposta = 0, semIdMensagem = 0;
   const falhas: string[] = [];
 
   for (const linha of contas.rows) {
     const conta = linhaParaConta(linha);
     if (await estaBloqueado(conta.telefone)) { semAgenda++; continue; }
+    if (automatico && await lembreteAutomaticoPausado(conta.telefone)) {
+      pausadosSemResposta++;
+      continue;
+    }
     const todos = await agendamentosDe(conta.telefone, inicioDia, fimDia, "marcado", 40);
     // O `lembrete_enviado_em` é o que permite o cron rodar duas vezes no mesmo dia sem o
     // barbeiro receber a lista repetida. `forcar` é o botão "mandar agora" da tela.
@@ -3719,6 +3837,7 @@ export async function lembretesDoDia(
       dia: "hoje",
     }, agora));
 
+    const enviadoEm = new Date();
     const envio = await enviarTexto(conf, conta.telefone, corpo);
     if (envio.ok) {
       enviados++;
@@ -3728,12 +3847,19 @@ export async function lembretesDoDia(
         [conta.telefone, inicioDia.toISOString(), fimDia.toISOString()],
       );
       await registrarMensagem(conta.telefone, "saida", corpo, `lembrete-${conta.telefone}-${Math.round(agora.getTime() / 1000)}`, textos.dias_retencao);
+      if (automatico && !await registrarRastreamentoLembrete(envio, conta.telefone, "agenda", enviadoEm)) {
+        semIdMensagem++;
+      }
     } else {
       falhas.push(`${conta.telefone}: ${envio.error || "sem resposta"}`);
     }
   }
 
-  return { ok: true, ativo: true, enviados, avaliados: contas.rows.length, sem_agenda: semAgenda, falhas: falhas.slice(0, 10) };
+  return {
+    ok: true, ativo: true, enviados, avaliados: contas.rows.length, sem_agenda: semAgenda,
+    pausados_sem_resposta: pausadosSemResposta, sem_id_para_confirmacao: semIdMensagem,
+    falhas: falhas.slice(0, 10),
+  };
 }
 
 export async function perguntarPagamentoPosServico(agora: Date = new Date()): Promise<Bruto> {

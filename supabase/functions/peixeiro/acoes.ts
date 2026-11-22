@@ -2341,11 +2341,11 @@ export async function barbCron(dados: Registro, ctx: Contexto): Promise<Saida> {
   const hora = new Date(Date.now() - BRAZIL_OFFSET_MS).getUTCHours();
   const textos = await obterTextos();
   const forcar = booleano(dados.reenviar);
-  const bomDia = await bomDiaTodos(forcar);
+  const bomDia = await bomDiaTodos(forcar, new Date(), !forcar);
   const antesDaHoraDoLembrete = !forcar && hora < Number(textos.lembrete_hora || 8);
   const feito = antesDaHoraDoLembrete
     ? { ok: true, ignorado: "antes da hora do lembrete", hora_brasilia: hora }
-    : await lembretesDoDia(forcar);
+    : await lembretesDoDia(forcar, new Date(), !forcar);
   await gravarEvento({
     event_type: "barbearia_cron_lembrete",
     status_code: 200,

@@ -133,6 +133,13 @@ O código deste checkout deduplica o bom-dia por estabelecimento e dia. Um pedid
 limitar o bom-dia a uma vez a cada sete dias não está implementado no código aqui; não afirmar
 que essa frequência semanal está ativa.
 
+Para evitar excesso de mensagens, os lembretes recorrentes de bom-dia e agenda são pausados
+quando a Green API confirmar entregas em dois dias consecutivos sem uma nova mensagem do
+responsável. Uma mensagem recebida do responsável reinicia o ciclo. Essa pausa não bloqueia
+respostas ao responsável, envios manuais do administrador, nem avisos transacionais de novos
+agendamentos/cancelamentos ou a pergunta individual de pagamento pós-serviço. A regra depende do
+webhook de status da Green API; um `200` de envio, sozinho, não conta como confirmação de entrega.
+
 ## 5. Painel administrativo e catálogo
 
 **Clientes Barbearia** permite consultar estabelecimentos, interessados e solicitações e abrir
@@ -183,6 +190,11 @@ Conforme o status técnico do checkout:
   `tools/20261122_barber_site_whatsapp_instrucoes.sql` foi aplicada no projeto
   `ggufcvrwctieacvbbwim`, e a Edge Function `peixeiro` está na versão 34. `healthz` e `ping`
   responderam com sucesso; nenhum WhatsApp real foi enviado durante a validação.
+- A pausa dos lembretes recorrentes após entregas em dois dias consecutivos foi publicada em
+  22/11/2026. A migration `tools/20261122_barber_reminder_delivery_pause.sql` foi aplicada no
+  projeto `ggufcvrwctieacvbbwim`, e a Edge Function `peixeiro` está na versão 37. O webhook de
+  status estava recebendo eventos recentes; `healthz` respondeu com sucesso. Nenhuma mensagem
+  real foi enviada durante a validação.
 - A aba antiga **Bloqueados** está sendo ampliada para **Bloquear**, com cadastro manual e
   pesquisa da lista. O envio GreenAPI de texto e arquivo também passa a consultar o bloqueio
   global antes de enviar. A aba foi publicada pelo commit `95d3637`; a Edge Function `peixeiro`
