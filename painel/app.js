@@ -114,6 +114,8 @@
     pagina_nao_publicada: "A página ainda não foi publicada com os dados atuais. Salve a página e tente novamente.",
     pagina_indisponivel: "A página pública não abriu agora. Nenhuma mensagem foi enviada; tente novamente depois.",
     boas_vindas_em_andamento: "Já existe um envio em andamento para este estabelecimento. Aguarde 15 minutos antes de tentar novamente.",
+    plano_ativo: "Este número está protegido por ter plano ativo. Nenhuma mensagem de boas-vindas ou prospecção foi enviada.",
+    boas_vindas_bloqueio_nao_ativo: "Este número não está na lista ativa de proteção.",
     sem_barbearia: "Este estabelecimento não está cadastrado.",
   };
 
@@ -3083,6 +3085,48 @@
     $("bbDetalhe").hidden = true;
     carregarContasBarbearia(bbPaginaAtual);
     carregarInteressadosBarbearia();
+    carregarBoasVindasPlano();
+  }
+
+  var bbPlanoBusca = "";
+
+  function carregarBoasVindasPlano(termo) {
+    if (termo !== undefined) bbPlanoBusca = String(termo || "").trim();
+    chamar("barb_boas_vindas_bloqueios_ver", { q: bbPlanoBusca }, 45).then(function (d) {
+      if (!d.ok) { bbAviso("bbPlanoEstado", mensagemDetalhada(d), true); return; }
+      $("bbPlanoResumo").textContent = Number(d.total || 0) + " telefone(s) protegido(s) contra boas-vindas.";
+      var corpo = limpar($("bbPlanoLinhas"));
+      var itens = d.itens || [];
+      $("bbPlanoVazio").textContent = itens.length
+        ? ""
+        : bbPlanoBusca ? "Nenhum telefone protegido corresponde à pesquisa." : "Nenhum plano ativo cadastrado nesta lista.";
+      itens.forEach(function (item) {
+        var linha = document.createElement("tr");
+        linha.appendChild(criar("td", "", item.telefone || ""));
+        linha.appendChild(criar("td", "", texto(item.nome) || "—"));
+        linha.appendChild(criar("td", "muted", texto(item.motivo) || "plano ativo"));
+        linha.appendChild(criar("td", "muted", texto(item.atualizado_em) || "—"));
+        var celula = criar("td", "");
+        var remover = criar("button", "segundo", "Retirar da proteção");
+        remover.type = "button";
+        remover.addEventListener("click", function () {
+          if (!window.confirm("Retirar este telefone da proteção? Ele poderá voltar a receber boas-vindas e prospecção.")) return;
+          remover.disabled = true;
+          chamar("barb_boas_vindas_bloqueio_desativar", { telefone: item.telefone }, 45).then(function (r) {
+            if (!r.ok) {
+              remover.disabled = false;
+              bbAviso("bbPlanoEstado", mensagemDetalhada(r), true);
+              return;
+            }
+            bbAviso("bbPlanoEstado", "Telefone retirado da proteção. O registro foi preservado.", false);
+            carregarBoasVindasPlano();
+          });
+        });
+        celula.appendChild(remover);
+        linha.appendChild(celula);
+        corpo.appendChild(linha);
+      });
+    });
   }
 
   function bbValor(valor) {
@@ -3268,18 +3312,27 @@
       });
     });
     acoes.appendChild(boasVindas);
-    var mensagem = criar("button", "segundo", "Enviar mensagem");
-    mensagem.type = "button";
-    mensagem.addEventListener("click", function () {
-      var textoMensagem = window.prompt("Mensagem para este estabelecimento:");
-      if (!textoMensagem) return;
-      if (!window.confirm("Enviar esta mensagem agora para " + telefone + "?")) return;
-      chamar("barb_mensagem", { telefone: telefone, texto: textoMensagem }, 60).then(function (r) {
-        if (!r.ok) { recado(r.erro, r.detalhe); return; }
-        recado("mensagem_enviada", r.simulado ? "Envio simulado; nenhum WhatsApp saiu." : "");
+    function botaoMensagem(rotulo, boasVindas) {
+      var mensagem = criar("button", "segundo", rotulo);
+      mensagem.type = "button";
+      mensagem.addEventListener("click", function () {
+        var tipo = boasVindas ? "de boas-vindas/prospecção" : "operacional";
+        var textoMensagem = window.prompt("Mensagem " + tipo + " para este estabelecimento:");
+        if (!textoMensagem) return;
+        if (!window.confirm("Enviar esta mensagem " + tipo + " agora para " + telefone + "?")) return;
+        chamar("barb_mensagem", {
+          telefone: telefone,
+          texto: textoMensagem,
+          boas_vindas: boasVindas,
+        }, 60).then(function (r) {
+          if (!r.ok) { recado(r.erro, r.detalhe); return; }
+          recado("mensagem_enviada", r.simulado ? "Envio simulado; nenhum WhatsApp saiu." : "");
+        });
       });
-    });
-    acoes.appendChild(mensagem);
+      return mensagem;
+    }
+    acoes.appendChild(botaoMensagem("Enviar mensagem operacional", false));
+    acoes.appendChild(botaoMensagem("Enviar boas-vindas/prospecção", true));
     var fechar = criar("button", "segundo", "Definir prazo");
     fechar.type = "button";
     fechar.addEventListener("click", function () {
@@ -3312,6 +3365,40 @@
   }
 
   CARREGA.clientesbarbearia = carregarPaginaClientesBarbearia;
+
+  $("formBoasVindasPlano").addEventListener("submit", function (evento) {
+    evento.preventDefault();
+    var botao = $("bbPlanoSalvar");
+    botao.disabled = true;
+    bbAviso("bbPlanoEstado", "Salvando proteção…", false);
+    chamar("barb_boas_vindas_bloqueio_salvar", {
+      telefone: $("bbPlanoTelefone").value,
+      nome: $("bbPlanoNome").value,
+      motivo: $("bbPlanoMotivo").value,
+    }, 45).then(function (d) {
+      botao.disabled = false;
+      if (!d.ok) { bbAviso("bbPlanoEstado", mensagemDetalhada(d), true); return; }
+      $("bbPlanoTelefone").value = "";
+      $("bbPlanoNome").value = "";
+      $("bbPlanoMotivo").value = "plano ativo";
+      $("bbPlanoBusca").value = "";
+      bbAviso("bbPlanoEstado", "Número salvo. Boas-vindas e prospecção ficarão bloqueadas.", false);
+      carregarBoasVindasPlano("");
+    });
+  });
+
+  $("bbPlanoBuscar").addEventListener("click", function () {
+    carregarBoasVindasPlano($("bbPlanoBusca").value);
+  });
+  $("bbPlanoBusca").addEventListener("keydown", function (evento) {
+    if (evento.key !== "Enter") return;
+    evento.preventDefault();
+    carregarBoasVindasPlano($("bbPlanoBusca").value);
+  });
+  $("bbPlanoLimpar").addEventListener("click", function () {
+    $("bbPlanoBusca").value = "";
+    carregarBoasVindasPlano("");
+  });
 
   $("formBarbPaginaImportar").addEventListener("submit", function (evento) {
     evento.preventDefault();

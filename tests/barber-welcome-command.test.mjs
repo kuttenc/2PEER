@@ -85,7 +85,7 @@ test("o webhook restringe o comando ao administrador e registra envios sem repet
   assert.match(barbearia, /site_boas_vindas_enviado_em/);
   assert.ok(
     barbearia.indexOf("validarPaginaParaBoasVindas(telefone)") <
-      barbearia.indexOf("enviarParaBarbeiro(telefone, textos.boas_vindas)"),
+      barbearia.indexOf("enviarParaBarbeiro(telefone, textos.boas_vindas, true)"),
   );
   assert.match(barbearia, /export async function processarBoasVindasPendentes\(limite = 10\)/);
   assert.match(barbearia, /site_boas_vindas_tentativa_em <= now\(\) - interval '15 minutes'/);
@@ -95,7 +95,7 @@ test("o webhook restringe o comando ao administrador e registra envios sem repet
   assert.match(painelHtml, /id="bbEndereco"/);
   assert.match(painelHtml, /id="bbAvisar"/);
   assert.match(painelJs, /endereco: \$\("bbEndereco"\)\.value/);
-  assert.match(barbearia, /validarPaginaParaBoasVindas\(telefone\)[\s\S]*enviarParaBarbeiro\(telefone, textos\.boas_vindas\)/);
+  assert.match(barbearia, /validarPaginaParaBoasVindas\(telefone\)[\s\S]*enviarParaBarbeiro\(telefone, textos\.boas_vindas, true\)/);
   assert.match(barbearia, /if \(publicado\.ok\) await enviarBoasVindasPendente/);
   assert.match(migration, /add column if not exists site_boas_vindas_solicitada_em timestamptz/);
   assert.match(migration, /update public\.barber_contas[\s\S]*site_boas_vindas_enviado_em is null/);

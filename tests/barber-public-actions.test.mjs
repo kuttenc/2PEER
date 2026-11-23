@@ -129,7 +129,7 @@ test("boas-vindas exigem endereço e página publicada após a última edição"
   );
   const adicionarInicio = acoes.indexOf("export async function barbContaAdicionar");
   const adicionarFim = acoes.indexOf("\n}", adicionarInicio);
-  const boasInicio = acoes.indexOf("export async function barbBoasVindas");
+  const boasInicio = acoes.indexOf("export async function barbBoasVindas(");
   const boasFim = acoes.indexOf("\n}", boasInicio);
   const adicionar = acoes.slice(adicionarInicio, adicionarFim);
   const boas = acoes.slice(boasInicio, boasFim);
@@ -146,7 +146,10 @@ test("boas-vindas exigem endereço e página publicada após a última edição"
   assert.match(adicionar, /await enviarBoasVindasPendente\(telefone\)/);
   assert.match(adicionar, /txt\(dados\.endereco\)/);
   assert.doesNotMatch(adicionar, /enviarParaBarbeiro/);
-  assert.ok(boas.indexOf("validarPaginaParaBoasVindas") < boas.indexOf("enviarParaBarbeiro"));
+  assert.ok(
+    boas.indexOf("validarPaginaParaBoasVindas") <
+      boas.indexOf("enviarParaBarbeiro(telefone, modelo, true)"),
+  );
   assert.match(boas, /site_boas_vindas_enviado_em = coalesce\(site_boas_vindas_enviado_em, now\(\)\)/);
   assert.match(estabelecimento, /paginaProntaParaAgendamento\(pagina\)/);
   assert.match(estabelecimento, /paginaPublicadaCompleta\(await resposta\.text\(\), pagina\)/);
