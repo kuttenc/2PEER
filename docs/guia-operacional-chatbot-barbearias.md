@@ -177,7 +177,8 @@ renovar uma vez; o sistema acrescenta um mês de calendário à maior entre a ex
 momento da solicitação, reativa a conta e avisa o barbeiro com o novo vencimento. O administrador
 recebe o resultado. O comando é uma ação manual e não confirma nem processa pagamento. O número
 autorizado não é retornado integralmente pelo painel; apenas seus quatro últimos dígitos são
-mostrados.
+mostrados. Antes de usar o comando, confira o vencimento já salvo: se ele estiver no futuro, o mês
+é acrescentado a essa data para preservar o tempo restante, não contado de novo a partir de hoje.
 
 ## 6. Estado recente e cuidados de publicação
 
@@ -210,12 +211,25 @@ Conforme o status técnico do checkout:
 - Em 22/11/2026, a conta do Jailton foi renovada no painel até 23/12/2026 às 21:00 (horário de
   Brasília). A Green API aceitou a mensagem de confirmação; isso não comprova leitura ou entrega
   final no aparelho.
-- Em 23/11/2026, o comando `renovar <telefone>` foi ativado. A migration
+- A resposta genérica "Não te entendi" passou a mostrar um número fictício diferente no exemplo
+  de agendamento; a Edge Function foi publicada pelo commit `f1c5c1e` e `healthz` respondeu OK.
+  Nenhum outro comportamento dos comandos foi alterado.
+- Em 22/11/2026 (horário de Brasília), o comando `renovar <telefone>` foi ativado. A migration
   `tools/20261122_barber_renewal_command.sql` está aplicada no projeto `ggufcvrwctieacvbbwim`;
   a Edge Function `peixeiro` foi atualizada pelo Dashboard e o painel foi publicado no GitHub
   Pages pelo commit `ec97b16`. O número autorizado foi configurado sem registrá-lo integralmente
-  neste guia. A configuração foi confirmada sem executar uma renovação real; portanto, ainda não
-  foi feito um teste que altere o vencimento de uma conta ou envie WhatsApp.
+  neste guia.
+- Também em 22/11/2026 (horário de Brasília), houve uma execução real do comando para Jailton.
+  A auditoria registra uma única mensagem processada: o vencimento anterior era 23/12/2026 às
+  21:00:34 e o novo ficou 23/01/2027 às 21:00:34. O comando somou exatamente um mês ao vencimento
+  já salvo; não houve renovação duplicada. Como dezembro havia sido definido previamente, o
+  resultado pareceu dois meses a partir do dia do comando. O envio de confirmação ao barbeiro foi
+  aceito pela Green API.
+- Após a solicitação do usuário, `barber_contas.expira_em` foi corrigido de volta para
+  23/12/2026 às 21:00:34 (Brasília), mantendo a conta ativa e preservando a linha de auditoria
+  em `barber_renovacoes`. A consulta posterior confirmou a data corrigida. Nenhuma mensagem
+  adicional foi enviada. Não mudar a regra para ignorar vencimentos futuros sem decisão explícita:
+  isso poderia reduzir tempo já concedido a outras contas.
 - A aba antiga **Bloqueados** está sendo ampliada para **Bloquear**, com cadastro manual e
   pesquisa da lista. O envio GreenAPI de texto e arquivo também passa a consultar o bloqueio
   global antes de enviar. A aba foi publicada pelo commit `95d3637`; a Edge Function `peixeiro`
