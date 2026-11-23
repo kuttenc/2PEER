@@ -120,3 +120,28 @@ test("mudanças no catálogo avisam o barbeiro e não renomeiam a conta", async 
   assert.match(salvar, /"aviso_whatsapp_nao_enviado"/);
   assert.match(salvar, /salvo: true,\s*pagina_publicada: pagina\.ok,\s*avisos: avisosFalhos/s);
 });
+
+test("boas-vindas exigem endereço e página publicada após a última edição", async () => {
+  const acoes = await readFile(
+    new URL("../supabase/functions/peixeiro/acoes.ts", import.meta.url),
+    "utf8",
+  );
+  const adicionarInicio = acoes.indexOf("export async function barbContaAdicionar");
+  const adicionarFim = acoes.indexOf("\n}", adicionarInicio);
+  const boasInicio = acoes.indexOf("export async function barbBoasVindas");
+  const boasFim = acoes.indexOf("\n}", boasInicio);
+  const adicionar = acoes.slice(adicionarInicio, adicionarFim);
+  const boas = acoes.slice(boasInicio, boasFim);
+
+  assert.ok(adicionarInicio >= 0);
+  assert.ok(adicionarFim > adicionarInicio);
+  assert.ok(boasInicio >= 0);
+  assert.ok(boasFim > boasInicio);
+  assert.match(adicionar, /booleano\(dados\.avisar\)\s*&& criado\.novo/);
+  assert.match(adicionar, /await barbBoasVindas\(\{\s*telefone\s*\}\)/);
+  assert.doesNotMatch(adicionar, /enviarParaBarbeiro/);
+  assert.ok(boas.indexOf("endereco_obrigatorio") < boas.indexOf("enviarParaBarbeiro"));
+  assert.ok(boas.indexOf("pagina_nao_publicada") < boas.indexOf("enviarParaBarbeiro"));
+  assert.match(boas, /site_publicado_em >= atualizado_em/);
+  assert.match(boas, /coalesce\(site_sha, ''\) <> ''/);
+});

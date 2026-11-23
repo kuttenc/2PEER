@@ -1539,3 +1539,17 @@ A deduplicação usa duas colunas aditivas em `barber_contas`. A migration
 Os testes focados passaram (15/15), a suíte completa `node --test --test-reporter=dot`,
 `node --check` do helper e `git diff --check` passaram. O guia operacional consolidado está em
 `./guia-operacional-chatbot-barbearias.md`.
+
+### Proteção de boas-vindas por endereço publicado — PR pendente
+
+O cadastro deixa de enviar boas-vindas por padrão. Tanto a opção explícita no cadastro quanto o
+envio manual passam pela validação server-side de endereço preenchido, página publicada com
+`site_sha` e publicação posterior à última alteração dos dados. O painel mostra um motivo legível
+quando o endereço falta ou a publicação está pendente. Nenhuma mensagem é enviada pelo teste.
+
+A alteração está isolada na branch `copilot/published-address-welcome`; os testes Node passaram.
+Ainda não está ativa em produção: a sessão do Supabase Dashboard expirou e a sessão do CLI não
+tem acesso ao projeto de produção. Não usar os botões de boas-vindas na versão atualmente publicada
+até o deploy da função. A inclusão dos 30 candidatos também segue pendente: não foram validados os
+30 telefones nem concluída a deduplicação por telefone; não cadastrar ou contatar até essa
+conferência.

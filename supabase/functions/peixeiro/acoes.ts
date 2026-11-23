@@ -1740,13 +1740,17 @@ export async function barbContaAdicionar(dados: Registro, ctx: Contexto): Promis
     response_payload: {},
     client_ip: ctx.ip,
   });
-  const aviso = booleano(dados.avisar ?? true) && criado.novo;
-  const boas = aviso ? await enviarParaBarbeiro(telefone, (await obterTextos()).boas_vindas) : null;
+  const aviso = booleano(dados.avisar) && criado.novo;
+  const boas = aviso ? await barbBoasVindas({ telefone }) : null;
   return ok({
     ...await listarBarbeiros(1, ""),
     conta: await barbContaParaTela(telefone),
     novo: criado.novo,
-    boas_vindas: boas ? { ok: boas.ok, simulado: boas.simulado, erro: boas.error || "" } : null,
+    boas_vindas: boas ? {
+      ok: boas.status === 200,
+      simulado: Boolean(boas.dados.simulado),
+      erro: String(boas.dados.erro || ""),
+    } : null,
   });
 }
 
@@ -2262,6 +2266,16 @@ export async function barbMensagem(dados: Registro): Promise<Saida> {
 export async function barbBoasVindas(dados: Registro): Promise<Saida> {
   const telefone = normalizarWhatsapp(txt(dados.telefone));
   if (telefone.length < 10) return falha("telefone_invalido");
+  const pagina = await consultar1(
+    `select nullif(btrim(endereco), '') is not null as tem_endereco,
+            site_publicado_em is not null and coalesce(site_sha, '') <> '' as publicada,
+            site_publicado_em is not null and site_publicado_em >= atualizado_em as atualizada
+       from public.barber_contas where telefone = $1`,
+    [telefone],
+  );
+  if (!pagina) return falha("sem_barbearia", 404);
+  if (!pagina.tem_endereco) return falha("endereco_obrigatorio", 409);
+  if (!pagina.publicada || !pagina.atualizada) return falha("pagina_nao_publicada", 409);
   const modelo = (await obterTextos()).boas_vindas;
   if (!modelo) return falha("sem_texto");
   const envio = await enviarParaBarbeiro(telefone, modelo);

@@ -109,6 +109,9 @@
     nao_esta_bloqueado: "Este número já não estava bloqueado.",
     url_appbarber: "Use o endereço público completo de um site AppBarber.",
     pagina_inacessivel: "Não consegui abrir a página atual agora. Confira o endereço e tente novamente.",
+    endereco_obrigatorio: "Cadastre o endereço e publique a página antes de enviar as boas-vindas.",
+    pagina_nao_publicada: "A página ainda não foi publicada com os dados atuais. Salve a página e tente novamente.",
+    sem_barbearia: "Este estabelecimento não está cadastrado.",
   };
 
   // ------------------------------------------------------------------ utilidades
@@ -3391,7 +3394,7 @@
       if (!d.ok) { bbAviso("bbAdicionarEstado", mensagemDetalhada(d), true); return; }
       var aviso = d.boas_vindas ? (d.boas_vindas.ok
         ? (d.boas_vindas.simulado ? " Boas-vindas simuladas; nenhum WhatsApp saiu." : " Boas-vindas enviadas.")
-        : " O cadastro foi feito, mas o envio de boas-vindas falhou: " + texto(d.boas_vindas.erro))
+        : " O cadastro foi feito, mas o envio de boas-vindas falhou: " + (MSG_ERRO[d.boas_vindas.erro] || texto(d.boas_vindas.erro)))
         : " Nenhuma mensagem foi enviada.";
       bbAviso("bbAdicionarEstado", (d.novo ? "Estabelecimento cadastrado." : "Cadastro existente atualizado.") + aviso, false);
       $("bbTelefone").value = "";
