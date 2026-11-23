@@ -14,6 +14,7 @@ import { modoTeste } from "./mcapi.ts";
 import { hashCodigoCancelamento, instanteDoAgendamento, novoCodigoCancelamento } from "./cancelamento.mjs";
 import {
   mensagemPerfilWhatsApp,
+  paginaPublicadaCompleta,
   paginaProntaParaAgendamento,
 } from "../_shared/barber-site-onboarding.mjs";
 import {
@@ -294,6 +295,64 @@ export async function dadosDaPagina(telefone: string): Promise<DadosPagina | nul
     fotos: fotos.rows.map((f) => ({ arquivo: String(f.arquivo || ""), legenda: String(f.legenda || "") })),
     atualizado_em: String(conta.atualizado_em || ""),
   };
+}
+
+async function verificarPaginaPublica(
+  pagina: DadosPagina,
+): Promise<"pronta" | "incompleta" | "indisponivel"> {
+  try {
+    const url = new URL(`${pagina.url.replace(/\/+$/, "")}/`);
+    if (url.protocol !== "https:") return "indisponivel";
+    const resposta = await fetch(url, {
+      headers: { accept: "text/html" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!resposta.ok || !(resposta.headers.get("content-type") || "").toLowerCase().includes("text/html")) {
+      return "indisponivel";
+    }
+    if (new URL(resposta.url).origin !== url.origin) return "indisponivel";
+    return paginaPublicadaCompleta(await resposta.text(), pagina) ? "pronta" : "incompleta";
+  } catch {
+    return "indisponivel";
+  }
+}
+
+export async function validarPaginaParaBoasVindas(
+  telefone: string,
+): Promise<
+  | { ok: true; pagina: DadosPagina }
+  | {
+    ok: false;
+    erro:
+      | "sem_barbearia"
+      | "endereco_obrigatorio"
+      | "pagina_incompleta"
+      | "pagina_publicada_incompleta"
+      | "pagina_nao_publicada"
+      | "pagina_indisponivel";
+  }
+> {
+  const pagina = await dadosDaPagina(telefone);
+  if (!pagina) return { ok: false, erro: "sem_barbearia" };
+  if (!pagina.endereco.trim()) return { ok: false, erro: "endereco_obrigatorio" };
+  if (!slugValido(pagina.slug)) return { ok: false, erro: "pagina_nao_publicada" };
+  if (!paginaProntaParaAgendamento(pagina)) return { ok: false, erro: "pagina_incompleta" };
+
+  const publicacao = await consultar1(
+    `select site_publicado_em is not null as publicada,
+            coalesce(site_sha, '') <> '' as tem_hash,
+            site_publicado_em is not null and site_publicado_em >= atualizado_em as atualizada
+       from public.barber_contas where telefone = $1`,
+    [telefone],
+  );
+  if (!publicacao?.publicada || !publicacao.tem_hash || !publicacao.atualizada) {
+    return { ok: false, erro: "pagina_nao_publicada" };
+  }
+  const estado = await verificarPaginaPublica(pagina);
+  if (estado === "indisponivel") return { ok: false, erro: "pagina_indisponivel" };
+  if (estado !== "pronta") return { ok: false, erro: "pagina_publicada_incompleta" };
+  return { ok: true, pagina };
 }
 
 /** O slug é o endereço: só entra quem passou pela validação, nunca o texto do navegador. */
@@ -1120,7 +1179,8 @@ export async function publicarPagina(
 }
 
 async function enviarOrientacaoWhatsApp(d: DadosPagina): Promise<"incompleta" | "ja_enviada" | "enviada" | "falha"> {
-  if (!paginaProntaParaAgendamento(d)) return "incompleta";
+  if (!d.endereco.trim() || !paginaProntaParaAgendamento(d)) return "incompleta";
+  if (await verificarPaginaPublica(d) !== "pronta") return "incompleta";
 
   const reivindicada = await consultar1(
     `update public.barber_contas

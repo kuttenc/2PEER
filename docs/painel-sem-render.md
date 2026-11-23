@@ -1536,6 +1536,33 @@ A deduplicação usa duas colunas aditivas em `barber_contas`. A migration
 `ggufcvrwctieacvbbwim`. A Edge Function `peixeiro` foi publicada nesse projeto na versão 34.
 `GET /healthz` e a action `ping` responderam com sucesso; nenhum WhatsApp real foi enviado.
 
-Os testes focados passaram (15/15), a suíte completa `node --test --test-reporter=dot`,
-`node --check` do helper e `git diff --check` passaram. O guia operacional consolidado está em
+Os testes focados passaram (12/12) e a suíte completa `node --test --test-reporter=spec` passou
+(38/38). `node --check` do painel e do helper, além de `git diff --check`, também passaram; Deno não
+está instalado para executar `deno check`. O guia operacional consolidado está em
 `./guia-operacional-chatbot-barbearias.md`.
+
+### Proteção e comando de boas-vindas — PR pendente
+
+O cadastro inclui endereço e uma opção para programar as boas-vindas. Ao marcar a opção, o endereço
+é obrigatório e o pedido fica pendente enquanto a página está sendo configurada; nenhuma mensagem
+sai no cadastro. As alterações da página acionam a tentativa automática quando ela estiver
+publicada depois da última edição e pronta para agendamento (nome, contato, serviço, expediente,
+forma de pagamento e agendamento online). Antes de enviar, o backend abre a URL pública e confere
+que o HTML carregado contém o estabelecimento, endereço, serviços e formulário de agendamento;
+páginas em branco, incompletas ou inacessíveis são recusadas. Se o provedor ainda não terminou de
+publicar a versão nova, o cron periódico repete a verificação, com intervalo de proteção contra
+tentativas concorrentes. O envio manual individual usa a mesma validação.
+
+Foi adicionado o comando `ENVIAR BOASVINDAS` (também aceita `ENVIAR BOAS VINDAS` e
+`ENVIAR BOAS-VINDAS`). Ele é restrito ao mesmo número administrativo autorizado para `renovar`,
+deduplica reentregas do webhook e processa até 10 cadastros que marcaram a opção de boas-vindas.
+O cron também processa até 10 pedidos elegíveis por execução para concluir envios pendentes após a
+publicação pública. Só conta como enviado quando a Green API aceita um envio real; mensagens
+simuladas não são marcadas como enviadas. Contas existentes no momento da migration são marcadas
+como já processadas para evitar reenvios; a opção vale para novos cadastros feitos depois da migration.
+
+As alterações estão isoladas na branch `copilot/published-address-welcome`, no PR #5. A migration
+`../tools/20261123_barber_welcome_command.sql` ainda não foi aplicada e a Edge Function ainda não
+foi atualizada em produção. O CLI autenticado não tem acesso ao projeto de produção, embora o
+Dashboard aberto mostre o projeto correto; nenhum comando foi executado e nenhuma mensagem foi
+enviada nesta tarefa. Só usar o comando após integrar o PR e aplicar a migration antes do deploy.

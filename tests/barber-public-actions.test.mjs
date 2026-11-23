@@ -46,7 +46,8 @@ test("o cron tenta enviar o bom-dia antes do horário configurado para lembretes
   const cron = acoes.slice(inicio, fim);
   assert.ok(inicio >= 0);
   assert.ok(fim > inicio);
-  assert.ok(cron.indexOf("bomDiaTodos(forcar)") < cron.indexOf("antesDaHoraDoLembrete"));
+  assert.ok(cron.indexOf("processarBoasVindasPendentes(10)") < cron.indexOf("bomDiaTodos(forcar"));
+  assert.ok(cron.indexOf("bomDiaTodos(forcar, new Date(), !forcar)") < cron.indexOf("antesDaHoraDoLembrete"));
 });
 
 test("horários inválidos são rejeitados antes de apagar os horários atuais", async () => {
@@ -119,4 +120,36 @@ test("mudanças no catálogo avisam o barbeiro e não renomeiam a conta", async 
   assert.match(salvar, /avisosFalhos\.includes\("catalogo"\)/);
   assert.match(salvar, /"aviso_whatsapp_nao_enviado"/);
   assert.match(salvar, /salvo: true,\s*pagina_publicada: pagina\.ok,\s*avisos: avisosFalhos/s);
+});
+
+test("boas-vindas exigem endereço e página publicada após a última edição", async () => {
+  const acoes = await readFile(
+    new URL("../supabase/functions/peixeiro/acoes.ts", import.meta.url),
+    "utf8",
+  );
+  const adicionarInicio = acoes.indexOf("export async function barbContaAdicionar");
+  const adicionarFim = acoes.indexOf("\n}", adicionarInicio);
+  const boasInicio = acoes.indexOf("export async function barbBoasVindas");
+  const boasFim = acoes.indexOf("\n}", boasInicio);
+  const adicionar = acoes.slice(adicionarInicio, adicionarFim);
+  const boas = acoes.slice(boasInicio, boasFim);
+  const estabelecimento = await readFile(
+    new URL("../supabase/functions/peixeiro/estabelecimento.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.ok(adicionarInicio >= 0);
+  assert.ok(adicionarFim > adicionarInicio);
+  assert.ok(boasInicio >= 0);
+  assert.ok(boasFim > boasInicio);
+  assert.match(adicionar, /solicitouBoasVindas && criado\.novo/);
+  assert.match(adicionar, /await enviarBoasVindasPendente\(telefone\)/);
+  assert.match(adicionar, /txt\(dados\.endereco\)/);
+  assert.doesNotMatch(adicionar, /enviarParaBarbeiro/);
+  assert.ok(boas.indexOf("validarPaginaParaBoasVindas") < boas.indexOf("enviarParaBarbeiro"));
+  assert.match(boas, /site_boas_vindas_enviado_em = coalesce\(site_boas_vindas_enviado_em, now\(\)\)/);
+  assert.match(estabelecimento, /paginaProntaParaAgendamento\(pagina\)/);
+  assert.match(estabelecimento, /paginaPublicadaCompleta\(await resposta\.text\(\), pagina\)/);
+  assert.match(estabelecimento, /site_publicado_em >= atualizado_em/);
+  assert.match(estabelecimento, /coalesce\(site_sha, ''\) <> ''/);
 });

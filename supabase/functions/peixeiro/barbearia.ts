@@ -21,6 +21,7 @@ import { baixarMidia, enviarTexto, type ResultadoEnvio } from "./greenapi.ts";
 import { diasConsecutivosEntregues } from "../_shared/barber-reminder-pause.mjs";
 import { interpretarRetornoPagamento } from "../_shared/barber-payment-feedback.mjs";
 import { parseComandoRenovacao } from "../_shared/barber-renewal.mjs";
+import { parseComandoBoasVindas } from "../_shared/barber-site-onboarding.mjs";
 import {
   baseDoSite,
   dadosDaPagina,
@@ -32,6 +33,7 @@ import {
   redirecionarPaginaAntiga,
   slugDe,
   slugValido,
+  validarPaginaParaBoasVindas,
   vagasDoDia,
 } from "./estabelecimento.ts";
 import {
@@ -218,12 +220,14 @@ export async function adicionarBarbeiro(
   nome = "",
   nota = "",
   trialDias = TRIAL_DIAS_PADRAO,
+  endereco = "",
 ): Promise<{ ok: boolean; error?: string; conta?: Conta; novo: boolean }> {
   const telefone = normalizarWhatsapp(bruto);
   if (!telefoneValido(telefone)) return { ok: false, error: "telefone_invalido", novo: false };
   const existente = await contaDeTelefone(telefone);
   const dias = Math.max(1, Math.min(365, Math.trunc(Number(trialDias) || TRIAL_DIAS_PADRAO)));
   const nomeLimpo = String(nome || "").trim().slice(0, 120);
+  const enderecoLimpo = String(endereco || "").trim().slice(0, 300);
 
   if (existente) {
     // Readicionar um número que já é barbearia não apaga nada: só atualiza o nome que ele
@@ -231,17 +235,18 @@ export async function adicionarBarbeiro(
     await consultar(
       `update public.barber_contas
           set nome = coalesce(nullif($2, ''), nome), nota = coalesce(nullif($3, ''), nota),
+              endereco = coalesce(nullif($5, ''), endereco),
               ativo = true, expira_em = now() + ($4 || ' days')::interval, atualizado_em = now()
         where telefone = $1`,
-      [telefone, nomeLimpo, String(nota || "").trim(), String(dias)],
+      [telefone, nomeLimpo, String(nota || "").trim(), String(dias), enderecoLimpo],
     );
     return { ok: true, conta: await contaDeTelefone(telefone) || existente, novo: false };
   }
 
   await consultar(
-    `insert into public.barber_contas (telefone, nome, nota, expira_em)
-     values ($1, $2, $3, now() + ($4 || ' days')::interval)`,
-    [telefone, nomeLimpo, String(nota || "").trim(), String(dias)],
+    `insert into public.barber_contas (telefone, nome, nota, endereco, expira_em)
+     values ($1, $2, $3, $4, now() + ($5 || ' days')::interval)`,
+    [telefone, nomeLimpo, String(nota || "").trim(), enderecoLimpo, String(dias)],
   );
   await consultar(
     `update public.barber_interessados set telefone_conta = $1, atualizado_em = now() where telefone = $2`,
@@ -1567,6 +1572,162 @@ export async function enviarParaBarbeiro(
   };
 }
 
+export async function enviarBoasVindasPendente(
+  telefone: string,
+): Promise<{ enviada: boolean; pendente: boolean; simulado: boolean; erro?: string }> {
+  const estado = await consultar1(
+    `select site_boas_vindas_solicitada_em is not null as solicitada,
+            site_boas_vindas_enviado_em is not null as enviada
+       from public.barber_contas where telefone = $1`,
+    [telefone],
+  );
+  if (!estado?.solicitada || estado.enviada) {
+    return { enviada: false, pendente: false, simulado: false };
+  }
+  const reivindicada = await consultar1(
+    `update public.barber_contas
+        set site_boas_vindas_tentativa_em = now()
+      where telefone = $1
+        and site_boas_vindas_solicitada_em is not null
+        and site_boas_vindas_enviado_em is null
+        and (site_boas_vindas_tentativa_em is null
+             or site_boas_vindas_tentativa_em <= now() - interval '15 minutes')
+      returning telefone`,
+    [telefone],
+  );
+  if (!reivindicada) {
+    return { enviada: false, pendente: true, simulado: false, erro: "boas_vindas_em_andamento" };
+  }
+
+  const textos = await obterTextos();
+  if (!textos.boas_vindas.trim()) {
+    await consultar(
+      `update public.barber_contas set site_boas_vindas_tentativa_em = null
+        where telefone = $1 and site_boas_vindas_enviado_em is null`,
+      [telefone],
+    );
+    return { enviada: false, pendente: true, simulado: false, erro: "sem_texto" };
+  }
+  const validacao = await validarPaginaParaBoasVindas(telefone);
+  if (!validacao.ok) {
+    const manterTentativa = validacao.erro === "pagina_indisponivel" ||
+      validacao.erro === "pagina_publicada_incompleta";
+    if (!manterTentativa) {
+      await consultar(
+        `update public.barber_contas set site_boas_vindas_tentativa_em = null
+          where telefone = $1 and site_boas_vindas_enviado_em is null`,
+        [telefone],
+      );
+    }
+    return { enviada: false, pendente: true, simulado: false, erro: validacao.erro };
+  }
+
+  if (await estaBloqueado(telefone)) {
+    return { enviada: false, pendente: true, simulado: false, erro: "bloqueado" };
+  }
+
+  const envio = await enviarParaBarbeiro(telefone, textos.boas_vindas);
+  if (!envio.ok) {
+    return { enviada: false, pendente: true, simulado: false, erro: envio.error || "envio" };
+  }
+  if (envio.simulado) {
+    return { enviada: false, pendente: true, simulado: true };
+  }
+  const registrado = await consultar(
+    `update public.barber_contas set site_boas_vindas_enviado_em = now()
+      where telefone = $1
+        and site_boas_vindas_solicitada_em is not null
+        and site_boas_vindas_enviado_em is null`,
+    [telefone],
+  );
+  if (!registrado.rowCount) throw new Error("boas_vindas_enviada_sem_registro");
+  return { enviada: true, pendente: false, simulado: false };
+}
+
+export async function processarBoasVindasPendentes(limite = 10): Promise<{
+  consideradas: number;
+  enviadas: number;
+  paginasIncompletas: number;
+  paginasIndisponiveis: number;
+  bloqueadas: number;
+  falhas: number;
+  simuladas: number;
+  erro?: "sem_texto";
+}> {
+  const maximo = Math.max(1, Math.min(10, Math.trunc(limite) || 10));
+  if (!(await obterTextos()).boas_vindas.trim()) {
+    return {
+      consideradas: 0,
+      enviadas: 0,
+      paginasIncompletas: 0,
+      paginasIndisponiveis: 0,
+      bloqueadas: 0,
+      falhas: 0,
+      simuladas: 0,
+      erro: "sem_texto",
+    };
+  }
+  const candidatos = await consultar(
+    `select c.telefone
+       from public.barber_contas c
+      where c.ativo
+        and c.site_boas_vindas_solicitada_em is not null
+        and c.site_boas_vindas_enviado_em is null
+        and (c.site_boas_vindas_tentativa_em is null
+             or c.site_boas_vindas_tentativa_em <= now() - interval '15 minutes')
+        and nullif(btrim(c.endereco), '') is not null
+        and c.site_publicado_em is not null
+        and coalesce(c.site_sha, '') <> ''
+        and c.site_publicado_em >= c.atualizado_em
+        and coalesce(c.aceita_agendamento, true)
+        and nullif(btrim(c.nome), '') is not null
+        and exists (
+          select 1 from public.barber_servico s
+           where s.telefone = c.telefone and s.ativo and nullif(btrim(s.nome), '') is not null
+        )
+        and exists (
+          select 1 from public.barber_horario h
+           where h.telefone = c.telefone and h.abre is not null and h.fecha is not null
+        )
+        and exists (
+          select 1 from public.barber_pagamento p
+           where p.telefone = c.telefone and nullif(btrim(p.nome), '') is not null
+        )
+      order by c.criado_em, c.telefone
+      limit $1`,
+    [maximo],
+  );
+  const resultado = {
+    consideradas: candidatos.rows.length,
+    enviadas: 0,
+    paginasIncompletas: 0,
+    paginasIndisponiveis: 0,
+    bloqueadas: 0,
+    falhas: 0,
+    simuladas: 0,
+  };
+
+  for (const linha of candidatos.rows) {
+    const telefone = String(linha.telefone || "");
+    const envio = await enviarBoasVindasPendente(telefone);
+    if (envio.enviada) {
+      resultado.enviadas++;
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    } else if (envio.simulado) {
+      resultado.simuladas++;
+    } else if (envio.erro === "pagina_indisponivel") {
+      resultado.paginasIndisponiveis++;
+    } else if (envio.erro === "pagina_publicada_incompleta") {
+      resultado.paginasIncompletas++;
+    } else if (envio.erro === "bloqueado") {
+      resultado.bloqueadas++;
+    } else if (envio.erro && envio.erro !== "boas_vindas_em_andamento") {
+      resultado.falhas++;
+    }
+  }
+  return resultado;
+}
+
 // ---------------------------------------------------------------------------
 
 async function registrarMensagem(
@@ -1646,6 +1807,54 @@ async function processarComandoRenovacao(
   return await responder(
     `Renovação aplicada${nome ? ` para ${nome}` : ""}. Vencimento: ${vencimentoTexto}. ${aviso}`,
   );
+}
+
+async function responderAdminBoasVindas(
+  conf: Conf,
+  telefone: string,
+  texto: string,
+): Promise<{ status: number; dados: Bruto }> {
+  const envio = await enviarTexto(conf, telefone, texto);
+  return {
+    status: 200,
+    dados: { ok: Boolean(envio.ok), tipo: "boas_vindas_lote", simulado: Boolean(envio.simulado) },
+  };
+}
+
+async function processarComandoBoasVindas(
+  m: NonNullable<ReturnType<typeof interpretar>["mensagem"]>,
+  conf: Conf,
+  textos: Textos,
+): Promise<{ status: number; dados: Bruto }> {
+  const responder = (texto: string) => responderAdminBoasVindas(conf, m.telefone, texto);
+  if (!m.chave) {
+    return await responder("Não consegui confirmar esta mensagem com segurança. Envie o comando novamente.");
+  }
+  if (!await registrarMensagem(m.telefone, "entrada", m.texto, m.chave, textos.dias_retencao)) {
+    return { status: 200, dados: { ok: true, duplicado: true, tipo: "boas_vindas_lote" } };
+  }
+  if (!textos.boas_vindas.trim()) {
+    return await responder("O texto de boas-vindas está vazio no painel. Nenhuma mensagem foi enviada.");
+  }
+
+  const lote = await processarBoasVindasPendentes(10);
+  if (!lote.consideradas) {
+    return await responder(
+      "Não há novos estabelecimentos elegíveis agora. Só entram páginas com endereço, " +
+      "publicadas e funcionando para agendamento; nenhum site vazio recebe mensagem.",
+    );
+  }
+
+  const detalhes = [
+    `O WhatsApp aceitou ${lote.enviadas} boas-vindas.`,
+    lote.paginasIncompletas ? `${lote.paginasIncompletas} página(s) incompleta(s), não enviadas.` : "",
+    lote.paginasIndisponiveis ? `${lote.paginasIndisponiveis} página(s) sem resposta pública, não enviadas.` : "",
+    lote.bloqueadas ? `${lote.bloqueadas} bloqueada(s), não enviadas.` : "",
+    lote.falhas ? `${lote.falhas} falha(s) de envio.` : "",
+    lote.simuladas ? `${lote.simuladas} simulação(ões), sem WhatsApp real.` : "",
+    `Limite de 10 estabelecimentos por execução; envie novamente para continuar.`,
+  ].filter(Boolean);
+  return await responder(detalhes.join("\n"));
 }
 
 export async function conversasBarbearia(dias: number, limite = 50): Promise<Bruto[]> {
@@ -2272,6 +2481,7 @@ function rodapeDaPagina(url: string, campo: Campo): string {
 /** O guia que abre a conversa: é o texto dele na tela do painel, com o que ele pode trocar. */
 export async function guiaDaPagina(conta: Conta, textos: Textos): Promise<string> {
   const publicado = await publicarPagina(conta.telefone);
+  if (publicado.ok) await enviarBoasVindasPendente(conta.telefone);
   const url = publicado.ok ? publicado.url || urlDaPagina(conta) : urlDaPagina(conta);
   const avisoInstrucoes = publicado.instrucoes_whatsapp === "falha"
     ? "\n\nA página foi publicada, mas não consegui enviar as instruções do WhatsApp Business. Salve a página novamente para tentar outra vez."
@@ -2645,6 +2855,7 @@ async function respostaComPagina(conta: Conta, texto: string, campo: Campo): Pro
   const recarregada = await contaDeTelefone(conta.telefone);
   const atual = recarregada || conta;
   const publicado = await publicarPagina(atual.telefone);
+  if (publicado.ok) await enviarBoasVindasPendente(atual.telefone);
   const url = publicado.ok ? publicado.url || urlDaPagina(atual) : urlDaPagina(atual);
   if (!publicado.ok) {
     return {
@@ -2678,6 +2889,7 @@ async function trocarSlug(conta: Conta, valorBruto: string): Promise<Resposta> {
 /** O comando que abre tudo: SITE mostra o link e o guia, e sobe a página se ela caiu. */
 async function mostrarSite(conta: Conta, textos: Textos): Promise<Resposta> {
   const publicado = await publicarPagina(conta.telefone);
+  if (publicado.ok) await enviarBoasVindasPendente(conta.telefone);
   const url = publicado.ok ? publicado.url || urlDaPagina(conta) : urlDaPagina(conta);
   if (!publicado.ok) {
     return {
@@ -2909,6 +3121,7 @@ export async function importarPaginaAppBarber(
   const publicado = atualizada
     ? await publicarPagina(telefone)
     : { ok: false, url: "", instrucoes_whatsapp: "incompleta" as const };
+  if (publicado.ok) await enviarBoasVindasPendente(telefone);
   const destino = publicado.ok ? publicado.url || urlDaPagina(atualizada || conta) : urlDaPagina(atualizada || conta);
   return {
     ok: true,
@@ -3497,6 +3710,13 @@ export async function rotearWebhook(bruto: Bruto, chave: string): Promise<{ stat
         return { status: 200, dados: { ok: true, ignorado: "comando reservado" } };
       }
       return await processarComandoRenovacao(comando, m, conf, textos);
+    }
+    if (parseComandoBoasVindas(m.texto)) {
+      const telefoneAdmin = normalizarWhatsapp(textos.renovar_admin_telefone);
+      if (!telefoneAdmin || m.telefone !== telefoneAdmin) {
+        return { status: 200, dados: { ok: true, ignorado: "comando reservado" } };
+      }
+      return await processarComandoBoasVindas(m, conf, textos);
     }
   }
 

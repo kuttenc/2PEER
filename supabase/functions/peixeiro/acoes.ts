@@ -108,12 +108,20 @@ import {
   contaDeTelefone, conversasBarbearia, exportarBarbeiros, exportarConversasBarbearia, fecharBarbeiro,
   filaTreinoBarbearia, importarBarbeiros, importarPaginaAppBarber, lancamentosDe, lembretesDoDia, ligarBarbeiro, listarBarbeiros,
   listarInteressados, mensagensDoBarbeiro, montarFila, obterTextos, perguntarPagamentoPosServico, proximoDaFila, resumoBarbearia,
-  rotearWebhook, salvarTextos, statusFila, enviarParaBarbeiro, bomDiaTodos,
+  rotearWebhook, salvarTextos, statusFila, enviarParaBarbeiro, enviarBoasVindasPendente,
+  processarBoasVindasPendentes, bomDiaTodos,
   limparFila as barbLimparFila,
   tirarDaFila as barbTirarDaFila,
   TRIAL_DIAS_PADRAO,
 } from "./barbearia.ts";
-import { dadosDaPagina, publicarFoto, publicarPagina, publicarPainelBarbearia } from "./estabelecimento.ts";
+import {
+  dadosDaPagina,
+  publicarFoto,
+  publicarPagina,
+  publicarPainelBarbearia,
+  validarPaginaParaBoasVindas,
+} from "./estabelecimento.ts";
+import { paginaProntaParaAgendamento } from "../_shared/barber-site-onboarding.mjs";
 import { escreverCsv, lerCsv } from "./csv.ts";
 import { gravarPix, parsearPix } from "./pix.ts";
 import {
@@ -1731,8 +1739,24 @@ export async function barbContas(dados: Registro): Promise<Saida> {
 export async function barbContaAdicionar(dados: Registro, ctx: Contexto): Promise<Saida> {
   const telefone = normalizarWhatsapp(txt(dados.telefone));
   const dias = Number(txt(dados.dias) || 0);
-  const criado = await adicionarBarbeiro(telefone, txt(dados.nome), txt(dados.nota), dias || TRIAL_DIAS_PADRAO);
+  const endereco = txt(dados.endereco).trim().slice(0, 300);
+  const solicitouBoasVindas = booleano(dados.avisar);
+  if (solicitouBoasVindas && !endereco) return falha("endereco_obrigatorio", 400);
+  const criado = await adicionarBarbeiro(
+    telefone,
+    txt(dados.nome),
+    txt(dados.nota),
+    dias || TRIAL_DIAS_PADRAO,
+    endereco,
+  );
   if (!criado.ok) return falha("telefone_invalido");
+  if (!criado.novo && endereco) {
+    const pagina = await dadosDaPagina(telefone);
+    if (pagina && paginaProntaParaAgendamento(pagina)) {
+      const publicada = await publicarPagina(telefone);
+      if (publicada.ok) await enviarBoasVindasPendente(telefone);
+    }
+  }
   await gravarEvento({
     event_type: criado.novo ? "barbearia_criada" : "barbearia_readicionada",
     status_code: 200,
@@ -1740,13 +1764,29 @@ export async function barbContaAdicionar(dados: Registro, ctx: Contexto): Promis
     response_payload: {},
     client_ip: ctx.ip,
   });
-  const aviso = booleano(dados.avisar ?? true) && criado.novo;
-  const boas = aviso ? await enviarParaBarbeiro(telefone, (await obterTextos()).boas_vindas) : null;
+  let boas: { enviada: boolean; pendente: boolean; simulado: boolean; erro?: string } | null = null;
+  if (solicitouBoasVindas && criado.novo) {
+    await consultar(
+      `update public.barber_contas
+          set site_boas_vindas_solicitada_em = coalesce(site_boas_vindas_solicitada_em, now())
+        where telefone = $1`,
+      [telefone],
+    );
+    boas = await enviarBoasVindasPendente(telefone);
+  } else if (solicitouBoasVindas) {
+    boas = { enviada: false, pendente: false, simulado: false, erro: "cadastro_existente" };
+  }
   return ok({
     ...await listarBarbeiros(1, ""),
     conta: await barbContaParaTela(telefone),
     novo: criado.novo,
-    boas_vindas: boas ? { ok: boas.ok, simulado: boas.simulado, erro: boas.error || "" } : null,
+    boas_vindas: boas ? {
+      ok: boas.enviada,
+      enviada: boas.enviada,
+      pendente: boas.pendente,
+      simulado: boas.simulado,
+      erro: String(boas.erro || ""),
+    } : null,
   });
 }
 
@@ -1822,13 +1862,15 @@ export async function barbPaginaPublicar(dados: Registro): Promise<Saida> {
   if (telefone.length < 10) return falha("telefone_invalido");
   const feito = await publicarPagina(telefone);
   if (!feito.ok) return falha(String(feito.erro || "banco"), 502);
+  const boasVindas = await enviarBoasVindasPendente(telefone);
   if (feito.instrucoes_whatsapp === "falha") {
     return falha("aviso_instrucoes_whatsapp_nao_enviado", 502, {
       pagina_publicada: true,
       url: feito.url,
+      boas_vindas: boasVindas,
     });
   }
-  return ok(feito);
+  return ok({ ...feito, boas_vindas: boasVindas });
 }
 
 async function barbPainelValidar(dados: Registro): Promise<{ telefone: string; slug: string } | null> {
@@ -1862,10 +1904,12 @@ export async function barbPainelGerar(dados: Registro): Promise<Saida> {
   const publicado = await publicarPainelBarbearia(telefone, chave);
   if (!publicado.ok) return falha(publicado.erro || "banco", 502);
   const pagina = await publicarPagina(telefone);
+  const boasVindas = pagina.ok ? await enviarBoasVindasPendente(telefone) : null;
   return ok({
     chave,
     url: publicado.url,
     instrucoes_whatsapp: pagina.instrucoes_whatsapp,
+    boas_vindas: boasVindas,
   });
 }
 
@@ -2093,6 +2137,7 @@ export async function barbPainelSalvar(dados: Registro): Promise<Saida> {
     }
   }
   const pagina = await publicarPagina(telefone);
+  const boasVindas = pagina.ok ? await enviarBoasVindasPendente(telefone) : null;
   const avisosFalhos: string[] = [];
   let catalogoSimulado = false;
   if (!pagina.ok) avisosFalhos.push("pagina");
@@ -2116,11 +2161,12 @@ export async function barbPainelSalvar(dados: Registro): Promise<Saida> {
         salvo: true,
         pagina_publicada: pagina.ok,
         avisos: avisosFalhos,
+        boas_vindas: boasVindas,
         simulado: catalogoSimulado,
       },
     );
   }
-  return ok({ salvo: true });
+  return ok({ salvo: true, boas_vindas: boasVindas });
 }
 
 export async function barbPainelFoto(dados: Registro): Promise<Saida> {
@@ -2144,13 +2190,15 @@ export async function barbPainelFoto(dados: Registro): Promise<Saida> {
   );
   const pagina = await publicarPagina(acesso.telefone);
   if (!pagina.ok) return falha("pagina_nao_publicada", 502, { foto_salva: true });
+  const boasVindas = await enviarBoasVindasPendente(acesso.telefone);
   if (pagina.instrucoes_whatsapp === "falha") {
     return falha("aviso_instrucoes_whatsapp_nao_enviado", 502, {
       foto_salva: true,
       pagina_publicada: true,
+      boas_vindas: boasVindas,
     });
   }
-  return ok({ arquivo: gravada.caminho });
+  return ok({ arquivo: gravada.caminho, boas_vindas: boasVindas });
 }
 
 export async function barbPainelFotoApagar(dados: Registro): Promise<Saida> {
@@ -2161,13 +2209,15 @@ export async function barbPainelFotoApagar(dados: Registro): Promise<Saida> {
   await consultar(`delete from public.barber_foto where id = $1 and telefone = $2`, [id, acesso.telefone]);
   const pagina = await publicarPagina(acesso.telefone);
   if (!pagina.ok) return falha("pagina_nao_publicada", 502, { foto_apagada: true });
+  const boasVindas = await enviarBoasVindasPendente(acesso.telefone);
   if (pagina.instrucoes_whatsapp === "falha") {
     return falha("aviso_instrucoes_whatsapp_nao_enviado", 502, {
       foto_apagada: true,
       pagina_publicada: true,
+      boas_vindas: boasVindas,
     });
   }
-  return ok({ apagado: true });
+  return ok({ apagado: true, boas_vindas: boasVindas });
 }
 
 export async function barbInteressados(): Promise<Saida> {
@@ -2262,10 +2312,42 @@ export async function barbMensagem(dados: Registro): Promise<Saida> {
 export async function barbBoasVindas(dados: Registro): Promise<Saida> {
   const telefone = normalizarWhatsapp(txt(dados.telefone));
   if (telefone.length < 10) return falha("telefone_invalido");
+  const validacao = await validarPaginaParaBoasVindas(telefone);
+  if (!validacao.ok) {
+    return falha(validacao.erro, validacao.erro === "sem_barbearia" ? 404 : 409);
+  }
   const modelo = (await obterTextos()).boas_vindas;
   if (!modelo) return falha("sem_texto");
+  const estado = await consultar1(
+    `select site_boas_vindas_enviado_em is not null as ja_enviada
+       from public.barber_contas where telefone = $1`,
+    [telefone],
+  );
+  if (!estado) return falha("sem_barbearia", 404);
+  if (!estado.ja_enviada) {
+    const reivindicada = await consultar1(
+      `update public.barber_contas
+          set site_boas_vindas_tentativa_em = now()
+        where telefone = $1
+          and site_boas_vindas_enviado_em is null
+          and (site_boas_vindas_tentativa_em is null
+               or site_boas_vindas_tentativa_em <= now() - interval '15 minutes')
+        returning telefone`,
+      [telefone],
+    );
+    if (!reivindicada) return falha("boas_vindas_em_andamento", 409);
+  }
   const envio = await enviarParaBarbeiro(telefone, modelo);
   if (!envio.ok) return falha(envio.error === "bloqueado" ? "bloqueado" : "envio", 502, { detalhe: envio.error || "" });
+  if (!envio.simulado) {
+    const registro = await consultar1(
+      `update public.barber_contas
+          set site_boas_vindas_enviado_em = coalesce(site_boas_vindas_enviado_em, now())
+        where telefone = $1 returning telefone`,
+      [telefone],
+    );
+    if (!registro) throw new Error("boas_vindas_enviada_sem_registro");
+  }
   return ok({ telefone: formatarTelefone(telefone), simulado: envio.simulado, texto: envio.texto });
 }
 
@@ -2341,6 +2423,7 @@ export async function barbCron(dados: Registro, ctx: Contexto): Promise<Saida> {
   const hora = new Date(Date.now() - BRAZIL_OFFSET_MS).getUTCHours();
   const textos = await obterTextos();
   const forcar = booleano(dados.reenviar);
+  const boasVindas = await processarBoasVindasPendentes(10);
   const bomDia = await bomDiaTodos(forcar, new Date(), !forcar);
   const antesDaHoraDoLembrete = !forcar && hora < Number(textos.lembrete_hora || 8);
   const feito = antesDaHoraDoLembrete
@@ -2350,10 +2433,20 @@ export async function barbCron(dados: Registro, ctx: Contexto): Promise<Saida> {
     event_type: "barbearia_cron_lembrete",
     status_code: 200,
     request_payload: { forcar },
-    response_payload: { bom_dia: bomDia, lembrete_agenda: feito, hora_brasilia: hora },
+    response_payload: {
+      boas_vindas: boasVindas,
+      bom_dia: bomDia,
+      lembrete_agenda: feito,
+      hora_brasilia: hora,
+    },
     client_ip: ctx.ip,
   });
-  return ok({ bom_dia: bomDia, lembrete_agenda: feito, hora_brasilia: hora });
+  return ok({
+    boas_vindas: boasVindas,
+    bom_dia: bomDia,
+    lembrete_agenda: feito,
+    hora_brasilia: hora,
+  });
 }
 
 export async function barbPagamentoCron(dados: Registro, ctx: Contexto): Promise<Saida> {
