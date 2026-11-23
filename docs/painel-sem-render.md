@@ -1541,7 +1541,7 @@ Os testes focados passaram (12/12) e a suíte completa `node --test --test-repor
 está instalado para executar `deno check`. O guia operacional consolidado está em
 `./guia-operacional-chatbot-barbearias.md`.
 
-### Proteção e comando de boas-vindas — PR pendente
+### Proteção e comando de boas-vindas — publicação parcial
 
 O cadastro inclui endereço e uma opção para programar as boas-vindas. Ao marcar a opção, o endereço
 é obrigatório e o pedido fica pendente enquanto a página está sendo configurada; nenhuma mensagem
@@ -1561,8 +1561,13 @@ publicação pública. Só conta como enviado quando a Green API aceita um envio
 simuladas não são marcadas como enviadas. Contas existentes no momento da migration são marcadas
 como já processadas para evitar reenvios; a opção vale para novos cadastros feitos depois da migration.
 
-As alterações estão isoladas na branch `copilot/published-address-welcome`, no PR #5. A migration
-`../tools/20261123_barber_welcome_command.sql` ainda não foi aplicada e a Edge Function ainda não
-foi atualizada em produção. O CLI autenticado não tem acesso ao projeto de produção, embora o
-Dashboard aberto mostre o projeto correto; nenhum comando foi executado e nenhuma mensagem foi
-enviada nesta tarefa. Só usar o comando após integrar o PR e aplicar a migration antes do deploy.
+As alterações foram integradas ao `main` pelo PR #5 (`945eeb8`), e o workflow do GitHub Pages
+concluiu com sucesso. A migration `../tools/20261123_barber_welcome_command.sql` foi aplicada no
+projeto Supabase correto e verificada: as três colunas existem e as 30 contas anteriores foram
+marcadas para evitar reenvios; nenhuma conta tinha opt-in nesse momento.
+
+A Edge Function `peixeiro` ainda não foi atualizada em produção. A tentativa de deploy foi
+recusada por falta de acesso da credencial CLI ao projeto, e a sessão do Dashboard expirou. Não
+usar credenciais de outro projeto para contornar isso; concluir o deploy com uma sessão autenticada
+no projeto correto ou uma credencial autorizada. Nenhuma mensagem real foi enviada. Não orientar o
+uso do cadastro/boas-vindas até confirmar o deploy da função.
