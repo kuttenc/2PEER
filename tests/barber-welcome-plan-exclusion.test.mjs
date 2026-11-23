@@ -11,6 +11,7 @@ test("renovações ativas alimentam uma lista separada de proteção de boas-vin
   assert.match(migration, /r\.resultado = 'renovado'[\s\S]*c\.ativo[\s\S]*c\.expira_em > now\(\)/);
   assert.match(migration, /after insert or update on public\.barber_renovacoes/);
   assert.match(migration, /on conflict \(telefone\) do update[\s\S]*ativo = true/);
+  assert.match(migration, /null::timestamptz/);
   assert.match(bloqueios, /where telefone = \$1 and ativo/);
   assert.match(bloqueios, /set ativo = false[\s\S]*desativado_em = now\(\)/);
 });

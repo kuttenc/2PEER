@@ -48,7 +48,7 @@ create trigger barber_renovacao_excluir_boas_vindas
 
 insert into public.barber_boas_vindas_bloqueios
   (telefone, nome, motivo, ativo, criado_em, atualizado_em, desativado_em)
-select distinct c.telefone, c.nome, 'plano renovado', true, now(), now(), null
+select distinct c.telefone, c.nome, 'plano renovado', true, now(), now(), null::timestamptz
   from public.barber_contas c
   join public.barber_renovacoes r on r.barbeiro_telefone = c.telefone
  where r.resultado = 'renovado'
