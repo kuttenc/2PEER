@@ -28,6 +28,12 @@ import {
   telefonesBloqueados,
 } from "./bloqueados.ts";
 import {
+  adicionarBloqueioBoasVindas,
+  boasVindasPlanoAtivo,
+  desativarBloqueioBoasVindas,
+  listarBloqueiosBoasVindas,
+} from "./boas-vindas-bloqueios.ts";
+import {
   apagarLinha,
   coletarLinhasVencendo,
   gravarEvento,
@@ -1734,6 +1740,29 @@ export async function barbContas(dados: Registro): Promise<Saida> {
   return ok(await listarBarbeiros(pagina, txt(dados.q)));
 }
 
+export async function barbBoasVindasBloqueiosVer(dados: Registro): Promise<Saida> {
+  return ok(await listarBloqueiosBoasVindas(txt(dados.q)));
+}
+
+export async function barbBoasVindasBloqueioSalvar(dados: Registro): Promise<Saida> {
+  const salvo = await adicionarBloqueioBoasVindas(
+    txt(dados.telefone),
+    txt(dados.nome),
+    txt(dados.motivo),
+  );
+  if (!salvo.ok) return falha(salvo.erro || "telefone_invalido", 400);
+  return ok(await listarBloqueiosBoasVindas(""));
+}
+
+export async function barbBoasVindasBloqueioDesativar(dados: Registro): Promise<Saida> {
+  const telefone = normalizarWhatsapp(txt(dados.telefone));
+  if (!telefoneValido(telefone)) return falha("telefone_invalido", 400);
+  if (!await desativarBloqueioBoasVindas(telefone)) {
+    return falha("boas_vindas_bloqueio_nao_ativo", 404);
+  }
+  return ok(await listarBloqueiosBoasVindas(""));
+}
+
 /** Telefone e nome bastam: o teste de um dia começa nesta chamada, e readicionar não apaga o
  *  histórico de quem já era barbearia. */
 export async function barbContaAdicionar(dados: Registro, ctx: Contexto): Promise<Saida> {
@@ -2304,14 +2333,20 @@ export async function barbMensagem(dados: Registro): Promise<Saida> {
   if (telefone.length < 10) return falha("telefone_invalido");
   const modelo = barbTexto(dados.texto);
   if (!modelo) return falha("sem_texto");
-  const envio = await enviarParaBarbeiro(telefone, modelo);
-  if (!envio.ok) return falha(envio.error === "bloqueado" ? "bloqueado" : "envio", 502, { detalhe: envio.error || "" });
+  const envio = await enviarParaBarbeiro(telefone, modelo, booleano(dados.boas_vindas));
+  if (!envio.ok) {
+    const codigo = envio.error === "bloqueado"
+      ? "bloqueado"
+      : envio.error === "plano_ativo" ? "plano_ativo" : "envio";
+    return falha(codigo, codigo === "plano_ativo" ? 409 : 502, { detalhe: envio.error || "" });
+  }
   return ok({ telefone: formatarTelefone(telefone), simulado: envio.simulado });
 }
 
 export async function barbBoasVindas(dados: Registro): Promise<Saida> {
   const telefone = normalizarWhatsapp(txt(dados.telefone));
   if (telefone.length < 10) return falha("telefone_invalido");
+  if (await boasVindasPlanoAtivo(telefone)) return falha("plano_ativo", 409);
   const validacao = await validarPaginaParaBoasVindas(telefone);
   if (!validacao.ok) {
     return falha(validacao.erro, validacao.erro === "sem_barbearia" ? 404 : 409);
@@ -2337,8 +2372,18 @@ export async function barbBoasVindas(dados: Registro): Promise<Saida> {
     );
     if (!reivindicada) return falha("boas_vindas_em_andamento", 409);
   }
-  const envio = await enviarParaBarbeiro(telefone, modelo);
-  if (!envio.ok) return falha(envio.error === "bloqueado" ? "bloqueado" : "envio", 502, { detalhe: envio.error || "" });
+  const envio = await enviarParaBarbeiro(telefone, modelo, true);
+  if (!envio.ok) {
+    if (envio.error === "plano_ativo") {
+      await consultar(
+        `update public.barber_contas set site_boas_vindas_tentativa_em = null
+          where telefone = $1 and site_boas_vindas_enviado_em is null`,
+        [telefone],
+      );
+      return falha("plano_ativo", 409);
+    }
+    return falha(envio.error === "bloqueado" ? "bloqueado" : "envio", 502, { detalhe: envio.error || "" });
+  }
   if (!envio.simulado) {
     const registro = await consultar1(
       `update public.barber_contas

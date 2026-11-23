@@ -73,6 +73,18 @@ entrega. Uma tentativa em andamento pode ser retomada após 15 minutos. Falha de
 no resultado do salvamento/publicação e pode ser tentada novamente ao salvar ou publicar a página.
 O link privado do painel nunca deve ser usado como link do perfil.
 
+### Clientes com plano: não enviar boas-vindas
+
+A tabela `barber_boas_vindas_bloqueios` é uma proteção separada do bloqueio global. A migration
+`tools/20261123_barber_welcome_plan_exclusions.sql` inclui clientes com renovação registrada e
+ativa e adiciona futuras renovações à lista. Não use apenas `barber_contas.expira_em` para
+identificar clientes pagantes: contas de teste também podem ter vencimento.
+
+No painel, use **Clientes com plano: não enviar boas-vindas** para incluir clientes pagos que
+não aparecem no histórico de renovações. A lista impede boas-vindas automáticas, manuais e
+mensagens manuais marcadas como boas-vindas/prospecção; mensagens operacionais continuam
+disponíveis. Remova a proteção somente quando o cliente não tiver mais plano ativo.
+
 ## 3. Menus e comandos do barbeiro
 
 - `/menu` ou `AJUDA`: menu geral.

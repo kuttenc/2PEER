@@ -7,6 +7,7 @@
 // `mc_linhas`, `cliente_pix` ou `painel_links`.
 import { estaBloqueado, bloquear, MOTIVO_NAO } from "./bloqueados.ts";
 import { type Conf, obterConfig } from "./banco.ts";
+import { boasVindasPlanoAtivo } from "./boas-vindas-bloqueios.ts";
 import { aleatorio, consultar, consultar1, igual } from "./db.ts";
 import {
   clientePorTelefone,
@@ -1551,13 +1552,16 @@ export function agendamentosParaTela(lista: Agendamento[]): Bruto[] {
 /** Manda agora, sem fila, com as variáveis da barbearia e a conversa guardada. É o mesmo
  *  caminho do disparo em lote — o que muda é só não passar pela `barber_fila`. */
 export async function enviarParaBarbeiro(
-  telefone: string, modelo: string,
+  telefone: string, modelo: string, boasVindas = false,
 ): Promise<{ ok: boolean; error?: string; simulado: boolean; texto: string }> {
   const conta = await contaDeTelefone(telefone);
   if (!conta) return { ok: false, error: "sem_barbearia", simulado: false, texto: "" };
   const conf = await obterConfig();
   if (!conf) return { ok: false, error: "sem_banco", simulado: false, texto: "" };
   if (await estaBloqueado(conta.telefone)) return { ok: false, error: "bloqueado", simulado: false, texto: "" };
+  if (boasVindas && await boasVindasPlanoAtivo(conta.telefone)) {
+    return { ok: false, error: "plano_ativo", simulado: false, texto: "" };
+  }
   const corpo = preencherVariaveis(String(modelo || ""), variaveisDaConta(conf, conta));
   const envio = await enviarTexto(conf, conta.telefone, corpo);
   const textos = await obterTextos();
@@ -1576,11 +1580,18 @@ export async function enviarBoasVindasPendente(
   telefone: string,
 ): Promise<{ enviada: boolean; pendente: boolean; simulado: boolean; erro?: string }> {
   const estado = await consultar1(
-    `select site_boas_vindas_solicitada_em is not null as solicitada,
-            site_boas_vindas_enviado_em is not null as enviada
-       from public.barber_contas where telefone = $1`,
+    `select c.site_boas_vindas_solicitada_em is not null as solicitada,
+            c.site_boas_vindas_enviado_em is not null as enviada,
+            exists (
+              select 1 from public.barber_boas_vindas_bloqueios b
+               where b.telefone = c.telefone and b.ativo
+            ) as plano_ativo
+       from public.barber_contas c where c.telefone = $1`,
     [telefone],
   );
+  if (estado?.plano_ativo) {
+    return { enviada: false, pendente: false, simulado: false, erro: "plano_ativo" };
+  }
   if (!estado?.solicitada || estado.enviada) {
     return { enviada: false, pendente: false, simulado: false };
   }
@@ -1590,12 +1601,19 @@ export async function enviarBoasVindasPendente(
       where telefone = $1
         and site_boas_vindas_solicitada_em is not null
         and site_boas_vindas_enviado_em is null
+        and not exists (
+          select 1 from public.barber_boas_vindas_bloqueios b
+           where b.telefone = barber_contas.telefone and b.ativo
+        )
         and (site_boas_vindas_tentativa_em is null
              or site_boas_vindas_tentativa_em <= now() - interval '15 minutes')
       returning telefone`,
     [telefone],
   );
   if (!reivindicada) {
+    if (await boasVindasPlanoAtivo(telefone)) {
+      return { enviada: false, pendente: false, simulado: false, erro: "plano_ativo" };
+    }
     return { enviada: false, pendente: true, simulado: false, erro: "boas_vindas_em_andamento" };
   }
 
@@ -1626,8 +1644,25 @@ export async function enviarBoasVindasPendente(
     return { enviada: false, pendente: true, simulado: false, erro: "bloqueado" };
   }
 
-  const envio = await enviarParaBarbeiro(telefone, textos.boas_vindas);
+  if (await boasVindasPlanoAtivo(telefone)) {
+    await consultar(
+      `update public.barber_contas set site_boas_vindas_tentativa_em = null
+        where telefone = $1 and site_boas_vindas_enviado_em is null`,
+      [telefone],
+    );
+    return { enviada: false, pendente: false, simulado: false, erro: "plano_ativo" };
+  }
+
+  const envio = await enviarParaBarbeiro(telefone, textos.boas_vindas, true);
   if (!envio.ok) {
+    if (envio.error === "plano_ativo") {
+      await consultar(
+        `update public.barber_contas set site_boas_vindas_tentativa_em = null
+          where telefone = $1 and site_boas_vindas_enviado_em is null`,
+        [telefone],
+      );
+      return { enviada: false, pendente: false, simulado: false, erro: "plano_ativo" };
+    }
     return { enviada: false, pendente: true, simulado: false, erro: envio.error || "envio" };
   }
   if (envio.simulado) {
@@ -1673,6 +1708,10 @@ export async function processarBoasVindasPendentes(limite = 10): Promise<{
       where c.ativo
         and c.site_boas_vindas_solicitada_em is not null
         and c.site_boas_vindas_enviado_em is null
+        and not exists (
+          select 1 from public.barber_boas_vindas_bloqueios b
+           where b.telefone = c.telefone and b.ativo
+        )
         and (c.site_boas_vindas_tentativa_em is null
              or c.site_boas_vindas_tentativa_em <= now() - interval '15 minutes')
         and nullif(btrim(c.endereco), '') is not null

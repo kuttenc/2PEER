@@ -817,6 +817,38 @@
         </div>
       </div>
       <div class="card">
+        <h2>Clientes com plano: não enviar boas-vindas</h2>
+        <p class="muted" style="margin-top:0">Esta lista bloqueia mensagens de boas-vindas e prospecção, sem bloquear suporte, avisos de agenda ou outras mensagens operacionais. Renovações registradas entram automaticamente; inclua aqui os clientes com plano que não aparecem nessa origem.</p>
+        <form id="formBoasVindasPlano" class="card" style="margin:12px 0;padding:14px">
+          <div class="linha">
+            <label style="flex:1;min-width:190px">Telefone com DDD
+              <input class="maq" id="bbPlanoTelefone" type="tel" inputmode="tel" autocomplete="tel"
+                placeholder="(12) 91234-5678" maxlength="24" required>
+            </label>
+            <label style="flex:1;min-width:190px">Nome ou estabelecimento (opcional)
+              <input id="bbPlanoNome" type="text" maxlength="120" autocomplete="off">
+            </label>
+          </div>
+          <label>Motivo
+            <input id="bbPlanoMotivo" type="text" maxlength="160" value="plano ativo" required>
+          </label>
+          <button class="prim" id="bbPlanoSalvar" type="submit">Adicionar à proteção de boas-vindas</button>
+          <span class="muted" id="bbPlanoEstado" role="status" aria-live="polite"></span>
+        </form>
+        <div class="linha">
+          <input type="search" id="bbPlanoBusca" placeholder="Pesquisar telefone, nome ou motivo"
+            style="flex:1;min-width:200px" autocomplete="off">
+          <button type="button" id="bbPlanoBuscar">Buscar</button>
+          <button type="button" class="segundo" id="bbPlanoLimpar">Limpar</button>
+        </div>
+        <p class="muted" id="bbPlanoResumo"></p>
+        <table>
+          <thead><tr><th>Telefone</th><th>Estabelecimento</th><th>Motivo</th><th>Atualizado</th><th></th></tr></thead>
+          <tbody id="bbPlanoLinhas"></tbody>
+        </table>
+        <p class="muted" id="bbPlanoVazio"></p>
+      </div>
+      <div class="card">
         <h2>Interessados e solicitações recebidas</h2>
         <p class="muted">Números ainda não cadastrados que pediram informações ou solicitaram vínculo
           como funcionário. Um pedido não concede acesso automaticamente.</p>
@@ -1130,6 +1162,6 @@
 </div>
 
 <script src="config.js"></script>
-<script src="app.js?v=20261122-bloquear-chatbot"></script>
+<script src="app.js?v=20261123-plan-welcome-exclusions"></script>
 </body>
 </html>
