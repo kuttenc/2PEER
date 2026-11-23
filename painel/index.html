@@ -733,6 +733,15 @@
             <div class="col"><label for="bcRetencao">Dias para guardar conversas</label>
               <input type="number" id="bcRetencao" min="1" max="365"></div>
           </div>
+          <label for="bcRenovarAdmin">WhatsApp autorizado a renovar planos</label>
+          <div class="linha">
+            <input type="tel" id="bcRenovarAdmin" inputmode="tel" autocomplete="tel"
+              placeholder="55 + DDD + telefone">
+            <button type="button" class="segundo" id="bcRenovarAdminLimpar">Desativar comando de renovação</button>
+          </div>
+          <p class="muted" id="bcRenovarAdminEstado" aria-live="polite">
+            Apenas o número autorizado pode usar “renovar telefone”. Deixe vazio para manter o número salvo.
+          </p>
           <p class="muted">O lembrete automático depende de agendamento externo do cron. Salvar esta configuração
             não cria nem altera uma agenda de execução.</p>
         </div>

@@ -20,6 +20,7 @@ import { escreverCsv } from "./csv.ts";
 import { baixarMidia, enviarTexto, type ResultadoEnvio } from "./greenapi.ts";
 import { diasConsecutivosEntregues } from "../_shared/barber-reminder-pause.mjs";
 import { interpretarRetornoPagamento } from "../_shared/barber-payment-feedback.mjs";
+import { parseComandoRenovacao } from "../_shared/barber-renewal.mjs";
 import {
   baseDoSite,
   dadosDaPagina,
@@ -72,11 +73,12 @@ export type Textos = {
   boas_vindas_site: string;
   aviso_novo_site: string;
   ajuda_funcionario: string;
+  renovar_admin_telefone: string;
 };
 
 const COLUNAS_TEXTOS = `ativo, responder_controle, dias_retencao, trial_dias, lembrete_hora,
   menu, abordagem, boas_vindas, lembrete, aviso_cliente, msg_interesse, msg_vencido,
-  boas_vindas_site, aviso_novo_site, ajuda_funcionario`;
+  boas_vindas_site, aviso_novo_site, ajuda_funcionario, renovar_admin_telefone`;
 
 export async function obterTextos(): Promise<Textos> {
   const linha = await consultar1(`select ${COLUNAS_TEXTOS} from public.barber_config where id = 1`);
@@ -86,6 +88,7 @@ export async function obterTextos(): Promise<Textos> {
       lembrete_hora: 8, menu: "", abordagem: "", boas_vindas: "", lembrete: "",
       aviso_cliente: "", msg_interesse: "", msg_vencido: "",
       boas_vindas_site: "", aviso_novo_site: "", ajuda_funcionario: "",
+      renovar_admin_telefone: "",
     };
   }
   return {
@@ -104,6 +107,7 @@ export async function obterTextos(): Promise<Textos> {
     boas_vindas_site: String(linha.boas_vindas_site || ""),
     aviso_novo_site: String(linha.aviso_novo_site || ""),
     ajuda_funcionario: String(linha.ajuda_funcionario || ""),
+    renovar_admin_telefone: String(linha.renovar_admin_telefone || ""),
   };
 }
 
@@ -121,6 +125,13 @@ export async function salvarTextos(campos: Bruto): Promise<{ ok: boolean; error?
     if (!(chave in campos)) continue;
     set.push(`${chave} = ${proxima()}`);
     valores.push(String(campos[chave] ?? ""));
+  }
+  if ("renovar_admin_telefone" in campos) {
+    const bruto = String(campos.renovar_admin_telefone ?? "").trim();
+    const telefone = normalizarWhatsapp(bruto);
+    if (bruto && !telefoneValido(telefone)) return { ok: false, error: "telefone_invalido" };
+    set.push(`renovar_admin_telefone = ${proxima()}`);
+    valores.push(telefone);
   }
   for (const chave of ["dias_retencao", "trial_dias", "lembrete_hora"] as const) {
     if (String(campos[chave] ?? "").trim() === "") continue;
@@ -1568,6 +1579,73 @@ async function registrarMensagem(
     [chave || null, telefone, direcao, texto, expira],
   );
   return (r.rowCount || 0) > 0;
+}
+
+async function responderAdminRenovacao(
+  conf: Conf,
+  telefone: string,
+  texto: string,
+): Promise<{ status: number; dados: Bruto }> {
+  const envio = await enviarTexto(conf, telefone, texto);
+  return {
+    status: 200,
+    dados: { ok: Boolean(envio.ok), tipo: "renovacao", simulado: Boolean(envio.simulado) },
+  };
+}
+
+async function processarComandoRenovacao(
+  comando: { telefone: string },
+  m: NonNullable<ReturnType<typeof interpretar>["mensagem"]>,
+  conf: Conf,
+  textos: Textos,
+): Promise<{ status: number; dados: Bruto }> {
+  const responder = (texto: string) => responderAdminRenovacao(conf, m.telefone, texto);
+  if (!comando.telefone) return await responder("Use: renovar seguido do telefone com DDD e código do país.");
+  const telefone = normalizarWhatsapp(comando.telefone);
+  if (!telefoneValido(telefone)) return await responder("Telefone inválido. Nenhuma renovação foi feita.");
+  if (!m.chave) {
+    return await responder("Não consegui confirmar esta mensagem com segurança. Envie o comando novamente.");
+  }
+
+  const renovacao = await consultar1(
+    `select * from public.barber_renovar_um_mes($1, $2)`,
+    [m.chave, telefone],
+  );
+  const resultado = String(renovacao?.resultado || "");
+  const vencimento = renovacao?.expira_nova ? new Date(String(renovacao.expira_nova)) : null;
+  const vencimentoTexto = vencimento && Number.isFinite(vencimento.getTime())
+    ? formatarBrasilia(vencimento) : "";
+
+  if (resultado === "duplicado") {
+    return await responder(vencimentoTexto
+      ? `Este comando já foi processado; não renovei de novo. Vencimento registrado: ${vencimentoTexto}.`
+      : "Este comando já foi processado e não gerou outra renovação.");
+  }
+  if (resultado === "nao_encontrado") {
+    return await responder("Não encontrei esse estabelecimento. Nenhuma renovação foi feita.");
+  }
+  if (resultado !== "renovado" || !vencimentoTexto) {
+    throw new Error("resultado inesperado ao renovar a conta da barbearia");
+  }
+
+  const notificacao = `Olá! Sua renovação de 1 mês já foi computada. ` +
+    `Seu plano vence em ${vencimentoTexto} (horário de Brasília).`;
+  const envio = await enviarTexto(conf, telefone, notificacao);
+  if (envio.ok && !envio.simulado) {
+    await registrarMensagem(
+      telefone, "saida", notificacao, `renovacao-${m.chave}`, textos.dias_retencao,
+    );
+  }
+
+  const nome = nomeAproveitavel(String(renovacao?.nome || ""));
+  const aviso = envio.ok && !envio.simulado
+    ? "Aviso enviado ao barbeiro."
+    : envio.simulado
+    ? "O modo de teste está ativo; a mensagem não foi enviada ao WhatsApp."
+    : "O vencimento foi atualizado, mas o aviso não saiu. Confira o bloqueio e a Green API.";
+  return await responder(
+    `Renovação aplicada${nome ? ` para ${nome}` : ""}. Vencimento: ${vencimentoTexto}. ${aviso}`,
+  );
 }
 
 export async function conversasBarbearia(dias: number, limite = 50): Promise<Bruto[]> {
@@ -3411,6 +3489,17 @@ export async function rotearWebhook(bruto: Bruto, chave: string): Promise<{ stat
   const conf = await obterConfig();
   if (!conf) return { status: 200, dados: { ok: true, ignorado: "sem banco" } };
 
+  if (m) {
+    const comando = parseComandoRenovacao(m.texto);
+    if (comando) {
+      const telefoneAdmin = normalizarWhatsapp(textos.renovar_admin_telefone);
+      if (!telefoneAdmin || m.telefone !== telefoneAdmin) {
+        return { status: 200, dados: { ok: true, ignorado: "comando reservado" } };
+      }
+      return await processarComandoRenovacao(comando, m, conf, textos);
+    }
+  }
+
   const conta = await contaDeTelefone(telefone);
 
   // A foto que ele mandou depois de "FOTO DO ..." é a única mensagem sem texto atendida aqui.
@@ -3510,6 +3599,7 @@ export async function rotearWebhook(bruto: Bruto, chave: string): Promise<{ stat
 
 export async function resumoBarbearia(): Promise<Bruto> {
   const textos = await obterTextos();
+  const { renovar_admin_telefone, ...textosPublicos } = textos;
   const conf = await obterConfig();
   const token = await tokenChat();
   const contagem = await consultar1(
@@ -3530,7 +3620,9 @@ export async function resumoBarbearia(): Promise<Bruto> {
             coalesce(sum(valor) filter (where tipo = 'saida'), 0)::numeric as saidas from public.barber_lancamento`,
   );
   return {
-    ...textos,
+    ...textosPublicos,
+    renovar_admin_configurado: Boolean(renovar_admin_telefone),
+    renovar_admin_final: renovar_admin_telefone.slice(-4),
     contas: Number(contagem?.contas || 0),
     ativos: Number(contagem?.ativos || 0),
     vencidos: Number(contagem?.vencidos || 0),

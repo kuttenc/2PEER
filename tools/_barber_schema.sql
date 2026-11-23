@@ -24,6 +24,7 @@ create table if not exists public.barber_config (
   boas_vindas       text not null default '',
   lembrete          text not null default '',
   aviso_cliente     text not null default '',
+  renovar_admin_telefone text not null default '',
   atualizado_em     timestamptz not null default now()
 );
 insert into public.barber_config (id) values (1) on conflict (id) do nothing;

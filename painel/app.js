@@ -2948,6 +2948,10 @@
       $("bcTrial").value = texto(d.trial_dias || 1);
       $("bcLembreteHora").value = texto(d.lembrete_hora === undefined ? 8 : d.lembrete_hora);
       $("bcRetencao").value = texto(d.dias_retencao || 90);
+      $("bcRenovarAdmin").value = "";
+      $("bcRenovarAdminEstado").textContent = d.renovar_admin_configurado
+        ? "Comando ativo apenas para o número autorizado (final " + texto(d.renovar_admin_final) + ")."
+        : "Comando de renovação desativado; configure o número autorizado para ativar.";
       $("bcMenu").value = texto(d.menu);
       $("bcBoasVindas").value = texto(d.boas_vindas);
       $("bcAbordagem").value = texto(d.abordagem);
@@ -3332,7 +3336,7 @@
     var botao = evento.target.querySelector('button[type="submit"]');
     botao.disabled = true;
     bbAviso("bcEstado", "Salvando…", false);
-    chamar("barb_salvar", {
+    var dados = {
       ativo: $("bcAtivo").checked,
       responder_controle: $("bcControle").checked,
       trial_dias: $("bcTrial").value,
@@ -3348,10 +3352,25 @@
       boas_vindas_site: $("bcBoasVindasSite").value,
       aviso_novo_site: $("bcAvisoNovoSite").value,
       ajuda_funcionario: $("bcAjudaFuncionario").value,
-    }, 60).then(function (d) {
+    };
+    var telefoneAdmin = $("bcRenovarAdmin").value.trim();
+    if (telefoneAdmin) dados.renovar_admin_telefone = telefoneAdmin;
+    chamar("barb_salvar", dados, 60).then(function (d) {
       botao.disabled = false;
       if (!d.ok) { bbAviso("bcEstado", mensagemDetalhada(d), true); return; }
       bbAviso("bcEstado", "Configurações salvas.", false);
+      CARREGA.chatbarbearia();
+    });
+  });
+
+  $("bcRenovarAdminLimpar").addEventListener("click", function () {
+    if (!window.confirm("Desativar o comando de renovação pelo WhatsApp?")) return;
+    var botao = $("bcRenovarAdminLimpar");
+    botao.disabled = true;
+    chamar("barb_salvar", { renovar_admin_telefone: "" }, 45).then(function (d) {
+      botao.disabled = false;
+      if (!d.ok) { bbAviso("bcEstado", mensagemDetalhada(d), true); return; }
+      bbAviso("bcEstado", "Comando de renovação desativado.", false);
       CARREGA.chatbarbearia();
     });
   });

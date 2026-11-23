@@ -1706,7 +1706,7 @@ export async function barbSalvar(dados: Registro, _ctx: Contexto): Promise<Saida
   const campos: Registro = {};
   for (const chave of [
     "menu", "abordagem", "boas_vindas", "lembrete", "aviso_cliente", "msg_interesse", "msg_vencido",
-    "boas_vindas_site", "aviso_novo_site", "ajuda_funcionario",
+    "boas_vindas_site", "aviso_novo_site", "ajuda_funcionario", "renovar_admin_telefone",
   ]) {
     if (chave in dados) campos[chave] = barbTexto(dados[chave]);
   }
