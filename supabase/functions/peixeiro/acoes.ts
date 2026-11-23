@@ -113,7 +113,13 @@ import {
   tirarDaFila as barbTirarDaFila,
   TRIAL_DIAS_PADRAO,
 } from "./barbearia.ts";
-import { dadosDaPagina, publicarFoto, publicarPagina, publicarPainelBarbearia } from "./estabelecimento.ts";
+import {
+  dadosDaPagina,
+  publicarFoto,
+  publicarPagina,
+  publicarPainelBarbearia,
+  validarPaginaParaBoasVindas,
+} from "./estabelecimento.ts";
 import { escreverCsv, lerCsv } from "./csv.ts";
 import { gravarPix, parsearPix } from "./pix.ts";
 import {
@@ -2266,20 +2272,42 @@ export async function barbMensagem(dados: Registro): Promise<Saida> {
 export async function barbBoasVindas(dados: Registro): Promise<Saida> {
   const telefone = normalizarWhatsapp(txt(dados.telefone));
   if (telefone.length < 10) return falha("telefone_invalido");
-  const pagina = await consultar1(
-    `select nullif(btrim(endereco), '') is not null as tem_endereco,
-            site_publicado_em is not null and coalesce(site_sha, '') <> '' as publicada,
-            site_publicado_em is not null and site_publicado_em >= atualizado_em as atualizada
+  const validacao = await validarPaginaParaBoasVindas(telefone);
+  if (!validacao.ok) {
+    return falha(validacao.erro, validacao.erro === "sem_barbearia" ? 404 : 409);
+  }
+  const modelo = (await obterTextos()).boas_vindas;
+  if (!modelo) return falha("sem_texto");
+  const estado = await consultar1(
+    `select site_boas_vindas_enviado_em is not null as ja_enviada
        from public.barber_contas where telefone = $1`,
     [telefone],
   );
-  if (!pagina) return falha("sem_barbearia", 404);
-  if (!pagina.tem_endereco) return falha("endereco_obrigatorio", 409);
-  if (!pagina.publicada || !pagina.atualizada) return falha("pagina_nao_publicada", 409);
-  const modelo = (await obterTextos()).boas_vindas;
-  if (!modelo) return falha("sem_texto");
+  if (!estado) return falha("sem_barbearia", 404);
+  if (!estado.ja_enviada) {
+    const reivindicada = await consultar1(
+      `update public.barber_contas
+          set site_boas_vindas_tentativa_em = now()
+        where telefone = $1
+          and site_boas_vindas_enviado_em is null
+          and (site_boas_vindas_tentativa_em is null
+               or site_boas_vindas_tentativa_em <= now() - interval '15 minutes')
+        returning telefone`,
+      [telefone],
+    );
+    if (!reivindicada) return falha("boas_vindas_em_andamento", 409);
+  }
   const envio = await enviarParaBarbeiro(telefone, modelo);
   if (!envio.ok) return falha(envio.error === "bloqueado" ? "bloqueado" : "envio", 502, { detalhe: envio.error || "" });
+  if (!envio.simulado) {
+    const registro = await consultar1(
+      `update public.barber_contas
+          set site_boas_vindas_enviado_em = coalesce(site_boas_vindas_enviado_em, now())
+        where telefone = $1 returning telefone`,
+      [telefone],
+    );
+    if (!registro) throw new Error("boas_vindas_enviada_sem_registro");
+  }
   return ok({ telefone: formatarTelefone(telefone), simulado: envio.simulado, texto: envio.texto });
 }
 

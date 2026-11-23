@@ -110,7 +110,10 @@
     url_appbarber: "Use o endereço público completo de um site AppBarber.",
     pagina_inacessivel: "Não consegui abrir a página atual agora. Confira o endereço e tente novamente.",
     endereco_obrigatorio: "Cadastre o endereço e publique a página antes de enviar as boas-vindas.",
+    pagina_incompleta: "Configure serviço, horário, pagamento e agendamento online antes de enviar as boas-vindas.",
     pagina_nao_publicada: "A página ainda não foi publicada com os dados atuais. Salve a página e tente novamente.",
+    pagina_indisponivel: "A página pública não abriu agora. Nenhuma mensagem foi enviada; tente novamente depois.",
+    boas_vindas_em_andamento: "Já existe um envio em andamento para este estabelecimento. Aguarde 15 minutos antes de tentar novamente.",
     sem_barbearia: "Este estabelecimento não está cadastrado.",
   };
 

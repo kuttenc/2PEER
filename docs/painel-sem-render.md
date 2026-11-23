@@ -1540,16 +1540,25 @@ Os testes focados passaram (15/15), a suíte completa `node --test --test-report
 `node --check` do helper e `git diff --check` passaram. O guia operacional consolidado está em
 `./guia-operacional-chatbot-barbearias.md`.
 
-### Proteção de boas-vindas por endereço publicado — PR pendente
+### Proteção e comando de boas-vindas — PR pendente
 
-O cadastro deixa de enviar boas-vindas por padrão. Tanto a opção explícita no cadastro quanto o
-envio manual passam pela validação server-side de endereço preenchido, página publicada com
-`site_sha` e publicação posterior à última alteração dos dados. O painel mostra um motivo legível
-quando o endereço falta ou a publicação está pendente. Nenhuma mensagem é enviada pelo teste.
+O cadastro deixa de enviar boas-vindas por padrão. Tanto o envio opcional no cadastro quanto o
+envio manual exigem endereço, página publicada depois da última edição e pronta para agendamento
+(nome, contato, serviço, expediente, forma de pagamento e agendamento online). Antes de enviar,
+o backend também abre a URL pública e confere que o HTML carregado contém o estabelecimento, o
+endereço, os serviços e o formulário de agendamento; páginas em branco, incompletas ou inacessíveis
+são recusadas.
 
-A alteração está isolada na branch `copilot/published-address-welcome`; os testes Node passaram.
-Ainda não está ativa em produção: a sessão do Supabase Dashboard expirou e a sessão do CLI não
-tem acesso ao projeto de produção. Não usar os botões de boas-vindas na versão atualmente publicada
-até o deploy da função. A inclusão dos 30 candidatos também segue pendente: não foram validados os
-30 telefones nem concluída a deduplicação por telefone; não cadastrar ou contatar até essa
-conferência.
+Foi adicionado o comando `ENVIAR BOASVINDAS` (também aceita `ENVIAR BOAS VINDAS` e
+`ENVIAR BOAS-VINDAS`). Ele é restrito ao mesmo número administrativo autorizado para `renovar`,
+deduplica reentregas do webhook e processa até 10 estabelecimentos por vez. Só conta como enviado
+quando a Green API aceita um envio real; mensagens simuladas não são marcadas como enviadas.
+Contas existentes no momento da migration são marcadas como já processadas para evitar reenvios;
+o comando em lote considera novos cadastros feitos depois da migration. O envio manual individual
+continua disponível, mas passa pela mesma validação da página pública.
+
+As alterações estão isoladas na branch `copilot/published-address-welcome`, no PR #5. A migration
+`../tools/20261123_barber_welcome_command.sql` ainda não foi aplicada e a Edge Function ainda não
+foi atualizada em produção. O CLI autenticado não tem acesso ao projeto de produção, embora o
+Dashboard aberto mostre o projeto correto; nenhum comando foi executado e nenhuma mensagem foi
+enviada nesta tarefa. Só usar o comando após integrar o PR e aplicar a migration antes do deploy.

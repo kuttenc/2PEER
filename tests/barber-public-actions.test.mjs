@@ -132,6 +132,10 @@ test("boas-vindas exigem endereço e página publicada após a última edição"
   const boasFim = acoes.indexOf("\n}", boasInicio);
   const adicionar = acoes.slice(adicionarInicio, adicionarFim);
   const boas = acoes.slice(boasInicio, boasFim);
+  const estabelecimento = await readFile(
+    new URL("../supabase/functions/peixeiro/estabelecimento.ts", import.meta.url),
+    "utf8",
+  );
 
   assert.ok(adicionarInicio >= 0);
   assert.ok(adicionarFim > adicionarInicio);
@@ -140,8 +144,10 @@ test("boas-vindas exigem endereço e página publicada após a última edição"
   assert.match(adicionar, /booleano\(dados\.avisar\)\s*&& criado\.novo/);
   assert.match(adicionar, /await barbBoasVindas\(\{\s*telefone\s*\}\)/);
   assert.doesNotMatch(adicionar, /enviarParaBarbeiro/);
-  assert.ok(boas.indexOf("endereco_obrigatorio") < boas.indexOf("enviarParaBarbeiro"));
-  assert.ok(boas.indexOf("pagina_nao_publicada") < boas.indexOf("enviarParaBarbeiro"));
-  assert.match(boas, /site_publicado_em >= atualizado_em/);
-  assert.match(boas, /coalesce\(site_sha, ''\) <> ''/);
+  assert.ok(boas.indexOf("validarPaginaParaBoasVindas") < boas.indexOf("enviarParaBarbeiro"));
+  assert.match(boas, /site_boas_vindas_enviado_em = coalesce\(site_boas_vindas_enviado_em, now\(\)\)/);
+  assert.match(estabelecimento, /paginaProntaParaAgendamento\(pagina\)/);
+  assert.match(estabelecimento, /paginaPublicadaCompleta\(await resposta\.text\(\), pagina\)/);
+  assert.match(estabelecimento, /site_publicado_em >= atualizado_em/);
+  assert.match(estabelecimento, /coalesce\(site_sha, ''\) <> ''/);
 });
