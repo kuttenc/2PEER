@@ -171,13 +171,13 @@ O campo `barber_contas.expira_em` aparece no painel e entra na contagem de conta
 neste checkout não desativa automaticamente o chatbot nem a página pública quando chega a data.
 Não confundir a data informativa com um bloqueio de acesso.
 
-O comando administrativo preparado neste checkout, `renovar <telefone>`, só será aceito depois
-de publicado e configurado em **Chat Barbearias → WhatsApp autorizado a renovar planos**. Cada
-mensagem Green API só pode renovar uma vez; o sistema acrescenta um mês de calendário à maior
-entre a expiração atual e o momento da solicitação, reativa a conta e avisa o barbeiro com o
-novo vencimento. O administrador recebe o resultado. O comando é uma ação manual e não confirma
-nem processa pagamento. O número autorizado não é retornado integralmente pelo painel; apenas
-seus quatro últimos dígitos são mostrados.
+O comando administrativo `renovar <telefone>` está ativo para o número autorizado configurado
+em **Chat Barbearias → WhatsApp autorizado a renovar planos**. Cada mensagem Green API só pode
+renovar uma vez; o sistema acrescenta um mês de calendário à maior entre a expiração atual e o
+momento da solicitação, reativa a conta e avisa o barbeiro com o novo vencimento. O administrador
+recebe o resultado. O comando é uma ação manual e não confirma nem processa pagamento. O número
+autorizado não é retornado integralmente pelo painel; apenas seus quatro últimos dígitos são
+mostrados.
 
 ## 6. Estado recente e cuidados de publicação
 
@@ -210,13 +210,12 @@ Conforme o status técnico do checkout:
 - Em 22/11/2026, a conta do Jailton foi renovada no painel até 23/12/2026 às 21:00 (horário de
   Brasília). A Green API aceitou a mensagem de confirmação; isso não comprova leitura ou entrega
   final no aparelho.
-- O comando `renovar <telefone>` está preparado neste checkout. A migration
-  `tools/20261122_barber_renewal_command.sql` foi aplicada pelo SQL Editor do Dashboard no
-  projeto `ggufcvrwctieacvbbwim` e a coluna, a tabela e a função SQL foram conferidas. A Edge
-  Function `peixeiro` e a interface do painel ainda não foram publicadas; portanto, o comando
-  continua inativo. O token de gerenciamento da CLI configurado localmente não tem acesso a este
-  projeto, e a referência `SUPABASE_PROJECT_2peer` também precisa ser corrigida. Não publicar
-  apenas a interface do painel nem reutilizar chaves de banco/serviço como token de deploy.
+- Em 23/11/2026, o comando `renovar <telefone>` foi ativado. A migration
+  `tools/20261122_barber_renewal_command.sql` está aplicada no projeto `ggufcvrwctieacvbbwim`;
+  a Edge Function `peixeiro` foi atualizada pelo Dashboard e o painel foi publicado no GitHub
+  Pages pelo commit `ec97b16`. O número autorizado foi configurado sem registrá-lo integralmente
+  neste guia. A configuração foi confirmada sem executar uma renovação real; portanto, ainda não
+  foi feito um teste que altere o vencimento de uma conta ou envie WhatsApp.
 - A aba antiga **Bloqueados** está sendo ampliada para **Bloquear**, com cadastro manual e
   pesquisa da lista. O envio GreenAPI de texto e arquivo também passa a consultar o bloqueio
   global antes de enviar. A aba foi publicada pelo commit `95d3637`; a Edge Function `peixeiro`
