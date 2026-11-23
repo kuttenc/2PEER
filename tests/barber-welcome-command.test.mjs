@@ -77,14 +77,26 @@ test("o webhook restringe o comando ao administrador e registra envios sem repet
     new URL("../tools/20261123_barber_welcome_command.sql", import.meta.url),
     "utf8",
   );
+  const painelHtml = await readFile(new URL("../painel/index.html", import.meta.url), "utf8");
+  const painelJs = await readFile(new URL("../painel/app.js", import.meta.url), "utf8");
   assert.match(barbearia, /parseComandoBoasVindas\(m\.texto\)/);
   assert.match(barbearia, /m\.telefone !== telefoneAdmin/);
+  assert.match(barbearia, /site_boas_vindas_solicitada_em is not null/);
   assert.match(barbearia, /site_boas_vindas_enviado_em/);
-  assert.match(barbearia, /const limite = 10/);
   assert.ok(
     barbearia.indexOf("validarPaginaParaBoasVindas(telefone)") <
-      barbearia.indexOf("enviarParaBarbeiro(verificacao.telefone"),
+      barbearia.indexOf("enviarParaBarbeiro(telefone, textos.boas_vindas)"),
   );
+  assert.match(barbearia, /export async function processarBoasVindasPendentes\(limite = 10\)/);
+  assert.match(barbearia, /site_boas_vindas_tentativa_em <= now\(\) - interval '15 minutes'/);
+  assert.match(acoes, /const boasVindas = await processarBoasVindasPendentes\(10\)/);
+  assert.match(acoes, /boas_vindas: boasVindas/);
   assert.match(acoes, /validarPaginaParaBoasVindas/);
+  assert.match(painelHtml, /id="bbEndereco"/);
+  assert.match(painelHtml, /id="bbAvisar"/);
+  assert.match(painelJs, /endereco: \$\("bbEndereco"\)\.value/);
+  assert.match(barbearia, /validarPaginaParaBoasVindas\(telefone\)[\s\S]*enviarParaBarbeiro\(telefone, textos\.boas_vindas\)/);
+  assert.match(barbearia, /if \(publicado\.ok\) await enviarBoasVindasPendente/);
+  assert.match(migration, /add column if not exists site_boas_vindas_solicitada_em timestamptz/);
   assert.match(migration, /update public\.barber_contas[\s\S]*site_boas_vindas_enviado_em is null/);
 });

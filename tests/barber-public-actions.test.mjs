@@ -46,7 +46,8 @@ test("o cron tenta enviar o bom-dia antes do horário configurado para lembretes
   const cron = acoes.slice(inicio, fim);
   assert.ok(inicio >= 0);
   assert.ok(fim > inicio);
-  assert.ok(cron.indexOf("bomDiaTodos(forcar)") < cron.indexOf("antesDaHoraDoLembrete"));
+  assert.ok(cron.indexOf("processarBoasVindasPendentes(10)") < cron.indexOf("bomDiaTodos(forcar"));
+  assert.ok(cron.indexOf("bomDiaTodos(forcar, new Date(), !forcar)") < cron.indexOf("antesDaHoraDoLembrete"));
 });
 
 test("horários inválidos são rejeitados antes de apagar os horários atuais", async () => {
@@ -141,8 +142,9 @@ test("boas-vindas exigem endereço e página publicada após a última edição"
   assert.ok(adicionarFim > adicionarInicio);
   assert.ok(boasInicio >= 0);
   assert.ok(boasFim > boasInicio);
-  assert.match(adicionar, /booleano\(dados\.avisar\)\s*&& criado\.novo/);
-  assert.match(adicionar, /await barbBoasVindas\(\{\s*telefone\s*\}\)/);
+  assert.match(adicionar, /solicitouBoasVindas && criado\.novo/);
+  assert.match(adicionar, /await enviarBoasVindasPendente\(telefone\)/);
+  assert.match(adicionar, /txt\(dados\.endereco\)/);
   assert.doesNotMatch(adicionar, /enviarParaBarbeiro/);
   assert.ok(boas.indexOf("validarPaginaParaBoasVindas") < boas.indexOf("enviarParaBarbeiro"));
   assert.match(boas, /site_boas_vindas_enviado_em = coalesce\(site_boas_vindas_enviado_em, now\(\)\)/);

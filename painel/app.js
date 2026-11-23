@@ -109,7 +109,7 @@
     nao_esta_bloqueado: "Este número já não estava bloqueado.",
     url_appbarber: "Use o endereço público completo de um site AppBarber.",
     pagina_inacessivel: "Não consegui abrir a página atual agora. Confira o endereço e tente novamente.",
-    endereco_obrigatorio: "Cadastre o endereço e publique a página antes de enviar as boas-vindas.",
+    endereco_obrigatorio: "Informe o endereço para ativar as boas-vindas automáticas. A mensagem só sairá quando a página estiver pronta.",
     pagina_incompleta: "Configure serviço, horário, pagamento e agendamento online antes de enviar as boas-vindas.",
     pagina_nao_publicada: "A página ainda não foi publicada com os dados atuais. Salve a página e tente novamente.",
     pagina_indisponivel: "A página pública não abriu agora. Nenhuma mensagem foi enviada; tente novamente depois.",
@@ -3385,23 +3385,34 @@
     evento.preventDefault();
     var botao = $("bbAdicionar");
     botao.disabled = true;
+    if ($("bbAvisar").checked && !$("bbEndereco").value.trim()) {
+      botao.disabled = false;
+      bbAviso("bbAdicionarEstado", "Informe o endereço para ativar as boas-vindas automáticas.", true);
+      return;
+    }
     bbAviso("bbAdicionarEstado", "Cadastrando…", false);
     chamar("barb_conta_adicionar", {
       telefone: $("bbTelefone").value,
       nome: $("bbNome").value,
+      endereco: $("bbEndereco").value,
       nota: $("bbNota").value,
       dias: $("bbDias").value,
       avisar: $("bbAvisar").checked,
     }, 60).then(function (d) {
       botao.disabled = false;
       if (!d.ok) { bbAviso("bbAdicionarEstado", mensagemDetalhada(d), true); return; }
-      var aviso = d.boas_vindas ? (d.boas_vindas.ok
-        ? (d.boas_vindas.simulado ? " Boas-vindas simuladas; nenhum WhatsApp saiu." : " Boas-vindas enviadas.")
-        : " O cadastro foi feito, mas o envio de boas-vindas falhou: " + (MSG_ERRO[d.boas_vindas.erro] || texto(d.boas_vindas.erro)))
+      var aviso = d.boas_vindas ? (d.boas_vindas.pendente
+        ? " Boas-vindas programadas; serão enviadas depois que a página completa for publicada e ficar acessível."
+        : d.boas_vindas.enviada
+          ? (d.boas_vindas.simulado ? " Boas-vindas simuladas; nenhum WhatsApp saiu." : " Boas-vindas enviadas.")
+          : d.boas_vindas.erro === "cadastro_existente"
+            ? " O cadastro já existia; nenhuma nova boas-vindas foi programada."
+            : " O cadastro foi feito, mas as boas-vindas não foram enviadas: " + (MSG_ERRO[d.boas_vindas.erro] || texto(d.boas_vindas.erro)))
         : " Nenhuma mensagem foi enviada.";
       bbAviso("bbAdicionarEstado", (d.novo ? "Estabelecimento cadastrado." : "Cadastro existente atualizado.") + aviso, false);
       $("bbTelefone").value = "";
       $("bbNome").value = "";
+      $("bbEndereco").value = "";
       $("bbNota").value = "";
       carregarContasBarbearia(1);
       carregarInteressadosBarbearia();

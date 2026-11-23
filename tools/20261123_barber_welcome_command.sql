@@ -4,6 +4,7 @@
 set role peixeiro_2peer;
 
 alter table public.barber_contas
+  add column if not exists site_boas_vindas_solicitada_em timestamptz,
   add column if not exists site_boas_vindas_tentativa_em timestamptz,
   add column if not exists site_boas_vindas_enviado_em timestamptz;
 

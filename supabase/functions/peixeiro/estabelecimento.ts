@@ -297,6 +297,27 @@ export async function dadosDaPagina(telefone: string): Promise<DadosPagina | nul
   };
 }
 
+async function verificarPaginaPublica(
+  pagina: DadosPagina,
+): Promise<"pronta" | "incompleta" | "indisponivel"> {
+  try {
+    const url = new URL(`${pagina.url.replace(/\/+$/, "")}/`);
+    if (url.protocol !== "https:") return "indisponivel";
+    const resposta = await fetch(url, {
+      headers: { accept: "text/html" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!resposta.ok || !(resposta.headers.get("content-type") || "").toLowerCase().includes("text/html")) {
+      return "indisponivel";
+    }
+    if (new URL(resposta.url).origin !== url.origin) return "indisponivel";
+    return paginaPublicadaCompleta(await resposta.text(), pagina) ? "pronta" : "incompleta";
+  } catch {
+    return "indisponivel";
+  }
+}
+
 export async function validarPaginaParaBoasVindas(
   telefone: string,
 ): Promise<
@@ -307,6 +328,7 @@ export async function validarPaginaParaBoasVindas(
       | "sem_barbearia"
       | "endereco_obrigatorio"
       | "pagina_incompleta"
+      | "pagina_publicada_incompleta"
       | "pagina_nao_publicada"
       | "pagina_indisponivel";
   }
@@ -327,27 +349,9 @@ export async function validarPaginaParaBoasVindas(
   if (!publicacao?.publicada || !publicacao.tem_hash || !publicacao.atualizada) {
     return { ok: false, erro: "pagina_nao_publicada" };
   }
-
-  try {
-    const url = new URL(`${pagina.url.replace(/\/+$/, "")}/`);
-    if (url.protocol !== "https:") return { ok: false, erro: "pagina_indisponivel" };
-    const resposta = await fetch(url, {
-      headers: { accept: "text/html" },
-      redirect: "follow",
-      signal: AbortSignal.timeout(8_000),
-    });
-    if (!resposta.ok || !(resposta.headers.get("content-type") || "").toLowerCase().includes("text/html")) {
-      return { ok: false, erro: "pagina_indisponivel" };
-    }
-    if (new URL(resposta.url).origin !== url.origin) {
-      return { ok: false, erro: "pagina_indisponivel" };
-    }
-    if (!paginaPublicadaCompleta(await resposta.text(), pagina)) {
-      return { ok: false, erro: "pagina_incompleta" };
-    }
-  } catch {
-    return { ok: false, erro: "pagina_indisponivel" };
-  }
+  const estado = await verificarPaginaPublica(pagina);
+  if (estado === "indisponivel") return { ok: false, erro: "pagina_indisponivel" };
+  if (estado !== "pronta") return { ok: false, erro: "pagina_publicada_incompleta" };
   return { ok: true, pagina };
 }
 
@@ -1175,7 +1179,8 @@ export async function publicarPagina(
 }
 
 async function enviarOrientacaoWhatsApp(d: DadosPagina): Promise<"incompleta" | "ja_enviada" | "enviada" | "falha"> {
-  if (!paginaProntaParaAgendamento(d)) return "incompleta";
+  if (!d.endereco.trim() || !paginaProntaParaAgendamento(d)) return "incompleta";
+  if (await verificarPaginaPublica(d) !== "pronta") return "incompleta";
 
   const reivindicada = await consultar1(
     `update public.barber_contas

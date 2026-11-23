@@ -774,11 +774,14 @@
             <input type="tel" id="bbTelefone" class="maq" inputmode="tel" autocomplete="tel"
               placeholder="Telefone do WhatsApp (11) 91234-5678" required>
             <input type="text" id="bbNome" autocomplete="organization" placeholder="Nome do salão ou comércio" required maxlength="120">
+            <input type="text" id="bbEndereco" autocomplete="street-address"
+              placeholder="Endereço completo (rua, número, bairro, cidade/UF)" maxlength="300">
             <input type="text" id="bbNota" placeholder="Observação (opcional)" maxlength="300">
             <input type="number" id="bbDias" min="1" max="365" value="1" aria-label="Dias de teste">
           </div>
           <label class="cb"><input type="checkbox" id="bbAvisar">
-            Enviar boas-vindas ao cadastrar (requer endereço e página publicados)</label>
+            Enviar boas-vindas automaticamente quando a página estiver pronta</label>
+          <p class="muted" style="margin-top:0">Informe o endereço para ativar. A mensagem só sai depois que a página completa for publicada e estiver acessível.</p>
           <button type="submit" class="verde" id="bbAdicionar">Cadastrar estabelecimento</button>
           <span class="muted" id="bbAdicionarEstado"></span>
         </form>
