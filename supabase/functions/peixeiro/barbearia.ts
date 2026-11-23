@@ -1206,7 +1206,7 @@ export async function responder(
   await consultar(`insert into public.barber_treino (telefone, texto) values ($1, $2)`, [telefone, String(bruto || "").slice(0, 600)]);
   return {
     texto: "Não te entendi. Manda MENU que eu te mostro o que ele faz.\n\nExemplos que funcionam:\n" +
-      "  NOVO corte 30,00\n  SAIDA energia 220\n  AGENDA João 11999998888 sábado 15h\n  RESUMO",
+      "  NOVO corte 30,00\n  SAIDA energia 220\n  AGENDA João 11999999999 sábado 15h\n  RESUMO",
     tipo: "sem_regra",
   };
 }
