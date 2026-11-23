@@ -1541,7 +1541,7 @@ Os testes focados passaram (12/12) e a suíte completa `node --test --test-repor
 está instalado para executar `deno check`. O guia operacional consolidado está em
 `./guia-operacional-chatbot-barbearias.md`.
 
-### Proteção e comando de boas-vindas — publicação parcial
+### Proteção e comando de boas-vindas — publicado
 
 O cadastro inclui endereço e uma opção para programar as boas-vindas. Ao marcar a opção, o endereço
 é obrigatório e o pedido fica pendente enquanto a página está sendo configurada; nenhuma mensagem
@@ -1566,8 +1566,7 @@ concluiu com sucesso. A migration `../tools/20261123_barber_welcome_command.sql`
 projeto Supabase correto e verificada: as três colunas existem e as 30 contas anteriores foram
 marcadas para evitar reenvios; nenhuma conta tinha opt-in nesse momento.
 
-A Edge Function `peixeiro` ainda não foi atualizada em produção. A tentativa de deploy foi
-recusada por falta de acesso da credencial CLI ao projeto, e a sessão do Dashboard expirou. Não
-usar credenciais de outro projeto para contornar isso; concluir o deploy com uma sessão autenticada
-no projeto correto ou uma credencial autorizada. Nenhuma mensagem real foi enviada. Não orientar o
-uso do cadastro/boas-vindas até confirmar o deploy da função.
+A Edge Function `peixeiro` foi atualizada no projeto correto. O health check público (`/healthz`)
+e a action sem efeitos colaterais (`ping`) responderam com sucesso após o deploy. O painel ao vivo
+retorna HTTP 200 e contém os campos de endereço e opt-in. Nenhuma mensagem real foi enviada; o
+primeiro envio continua condicionado ao opt-in e à validação da página pública completa.
